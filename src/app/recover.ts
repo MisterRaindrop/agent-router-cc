@@ -33,9 +33,16 @@ function runDeadReason(
 ): string | null {
   if (lease === null) return 'no_lease';
 
-  const sameHost = lease.host === hostname();
-  if (sameHost && !isProcessAlive(lease.supervisor_pid)) return 'supervisor_dead';
+  // Same host: the supervisor's pid liveness is authoritative. If it's alive, the
+  // run is being managed — do NOT fall through to the heartbeat, because the
+  // supervisor blocks its event loop during a synchronous build/test verify (which
+  // can take minutes), freezing the heartbeat while the run is perfectly healthy.
+  // The supervisor owns worker timeout/stall detection itself.
+  if (lease.host === hostname()) {
+    return isProcessAlive(lease.supervisor_pid) ? null : 'supervisor_dead';
+  }
 
+  // Cross-host: we cannot check the pid, so fall back to heartbeat + deadline.
   let heartbeatAgeMs: number | null = null;
   try {
     heartbeatAgeMs = Date.now() - statSync(paths.heartbeat(id, lease.run_id)).mtimeMs;

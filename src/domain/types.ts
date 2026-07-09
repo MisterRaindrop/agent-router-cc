@@ -143,6 +143,7 @@ export interface Lease {
   task_id: string;
   attempt_number: number;
   supervisor_pid: number;
+  supervisor_pgid?: number; // the detached _worker-run's process group (== its pid)
   worker_pgid: number;
   host: string;
   started_at: string;

@@ -94,11 +94,17 @@ function parseNumstat(out: string): Map<string, { added: number; deleted: number
   let i = 0;
   while (i < toks.length) {
     const head = toks[i++]!;
-    const [addedStr, deletedStr, rest] = head.split('\t');
+    // Format: `<added>\t<deleted>\t<path>`. A path may itself contain TABs (git -z
+    // does NOT quote paths), so everything after the second TAB is the path —
+    // do NOT lose it to destructuring. An empty path signals a rename entry.
+    const parts = head.split('\t');
+    const addedStr = parts[0] ?? '';
+    const deletedStr = parts[1] ?? '';
+    const rest = parts.slice(2).join('\t');
     const binary = addedStr === '-' || deletedStr === '-';
     const added = binary ? 0 : Number(addedStr);
     const deleted = binary ? 0 : Number(deletedStr);
-    if (rest !== undefined && rest !== '') {
+    if (rest !== '') {
       map.set(rest, { added, deleted, binary });
     } else {
       // rename/copy: the two following tokens are old, new paths
@@ -181,6 +187,11 @@ export function headSha(cwd: string): string {
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */
 export function mergeNoFF(cwd: string, branch: string): void {
   git(cwd, ['merge', '--no-ff', '--no-edit', branch]);
+}
+
+/** Abort an in-progress merge, restoring the working tree. Best effort. */
+export function mergeAbort(cwd: string): void {
+  tryGit(cwd, ['merge', '--abort']);
 }
 
 export function branchExists(cwd: string, branch: string): boolean {

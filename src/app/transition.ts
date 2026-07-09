@@ -21,6 +21,13 @@ export interface TransitionOpts {
   runId?: string | null;
   meta?: Record<string, unknown>;
   actor: string;
+  /**
+   * Optional precondition evaluated INSIDE the global lock, after the current
+   * state is folded and the transition is asserted legal, but before the event
+   * is appended. Throw to abort atomically (no event written). Used to make a
+   * check-then-transition (e.g. the concurrency slot) race-free.
+   */
+  guard?: (paths: RouterPaths) => void;
 }
 
 export class NoSuchTaskError extends Error {
@@ -88,6 +95,7 @@ export function transition(deps: TransitionDeps, id: string, to: TaskState, opts
     if (events.length === 0) throw new NoSuchTaskError(id);
     const cur = foldEvents(id, events);
     assertTransition(cur.state, to);
+    if (opts.guard !== undefined) opts.guard(paths);
     const ev: EventRecord = {
       seq: cur.last_event_seq + 1,
       ts: clock.nowIso(),

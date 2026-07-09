@@ -9778,8 +9778,8 @@ function splitNul(s) {
   if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
   return parts;
 }
-function parseNameStatus(out3) {
-  const toks = splitNul(out3);
+function parseNameStatus(out2) {
+  const toks = splitNul(out2);
   const map = /* @__PURE__ */ new Map();
   let i = 0;
   while (i < toks.length) {
@@ -9796,17 +9796,20 @@ function parseNameStatus(out3) {
   }
   return map;
 }
-function parseNumstat(out3) {
-  const toks = splitNul(out3);
+function parseNumstat(out2) {
+  const toks = splitNul(out2);
   const map = /* @__PURE__ */ new Map();
   let i = 0;
   while (i < toks.length) {
     const head = toks[i++];
-    const [addedStr, deletedStr, rest] = head.split("	");
+    const parts = head.split("	");
+    const addedStr = parts[0] ?? "";
+    const deletedStr = parts[1] ?? "";
+    const rest = parts.slice(2).join("	");
     const binary = addedStr === "-" || deletedStr === "-";
     const added = binary ? 0 : Number(addedStr);
     const deleted = binary ? 0 : Number(deletedStr);
-    if (rest !== void 0 && rest !== "") {
+    if (rest !== "") {
       map.set(rest, { added, deleted, binary });
     } else {
       const oldPath = toks[i++];
@@ -9867,6 +9870,9 @@ function commitAll(cwd, message) {
 function mergeNoFF(cwd, branch) {
   git(cwd, ["merge", "--no-ff", "--no-edit", branch]);
 }
+function mergeAbort(cwd) {
+  tryGit(cwd, ["merge", "--abort"]);
+}
 function deleteBranch(cwd, branch) {
   tryGit(cwd, ["branch", "-D", branch]);
 }
@@ -9890,6 +9896,9 @@ var init_git = __esm({
 // src/io/paths.ts
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+function runId(n) {
+  return `run-${String(n).padStart(3, "0")}`;
+}
 function runBranch(id, run2) {
   return `router/${id}/${run2}`;
 }
@@ -10027,16 +10036,16 @@ function appendJsonl(path, record) {
 function readJsonl(path) {
   if (!existsSync2(path)) return [];
   const raw = readFileSync(path, "utf8");
-  const out3 = [];
+  const out2 = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (trimmed === "") continue;
     try {
-      out3.push(JSON.parse(trimmed));
+      out2.push(JSON.parse(trimmed));
     } catch {
     }
   }
-  return out3;
+  return out2;
 }
 var init_jsonl = __esm({
   "src/io/jsonl.ts"() {
@@ -10354,6 +10363,7 @@ function transition(deps, id, to, opts) {
     if (events.length === 0) throw new NoSuchTaskError(id);
     const cur = foldEvents(id, events);
     assertTransition(cur.state, to);
+    if (opts.guard !== void 0) opts.guard(paths);
     const ev = {
       seq: cur.last_event_seq + 1,
       ts: clock.nowIso(),
@@ -10467,12 +10477,12 @@ var init_exitTaxonomy = __esm({
 
 // src/io/env.ts
 function buildWorkerEnv(source, extraKeys = []) {
-  const out3 = {};
+  const out2 = {};
   for (const key of [...BASE_ALLOW, ...extraKeys]) {
     const v = source[key];
-    if (v !== void 0) out3[key] = v;
+    if (v !== void 0) out2[key] = v;
   }
-  return out3;
+  return out2;
 }
 var BASE_ALLOW;
 var init_env = __esm({
@@ -10553,7 +10563,10 @@ function superviseWorker(spec) {
     const pgid = child.pid;
     if (pgid !== void 0) {
       spec.onPgid?.(pgid);
+      let killing = false;
       const escalateKill = () => {
+        if (killing) return;
+        killing = true;
         killProcessGroup(pgid, "SIGTERM");
         timers.push(setTimeout(() => killProcessGroup(pgid, "SIGKILL"), sigkillGraceMs));
       };
@@ -10652,8 +10665,11 @@ function compile(glob) {
         if (glob[i + 2] === "/") {
           re += "(?:[^/]+/)*";
           i += 3;
-        } else {
+        } else if (i + 2 >= glob.length) {
           re += ".*";
+          i += 2;
+        } else {
+          re += "[^/]*";
           i += 2;
         }
       } else {
@@ -10720,11 +10736,13 @@ function evaluateScope(changes, scope) {
         violations.push({ kind: "not_allowed", path: p, detail: `path is outside allowed_globs` });
       }
     }
-    if (entry.status === "D" && matchAny(entry.path, scope.test_globs)) {
+    const deletesTest = entry.status === "D" && matchAny(entry.path, scope.test_globs);
+    const renamesTestAway = entry.status === "R" && entry.oldPath !== void 0 && matchAny(entry.oldPath, scope.test_globs) && !matchAny(entry.path, scope.test_globs);
+    if (deletesTest || renamesTestAway) {
       violations.push({
         kind: "test_deletion",
-        path: entry.path,
-        detail: "deletes a file matching test_globs"
+        path: entry.oldPath ?? entry.path,
+        detail: "removes a file matching test_globs"
       });
     }
     if (!entry.binary) changedLines += entry.added + entry.deleted;
@@ -10909,6 +10927,7 @@ var init_verifier = __esm({
 import { createHash as createHash2 } from "node:crypto";
 import { readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { dirname as dirname7 } from "node:path";
+import { hostname as hostname3 } from "node:os";
 function repoRootOf(deps) {
   return dirname7(deps.paths.root);
 }
@@ -10923,10 +10942,8 @@ function startRun(deps, id) {
   if (st.state !== "QUEUED") throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED`);
   if (st.base_sha === null) throw new RunStateError(`task ${id} has no frozen base_sha`);
   const limit = safeMaxConcurrency(deps);
-  const runningElsewhere = listTaskIds(paths).filter((t) => t !== id).filter((t) => currentState(paths, t)?.state === "RUNNING").length;
-  if (runningElsewhere >= limit) throw new ConcurrencyLimitError(limit);
   const attemptNumber = st.attempt_number + 1;
-  const run2 = `run-${String(nextRunNumber(deps, id)).padStart(3, "0")}`;
+  const run2 = runId(nextRunNumber(deps, id));
   const worktreeDir = paths.worktree(id, run2);
   const branch = runBranch(id, run2);
   const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
@@ -10939,17 +10956,34 @@ function startRun(deps, id) {
     supervisor_pid: process.pid,
     worker_pgid: 0,
     // filled by runWorkerBody once the worker is spawned
-    host: hostName(),
+    host: hostname3(),
     started_at: startedAt,
     max_wall_minutes: maxWallMinutes,
     wall_deadline: new Date(Date.parse(startedAt) + maxWallMinutes * 6e4).toISOString(),
     heartbeat_path: "heartbeat"
   });
-  transition(deps, id, "RUNNING", { actor: "cli:run", runId: run2, meta: { attempt_number: attemptNumber } });
+  try {
+    transition(deps, id, "RUNNING", {
+      actor: "cli:run",
+      runId: run2,
+      meta: { attempt_number: attemptNumber },
+      guard: (p) => {
+        const running = listTaskIds(p).filter((t) => t !== id).filter((t) => currentState(p, t)?.state === "RUNNING").length;
+        if (running >= limit) throw new ConcurrencyLimitError(limit);
+      }
+    });
+  } catch (err2) {
+    worktreeRemove(repoRootOf(deps), worktreeDir);
+    deleteBranch(repoRootOf(deps), branch);
+    throw err2;
+  }
   return { runId: run2, worktreeDir, attemptNumber };
 }
-function hostName() {
-  return process.env.HOSTNAME ?? "localhost";
+function updateLease(deps, id, run2, patch) {
+  withGlobalLock(deps.paths.lockDir, () => {
+    const lease = readLease(deps.paths, id, run2);
+    if (lease !== null) writeLease(deps.paths, id, run2, { ...lease, ...patch });
+  });
 }
 function safeMaxConcurrency(deps) {
   try {
@@ -10958,17 +10992,17 @@ function safeMaxConcurrency(deps) {
     return 1;
   }
 }
-async function runWorkerBody(deps, id, runId, launcher) {
+async function runWorkerBody(deps, id, runId2, launcher) {
   const { paths, clock } = deps;
   const st = currentState(paths, id);
-  if (st === null || st.state !== "RUNNING" || st.current_run !== runId) {
-    throw new RunStateError(`task ${id} is not RUNNING run ${runId}`);
+  if (st === null || st.state !== "RUNNING" || st.current_run !== runId2) {
+    throw new RunStateError(`task ${id} is not RUNNING run ${runId2}`);
   }
   const baseSha = st.base_sha;
   const contractHash = st.contract_hash;
   const { task, taskYamlText, contractMdText } = loadTask(paths, id);
   const policyGit = loadPolicyFromGit(paths, baseSha);
-  const worktreeDir = paths.worktree(id, runId);
+  const worktreeDir = paths.worktree(id, runId2);
   const apiKeyEnv = policyGit.worker?.api_key_env;
   const env = buildWorkerEnv(process.env, apiKeyEnv !== void 0 ? [apiKeyEnv] : []);
   const argv = launcher.buildArgv({
@@ -10981,19 +11015,16 @@ async function runWorkerBody(deps, id, runId, launcher) {
     argv,
     cwd: worktreeDir,
     env,
-    logPath: paths.workerLog(id, runId),
-    heartbeatPath: paths.heartbeat(id, runId),
+    logPath: paths.workerLog(id, runId2),
+    heartbeatPath: paths.heartbeat(id, runId2),
     watchDir: worktreeDir,
     maxWallMs: task.max_wall_minutes * 6e4,
     stallMs: (policyGit.worker?.stall_minutes ?? 10) * 6e4,
-    onPgid: (pgid) => {
-      const lease = readLease(paths, id, runId);
-      if (lease !== null) writeLease(paths, id, runId, { ...lease, worker_pgid: pgid });
-    }
+    onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
   });
-  if (outcome.exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId}`);
+  if (outcome.exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
   const result2 = {
-    run_id: runId,
+    run_id: runId2,
     task_id: id,
     attempt_number: st.attempt_number,
     exit_class: outcome.exitClass,
@@ -11008,9 +11039,9 @@ async function runWorkerBody(deps, id, runId, launcher) {
   };
   let finalState;
   if (outcome.exitClass === "ok") {
-    transition(deps, id, "VERIFYING", { actor: "router:worker", runId });
+    transition(deps, id, "VERIFYING", { actor: "router:worker", runId: runId2 });
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync3(paths.diffPatch(id, runId), patch);
+    writeFileSync3(paths.diffPatch(id, runId2), patch);
     result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     const report = verify({
       repoRoot: repoRootOf(deps),
@@ -11029,11 +11060,11 @@ async function runWorkerBody(deps, id, runId, launcher) {
   } else {
     finalState = "FAILED";
   }
-  writeResult(paths, id, runId, result2);
+  writeResult(paths, id, runId2, result2);
   appendRunMetric(deps, result2, st);
   transition(deps, id, finalState, {
     actor: "router:worker",
-    runId,
+    runId: runId2,
     meta: { exit_class: outcome.exitClass, counts_as_attempt: countsAsAttempt(outcome.exitClass) }
   });
   return result2;
@@ -11071,6 +11102,7 @@ var init_worker = __esm({
     init_exitTaxonomy();
     init_git();
     init_env();
+    init_lock();
     init_paths();
     init_store();
     init_supervisor();
@@ -11153,8 +11185,8 @@ async function selftest(opts = {}) {
   try {
     for (const c of CANARIES) {
       validateQueue(deps, repo, c.name, taskYaml(c.name, c.allowed));
-      const { runId } = startRun(deps, c.name);
-      const result2 = await runWorkerBody(deps, c.name, runId, scriptLauncher(c.script));
+      const { runId: runId2 } = startRun(deps, c.name);
+      const result2 = await runWorkerBody(deps, c.name, runId2, scriptLauncher(c.script));
       const actual = currentState(paths, c.name)?.state ?? "DRAFT";
       const scopeCaught = result2.verifier?.checks.some((ch) => ch.id === "scope" && !ch.ok) ?? false;
       const ok = actual === c.expected && (c.name !== "scope-trap" || actual === "FAILED" && scopeCaught);
@@ -11231,7 +11263,7 @@ verification:
 
 // src/cli/args.ts
 var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help"]);
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["id", "title", "run", "attempt", "since", "router-dir"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set(["id", "title", "run", "state", "attempt", "since", "router-dir"]);
 function parseArgs(argv) {
   const verb = argv[0];
   const rest = argv.slice(1);
@@ -11365,8 +11397,9 @@ function rebuildRegistry(deps) {
 init_transition();
 function runDeadReason(paths, id, lease, heartbeatStaleMs) {
   if (lease === null) return "no_lease";
-  const sameHost = lease.host === hostname2();
-  if (sameHost && !isProcessAlive(lease.supervisor_pid)) return "supervisor_dead";
+  if (lease.host === hostname2()) {
+    return isProcessAlive(lease.supervisor_pid) ? null : "supervisor_dead";
+  }
   let heartbeatAgeMs = null;
   try {
     heartbeatAgeMs = Date.now() - statSync3(paths.heartbeat(id, lease.run_id)).mtimeMs;
@@ -11632,9 +11665,8 @@ var run = (ctx) => {
     [script, "_worker-run", id, "--run", started.runId, "--router-dir", paths.root],
     { detached: true, stdio: "ignore", cwd: dirname8(paths.root), env: process.env }
   );
-  const lease = readLease(paths, id, started.runId);
-  if (lease !== null && child.pid !== void 0) {
-    writeLease(paths, id, started.runId, { ...lease, supervisor_pid: child.pid });
+  if (child.pid !== void 0) {
+    updateLease(deps, id, started.runId, { supervisor_pid: child.pid, supervisor_pgid: child.pid });
   }
   child.unref();
   emit(
@@ -11647,13 +11679,13 @@ var run = (ctx) => {
 var workerRun = async (ctx) => {
   const { deps, paths } = depsFor(ctx);
   const id = requireId(ctx);
-  const runId = flagStr(ctx.args.flags, "run");
-  if (runId === void 0) throw new CliError("_worker-run requires --run", 2);
+  const runId2 = flagStr(ctx.args.flags, "run");
+  if (runId2 === void 0) throw new CliError("_worker-run requires --run", 2);
   const st = currentState(paths, id);
   if (st === null || st.base_sha === null) throw new CliError(`task ${id} not runnable`, 1);
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const launcher = codexLauncher(policy);
-  const result2 = await runWorkerBody(deps, id, runId, launcher);
+  const result2 = await runWorkerBody(deps, id, runId2, launcher);
   return result2.verifier?.result === "PASSED" ? 0 : 1;
 };
 var merge = (ctx) => {
@@ -11673,7 +11705,8 @@ var merge = (ctx) => {
   try {
     mergeNoFF(repoRoot, branch);
   } catch (e) {
-    throw new CliError(`merge failed: ${e.message}`, 1);
+    mergeAbort(repoRoot);
+    throw new CliError(`merge failed (aborted, tree restored): ${e.message}`, 1);
   }
   transition(deps, id, "MERGED", { actor: "cli:merge", runId: run2 });
   worktreeRemove(repoRoot, paths.worktree(id, run2));
@@ -11753,7 +11786,11 @@ var cancel = (ctx) => {
   }
   if (st.state === "RUNNING" && st.current_run) {
     const lease = readLease(paths, id, st.current_run);
-    if (lease && lease.worker_pgid > 1) killProcessGroup(lease.worker_pgid, "SIGKILL");
+    if (lease) {
+      const supGroup = lease.supervisor_pgid ?? lease.supervisor_pid;
+      if (supGroup > 1) killProcessGroup(supGroup, "SIGKILL");
+      if (lease.worker_pgid > 1) killProcessGroup(lease.worker_pgid, "SIGKILL");
+    }
   }
   const next = transition(deps, id, "CANCELLED", { actor: "cli:cancel", runId: st.current_run });
   emit(ctx.json, { ok: true, id, state: next.state }, () => `${id} CANCELLED`);
