@@ -1,32 +1,35 @@
-import { VERSION } from '../domain/constants.ts';
+import { flagBool, parseArgs } from './args.ts';
+import { HANDLERS, helpText, versionText } from './commands.ts';
+import { CliError, err, out } from './output.ts';
 
-/**
- * Entry dispatcher. Returns a process exit code.
- * M1 verbs land in later build steps; step 0 wires only --version/--help so the
- * committed bundle is runnable on bare Node.
- */
-export async function runCli(argv: string[]): Promise<number> {
-  const cmd = argv[0];
-  if (cmd === '--version' || cmd === '-V') {
-    process.stdout.write(`${VERSION}\n`);
+export async function runCli(argv: string[], cwd: string = process.cwd()): Promise<number> {
+  const first = argv[0];
+  if (first === '--version' || first === '-V') {
+    out(versionText());
     return 0;
   }
-  if (cmd === undefined) {
-    printHelp();
+  if (first === undefined || first === '--help' || first === '-h' || first === 'help') {
+    out(helpText());
+    return first === undefined ? 1 : 0;
+  }
+
+  const parsed = parseArgs(argv);
+  const handler = HANDLERS[parsed.verb ?? ''];
+  if (handler === undefined) {
+    err(`router: unknown command '${parsed.verb}'`);
+    return 2;
+  }
+
+  const json = flagBool(parsed.flags, 'json');
+  try {
+    return await handler({ args: parsed, cwd, json });
+  } catch (e) {
+    if (e instanceof CliError) {
+      if (json) out(JSON.stringify({ ok: false, error: e.message }));
+      else err(`router: ${e.message}`);
+      return e.code;
+    }
+    err(`router: ${(e as Error).message}`);
     return 1;
   }
-  if (cmd === '--help' || cmd === '-h' || cmd === 'help') {
-    printHelp();
-    return 0;
-  }
-  process.stderr.write(`router: unknown command '${cmd}'\n`);
-  return 2;
-}
-
-function printHelp(): void {
-  process.stdout.write(
-    `router ${VERSION}\n\n` +
-      `Usage: router <command> [options]\n\n` +
-      `Deterministic task orchestration. Commands land across M1 build steps.\n`,
-  );
 }
