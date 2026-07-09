@@ -11,7 +11,7 @@ import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from './policyLoad.ts';
 import { loadTask } from './taskLoad.ts';
-import { estimateCostUsd, parseCodexUsage } from './usage.ts';
+import { estimateCostUsd, parseCodexModel, parseCodexUsage } from './usage.ts';
 import { verify } from './verifier.ts';
 import { currentState, transition, type TransitionDeps } from './transition.ts';
 
@@ -171,9 +171,12 @@ export async function runWorkerBody(
   // Router owns the checkpoint commit: capture whatever the worker left.
   if (outcome.exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${runId}`);
 
-  // Token usage from the codex --json stream in the worker log (feeds metrics).
-  const usage = parseCodexUsage(safeRead(paths.workerLog(id, runId)));
+  // Token usage + model from the codex --json stream in the worker log (feeds
+  // metrics). The stream may not report a model; fall back to the pinned one.
+  const log = safeRead(paths.workerLog(id, runId));
+  const usage = parseCodexUsage(log);
   const costUsd = usage !== null ? estimateCostUsd(usage, process.env) : null;
+  const model = parseCodexModel(log) ?? launcher.model;
 
   const result: RunResult = {
     run_id: runId,
@@ -187,7 +190,7 @@ export async function runWorkerBody(
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
-    worker: launcher.model !== undefined ? { kind: launcher.kind, model: launcher.model } : { kind: launcher.kind },
+    worker: model !== undefined ? { kind: launcher.kind, model } : { kind: launcher.kind },
     ...(usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
@@ -241,6 +244,7 @@ function appendRunMetric(deps: TransitionDeps, result: RunResult, st: StateFile)
     task_id: result.task_id,
     run_id: result.run_id,
     attempt_number: result.attempt_number,
+    model: result.worker.model ?? null,
     exit_class: result.exit_class,
     verifier_result: result.verifier?.result ?? null,
     first_pass: result.attempt_number === 1 && result.verifier?.result === 'PASSED',

@@ -93,11 +93,14 @@ test('happy path: worker edits in-scope, verifier passes, task PASSED', async ()
       runId,
       launcher(
         'require("fs").writeFileSync("src/a.ts","export const x = 2;\\n");' +
+          'console.log(JSON.stringify({type:"thread.started",model:"stream-model"}));' +
           'console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1200,output_tokens:70}}))',
       ),
     );
     assert.equal(result.exit_class, 'ok');
     assert.equal(result.verifier?.result, 'PASSED');
+    // model came from the --json stream (overrides the launcher's pinned model)
+    assert.equal(result.worker.model, 'stream-model');
     assert.equal(currentState(paths, 't1')?.state, 'PASSED');
     assert.ok(existsSync(paths.diffPatch('t1', runId)));
     const metrics = store.readMetrics(paths);
@@ -106,6 +109,7 @@ test('happy path: worker edits in-scope, verifier passes, task PASSED', async ()
     // token usage parsed from the (fake) codex --json stream flows into metrics
     assert.equal(result.tokens?.input, 1200);
     assert.equal(metrics.at(-1)?.tokens_output, 70);
+    assert.equal(metrics.at(-1)?.model, 'stream-model');
   } finally {
     fx.cleanup(repo);
   }

@@ -6,11 +6,12 @@ import type { WorkerContext, WorkerLauncher } from './worker.ts';
 // in M2). The binary is `codex` by default; ROUTER_CODEX_BIN overrides it (used
 // by tests to substitute a fake worker without real codex).
 
-export function codexLauncher(_policy: Policy, opts: { model?: string } = {}): WorkerLauncher {
+export function codexLauncher(policy: Policy, opts: { model?: string } = {}): WorkerLauncher {
   const bin = process.env.ROUTER_CODEX_BIN ?? 'codex';
+  const model = opts.model ?? policy.worker?.model;
   return {
     kind: 'codex',
-    ...(opts.model !== undefined ? { model: opts.model } : {}),
+    ...(model !== undefined ? { model } : {}),
     buildArgv(ctx: WorkerContext): string[] {
       const argv = [
         bin,
@@ -23,7 +24,7 @@ export function codexLauncher(_policy: Policy, opts: { model?: string } = {}): W
         '--skip-git-repo-check',
         '--json',
       ];
-      if (opts.model !== undefined) argv.push('-m', opts.model);
+      if (model !== undefined) argv.push('-m', model);
       return argv;
     },
   };

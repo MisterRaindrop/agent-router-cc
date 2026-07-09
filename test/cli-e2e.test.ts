@@ -65,6 +65,7 @@ test('end-to-end: run (detached worker + fake codex) reaches PASSED, then merge'
     const res = JSON.parse(router(dir, ['result', 'e2e', '--json']).out);
     assert.equal(res.result.verifier.result, 'PASSED');
     assert.equal(res.result.exit_class, 'ok');
+    assert.equal(res.result.worker.model, 'fake-model-1'); // model from --json stream
 
     // the worker's edit is on the run branch; merge fast-forwards it into main
     assert.equal(router(dir, ['merge', 'e2e']).code, 0);

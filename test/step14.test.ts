@@ -9,6 +9,7 @@ const m = (over: Partial<MetricRecord>): MetricRecord => ({
   task_id: 'x',
   run_id: 'run-001',
   attempt_number: 1,
+  model: 'codex-test',
   exit_class: 'ok',
   verifier_result: 'PASSED',
   first_pass: true,
