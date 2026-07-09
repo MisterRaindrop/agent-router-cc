@@ -178,6 +178,11 @@ export function headSha(cwd: string): string {
   return git(cwd, ['rev-parse', 'HEAD']).trim();
 }
 
+/** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */
+export function mergeNoFF(cwd: string, branch: string): void {
+  git(cwd, ['merge', '--no-ff', '--no-edit', branch]);
+}
+
 export function branchExists(cwd: string, branch: string): boolean {
   return tryGit(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
 }
