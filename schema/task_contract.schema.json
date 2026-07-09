@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-router-cc/schema/task_contract.schema.json",
+  "title": "router task.yaml (machine contract, frozen at VALIDATED)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "max_wall_minutes",
+    "allowed_globs",
+    "build_ref",
+    "test_ref"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "title": { "type": "string", "minLength": 1 },
+    "base_sha": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "max_wall_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 },
+    "allowed_globs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "forbidden_globs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "max_changed_lines": { "type": "integer", "minimum": 1 },
+    "build_ref": { "type": "string", "minLength": 1 },
+    "test_ref": { "type": "string", "minLength": 1 },
+    "verification_params": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

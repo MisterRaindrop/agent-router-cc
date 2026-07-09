@@ -1,0 +1,36 @@
+{
+  "name": "agent-router-cc",
+  "version": "0.1.0",
+  "description": "Deterministic task-orchestration CLI + Claude Code plugin (router). LLM produces artifacts; the CLI owns every gate.",
+  "type": "module",
+  "bin": {
+    "router": "dist/router.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist/",
+    "schema/",
+    ".claude-plugin/",
+    "commands/",
+    "agents/",
+    "hooks/"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "check:deps": "node scripts/check-deps.mjs",
+    "check": "npm run typecheck && npm run check:deps && npm run test"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "js-yaml": "5.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2"
+  }
+}
