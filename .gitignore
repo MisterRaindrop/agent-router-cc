@@ -1,0 +1,4 @@
+node_modules/
+*.tmp.*
+.router/worktrees/
+.DS_Store
