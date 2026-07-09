@@ -172,16 +172,13 @@ export function worktreeRemove(cwd: string, path: string, force = true): void {
   if (!r.ok) tryGit(cwd, ['worktree', 'prune']); // best effort
 }
 
+
 /** Stage everything and commit; returns false (no commit) if the tree is clean. */
 export function commitAll(cwd: string, message: string): boolean {
   git(cwd, ['add', '-A']);
   if (git(cwd, ['diff', '--cached', '--name-only']).trim() === '') return false;
   git(cwd, ['commit', '-q', '-m', message]);
   return true;
-}
-
-export function headSha(cwd: string): string {
-  return git(cwd, ['rev-parse', 'HEAD']).trim();
 }
 
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */

@@ -9909,6 +9909,7 @@ function routerPaths(routerDir) {
   const runDir = (id, run2) => join(taskDir(id), "runs", run2);
   return {
     root,
+    repoRoot: dirname(root),
     policy: join(root, "policy.yaml"),
     registry: join(root, "registry.json"),
     metrics: join(root, "metrics.jsonl"),
@@ -10410,7 +10411,6 @@ var init_transition = __esm({
 
 // src/app/policyLoad.ts
 import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
-import { dirname as dirname5 } from "node:path";
 function parseAndValidate(source, yamlText) {
   let data;
   try {
@@ -10425,7 +10425,7 @@ function parseAndValidate(source, yamlText) {
   return r.value;
 }
 function loadPolicyFromGit(paths, baseSha) {
-  const repoRoot = dirname5(paths.root);
+  const repoRoot = paths.repoRoot;
   const text = showFileAtRev(repoRoot, baseSha, POLICY_REL);
   if (text === null) {
     throw new PolicyError(`policy.yaml not found at ${baseSha}:${POLICY_REL}`);
@@ -10495,7 +10495,7 @@ var init_env = __esm({
 // src/io/supervisor.ts
 import { spawn } from "node:child_process";
 import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname6, join as join4 } from "node:path";
+import { dirname as dirname5, join as join4 } from "node:path";
 function activitySignal(logPath, watchDir) {
   let sig = 0;
   try {
@@ -10515,8 +10515,8 @@ function superviseWorker(spec) {
   const pollIntervalMs = spec.pollIntervalMs ?? 1e3;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 1e4;
   return new Promise((resolve2) => {
-    mkdirSync4(dirname6(spec.logPath), { recursive: true });
-    mkdirSync4(dirname6(spec.heartbeatPath), { recursive: true });
+    mkdirSync4(dirname5(spec.logPath), { recursive: true });
+    mkdirSync4(dirname5(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
     const logFd = openSync2(spec.logPath, "a");
     let timedOut = false;
@@ -10968,11 +10968,7 @@ var init_verifier = __esm({
 // src/app/worker.ts
 import { createHash as createHash2 } from "node:crypto";
 import { readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
-import { dirname as dirname7 } from "node:path";
 import { hostname as hostname3 } from "node:os";
-function repoRootOf(deps) {
-  return dirname7(deps.paths.root);
-}
 function nextRunNumber(deps, id) {
   const nums = listRunIds(deps.paths, id).map((r) => Number(r.slice("run-".length)));
   return (nums.length > 0 ? Math.max(...nums) : 0) + 1;
@@ -10989,7 +10985,7 @@ function startRun(deps, id) {
   const worktreeDir = paths.worktree(id, run2);
   const branch = runBranch(id, run2);
   const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
-  worktreeAdd(repoRootOf(deps), worktreeDir, branch, st.base_sha);
+  worktreeAdd(paths.repoRoot, worktreeDir, branch, st.base_sha);
   const startedAt = deps.clock.nowIso();
   writeLease(paths, id, run2, {
     run_id: run2,
@@ -11015,8 +11011,8 @@ function startRun(deps, id) {
       }
     });
   } catch (err2) {
-    worktreeRemove(repoRootOf(deps), worktreeDir);
-    deleteBranch(repoRootOf(deps), branch);
+    worktreeRemove(paths.repoRoot, worktreeDir);
+    deleteBranch(paths.repoRoot, branch);
     throw err2;
   }
   return { runId: run2, worktreeDir, attemptNumber };
@@ -11090,7 +11086,7 @@ async function runWorkerBody(deps, id, runId2, launcher) {
     writeFileSync3(paths.diffPatch(id, runId2), patch);
     result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     const report = verify({
-      repoRoot: repoRootOf(deps),
+      repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: "HEAD",
@@ -11358,7 +11354,7 @@ init_constants();
 init_validate();
 import { spawn as spawn2 } from "node:child_process";
 import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync7, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname8, join as join7 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/core/stats.ts
 function aggregate(records) {
@@ -11656,7 +11652,7 @@ var validate = (ctx) => {
   if (!parsed.ok || parsed.value === null) {
     throw new CliError(`invalid task.yaml: ${parsed.errors.join("; ")}`, 1);
   }
-  const repoRoot = dirname8(paths.root);
+  const repoRoot = paths.repoRoot;
   const baseSha = resolveCommit(repoRoot, parsed.value.base_sha ?? "HEAD");
   const frozenTask = { ...parsed.value, base_sha: baseSha };
   const yamlText = dump(frozenTask, { lineWidth: 120 });
@@ -11710,7 +11706,7 @@ var run = (ctx) => {
   const child = spawn2(
     process.execPath,
     [script, "_worker-run", id, "--run", started.runId, "--router-dir", paths.root],
-    { detached: true, stdio: "ignore", cwd: dirname8(paths.root), env: process.env }
+    { detached: true, stdio: "ignore", cwd: paths.repoRoot, env: process.env }
   );
   if (child.pid !== void 0) {
     updateLease(deps, id, started.runId, { supervisor_pid: child.pid, supervisor_pgid: child.pid });
@@ -11747,7 +11743,7 @@ var merge = (ctx) => {
   if (st.state !== "PASSED") throw new CliError(`${id} is ${st.state}, not PASSED`, 1);
   const run2 = st.current_run;
   if (run2 === null) throw new CliError(`${id} has no run to merge`, 1);
-  const repoRoot = dirname8(paths.root);
+  const repoRoot = paths.repoRoot;
   const branch = runBranch(id, run2);
   try {
     mergeNoFF(repoRoot, branch);
