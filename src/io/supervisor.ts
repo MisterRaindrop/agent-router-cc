@@ -119,7 +119,10 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
     if (pgid !== undefined) {
       spec.onPgid?.(pgid);
 
+      let killing = false;
       const escalateKill = (): void => {
+        if (killing) return; // run once — the stall/wall watchdogs may fire repeatedly
+        killing = true;
         killProcessGroup(pgid, 'SIGTERM');
         timers.push(setTimeout(() => killProcessGroup(pgid, 'SIGKILL'), sigkillGraceMs));
       };

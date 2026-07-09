@@ -9,7 +9,7 @@ import { aggregate } from '../core/stats.ts';
 import { hashContract } from '../core/contractHash.ts';
 import { isTerminal } from '../core/stateMachine.ts';
 import { systemClock } from '../io/clock.ts';
-import { deleteBranch, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
+import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import * as store from '../io/store.ts';
@@ -18,8 +18,8 @@ import { recover } from '../app/recover.ts';
 import { rebuildRegistry } from '../app/registry.ts';
 import { loadPolicyFromGit } from '../app/policyLoad.ts';
 import { codexLauncher } from '../app/codexLauncher.ts';
-import { runWorkerBody, startRun } from '../app/worker.ts';
-import { CliError, emit, out } from './output.ts';
+import { runWorkerBody, startRun, updateLease } from '../app/worker.ts';
+import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
 
 export interface Ctx {
@@ -197,9 +197,11 @@ const run: Handler = (ctx) => {
     [script, '_worker-run', id, '--run', started.runId, '--router-dir', paths.root],
     { detached: true, stdio: 'ignore', cwd: dirname(paths.root), env: process.env },
   );
-  const lease = store.readLease(paths, id, started.runId);
-  if (lease !== null && child.pid !== undefined) {
-    store.writeLease(paths, id, started.runId, { ...lease, supervisor_pid: child.pid });
+  // The detached child (_worker-run) is its own process-group leader: record its
+  // pid as BOTH the supervisor pid and the supervisor's group. Locked RMW so it
+  // can't clobber the child's concurrent worker_pgid write.
+  if (child.pid !== undefined) {
+    updateLease(deps, id, started.runId, { supervisor_pid: child.pid, supervisor_pgid: child.pid });
   }
   child.unref();
   emit(ctx.json, { ok: true, id, run: started.runId, state: 'RUNNING', supervisor_pid: child.pid }, () =>
@@ -238,7 +240,9 @@ const merge: Handler = (ctx) => {
   try {
     mergeNoFF(repoRoot, branch);
   } catch (e) {
-    throw new CliError(`merge failed: ${(e as Error).message}`, 1);
+    // Restore the working tree — never leave the user in a half-merged state.
+    mergeAbort(repoRoot);
+    throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}`, 1);
   }
   transition(deps, id, 'MERGED', { actor: 'cli:merge', runId: run });
   // Cleanup: remove the worktree and delete the run branch.
@@ -323,7 +327,13 @@ const cancel: Handler = (ctx) => {
   }
   if (st.state === 'RUNNING' && st.current_run) {
     const lease = store.readLease(paths, id, st.current_run);
-    if (lease && lease.worker_pgid > 1) killProcessGroup(lease.worker_pgid, 'SIGKILL');
+    if (lease) {
+      // Kill the supervisor group FIRST so _worker-run can't proceed to verify/
+      // finalize after we cancel, then the worker group.
+      const supGroup = lease.supervisor_pgid ?? lease.supervisor_pid;
+      if (supGroup > 1) killProcessGroup(supGroup, 'SIGKILL');
+      if (lease.worker_pgid > 1) killProcessGroup(lease.worker_pgid, 'SIGKILL');
+    }
   }
   const next = transition(deps, id, 'CANCELLED', { actor: 'cli:cancel', runId: st.current_run });
   emit(ctx.json, { ok: true, id, state: next.state }, () => `${id} CANCELLED`);

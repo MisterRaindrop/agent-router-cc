@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { MetricRecord, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
+import { hostname } from 'node:os';
+import type { Lease, MetricRecord, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
 import { countsAsAttempt } from '../core/exitTaxonomy.ts';
-import { commitAll, rawDiff, resolveCommit, worktreeAdd } from '../io/git.ts';
+import { commitAll, deleteBranch, rawDiff, worktreeAdd, worktreeRemove } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
-import { runBranch } from '../io/paths.ts';
+import { withGlobalLock } from '../io/lock.ts';
+import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from './policyLoad.ts';
@@ -69,14 +71,8 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
   if (st.base_sha === null) throw new RunStateError(`task ${id} has no frozen base_sha`);
 
   const limit = safeMaxConcurrency(deps);
-  const runningElsewhere = store
-    .listTaskIds(paths)
-    .filter((t) => t !== id)
-    .filter((t) => currentState(paths, t)?.state === 'RUNNING').length;
-  if (runningElsewhere >= limit) throw new ConcurrencyLimitError(limit);
-
   const attemptNumber = st.attempt_number + 1;
-  const run = `run-${String(nextRunNumber(deps, id)).padStart(3, '0')}`;
+  const run = fmtRunId(nextRunNumber(deps, id));
   const worktreeDir = paths.worktree(id, run);
   const branch = runBranch(id, run);
   const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
@@ -91,19 +87,43 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
     attempt_number: attemptNumber,
     supervisor_pid: process.pid,
     worker_pgid: 0, // filled by runWorkerBody once the worker is spawned
-    host: hostName(),
+    host: hostname(),
     started_at: startedAt,
     max_wall_minutes: maxWallMinutes,
     wall_deadline: new Date(Date.parse(startedAt) + maxWallMinutes * 60_000).toISOString(),
     heartbeat_path: 'heartbeat',
   });
 
-  transition(deps, id, 'RUNNING', { actor: 'cli:run', runId: run, meta: { attempt_number: attemptNumber } });
+  try {
+    // The slot check runs INSIDE the transition's global lock, so two concurrent
+    // `router run` processes cannot both pass it (atomic check-then-RUNNING).
+    transition(deps, id, 'RUNNING', {
+      actor: 'cli:run',
+      runId: run,
+      meta: { attempt_number: attemptNumber },
+      guard: (p) => {
+        const running = store
+          .listTaskIds(p)
+          .filter((t) => t !== id)
+          .filter((t) => currentState(p, t)?.state === 'RUNNING').length;
+        if (running >= limit) throw new ConcurrencyLimitError(limit);
+      },
+    });
+  } catch (err) {
+    // Roll back the worktree/branch created for a run that won't start.
+    worktreeRemove(repoRootOf(deps), worktreeDir);
+    deleteBranch(repoRootOf(deps), branch);
+    throw err;
+  }
   return { runId: run, worktreeDir, attemptNumber };
 }
 
-function hostName(): string {
-  return process.env.HOSTNAME ?? 'localhost';
+/** Merge a patch into a run's lease under the global lock (avoids read-modify-write clobber). */
+export function updateLease(deps: TransitionDeps, id: string, run: string, patch: Partial<Lease>): void {
+  withGlobalLock(deps.paths.lockDir, () => {
+    const lease = store.readLease(deps.paths, id, run);
+    if (lease !== null) store.writeLease(deps.paths, id, run, { ...lease, ...patch });
+  });
 }
 function safeMaxConcurrency(deps: TransitionDeps): number {
   try {
@@ -149,10 +169,7 @@ export async function runWorkerBody(
     watchDir: worktreeDir,
     maxWallMs: task.max_wall_minutes * 60_000,
     stallMs: (policyGit.worker?.stall_minutes ?? 10) * 60_000,
-    onPgid: (pgid) => {
-      const lease = store.readLease(paths, id, runId);
-      if (lease !== null) store.writeLease(paths, id, runId, { ...lease, worker_pgid: pgid });
-    },
+    onPgid: (pgid) => updateLease(deps, id, runId, { worker_pgid: pgid }),
   });
 
   // Router owns the checkpoint commit: capture whatever the worker left.

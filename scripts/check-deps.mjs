@@ -11,6 +11,9 @@ const FORBIDDEN = [
   { re: /from\s+['"](node:)?fs(\/promises)?['"]/, msg: "imports 'fs'" },
   { re: /from\s+['"](node:)?child_process['"]/, msg: "imports 'child_process'" },
   { re: /from\s+['"](node:)?process['"]/, msg: "imports 'process'" },
+  // Import-direction: core must not depend on the impure rings (io/app/cli).
+  // Without this, core could import e.g. io/git and transitively shell out.
+  { re: /from\s+['"][^'"]*\/(io|app|cli)\//, msg: 'imports an impure ring (io/app/cli)' },
   { re: /\bchild_process\b/, msg: 'references child_process' },
   { re: /\bprocess\.(env|cwd|kill|exit|argv)\b/, msg: 'reads process.*' },
   { re: /\bDate\.now\b/, msg: 'reads Date.now()' },

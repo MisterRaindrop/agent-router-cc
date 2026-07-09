@@ -18,10 +18,13 @@ function compile(glob: string): RegExp {
     if (c === '*') {
       if (glob[i + 1] === '*') {
         if (glob[i + 2] === '/') {
-          re += '(?:[^/]+/)*'; // ** / => zero or more whole segments
+          re += '(?:[^/]+/)*'; // `**/` => zero or more whole segments
           i += 3;
+        } else if (i + 2 >= glob.length) {
+          re += '.*'; // trailing `**` (e.g. `src/**`) => anything, incl. '/'
+          i += 2;
         } else {
-          re += '.*'; // trailing/standalone ** => anything
+          re += '[^/]*'; // `**` mid-segment, not on a boundary => single segment
           i += 2;
         }
       } else {

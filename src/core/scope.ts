@@ -60,11 +60,19 @@ export function evaluateScope(changes: readonly DiffEntry[], scope: EffectiveSco
       }
     }
 
-    if (entry.status === 'D' && matchAny(entry.path, scope.test_globs)) {
+    // A test is "removed" either by deletion, or by renaming it OUT of test_globs
+    // (which would otherwise silently escape the delete guard).
+    const deletesTest = entry.status === 'D' && matchAny(entry.path, scope.test_globs);
+    const renamesTestAway =
+      entry.status === 'R' &&
+      entry.oldPath !== undefined &&
+      matchAny(entry.oldPath, scope.test_globs) &&
+      !matchAny(entry.path, scope.test_globs);
+    if (deletesTest || renamesTestAway) {
       violations.push({
         kind: 'test_deletion',
-        path: entry.path,
-        detail: 'deletes a file matching test_globs',
+        path: entry.oldPath ?? entry.path,
+        detail: 'removes a file matching test_globs',
       });
     }
 
