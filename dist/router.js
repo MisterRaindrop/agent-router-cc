@@ -9829,14 +9829,14 @@ function collectDiff(cwd, base, head) {
   );
   const entries = [];
   for (const [path, ns] of nameStatus) {
-    const num = numstat.get(path);
+    const num2 = numstat.get(path);
     entries.push({
       status: ns.status,
       path,
       ...ns.oldPath !== void 0 ? { oldPath: ns.oldPath } : {},
-      added: num?.added ?? 0,
-      deleted: num?.deleted ?? 0,
-      binary: num?.binary ?? false
+      added: num2?.added ?? 0,
+      deleted: num2?.deleted ?? 0,
+      binary: num2?.binary ?? false
     });
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));
@@ -10652,6 +10652,48 @@ var init_taskLoad = __esm({
   }
 });
 
+// src/app/usage.ts
+function parseCodexUsage(logText) {
+  let found = false;
+  let input = 0;
+  let output = 0;
+  let cached = 0;
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let o;
+    try {
+      o = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const rec = o;
+    if (rec.type === "turn.completed" && rec.usage) {
+      found = true;
+      input += num(rec.usage.input_tokens);
+      output += num(rec.usage.output_tokens);
+      cached += num(rec.usage.cached_input_tokens);
+    }
+  }
+  return found ? { input, output, cached } : null;
+}
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+function estimateCostUsd(usage, env) {
+  const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? "");
+  const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? "");
+  if (!Number.isFinite(pin) && !Number.isFinite(pout)) return null;
+  const inCost = (Number.isFinite(pin) ? pin : 0) * (usage.input / 1e6);
+  const outCost = (Number.isFinite(pout) ? pout : 0) * (usage.output / 1e6);
+  return inCost + outCost;
+}
+var init_usage = __esm({
+  "src/app/usage.ts"() {
+    "use strict";
+  }
+});
+
 // src/core/glob.ts
 function compile(glob) {
   const cached = cache.get(glob);
@@ -11023,6 +11065,8 @@ async function runWorkerBody(deps, id, runId2, launcher) {
     onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
   });
   if (outcome.exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
+  const usage = parseCodexUsage(safeRead(paths.workerLog(id, runId2)));
+  const costUsd = usage !== null ? estimateCostUsd(usage, process.env) : null;
   const result2 = {
     run_id: runId2,
     task_id: id,
@@ -11035,7 +11079,9 @@ async function runWorkerBody(deps, id, runId2, launcher) {
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
-    worker: launcher.model !== void 0 ? { kind: launcher.kind, model: launcher.model } : { kind: launcher.kind }
+    worker: launcher.model !== void 0 ? { kind: launcher.kind, model: launcher.model } : { kind: launcher.kind },
+    ...usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {},
+    ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
   let finalState;
   if (outcome.exitClass === "ok") {
@@ -11108,6 +11154,7 @@ var init_worker = __esm({
     init_supervisor();
     init_policyLoad();
     init_taskLoad();
+    init_usage();
     init_verifier();
     init_transition();
     ConcurrencyLimitError = class extends Error {
