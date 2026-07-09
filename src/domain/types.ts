@@ -39,6 +39,7 @@ export type WhitelistTemplate = string[];
 export interface WorkerPolicy {
   kind: WorkerKind;
   api_key_env: string;
+  model?: string; // pinned model slug passed to the worker (codex -m); recorded in runs
   max_wall_minutes_default?: number;
   stall_minutes?: number;
 }
@@ -202,6 +203,7 @@ export interface MetricRecord {
   task_id: string;
   run_id: string;
   attempt_number: number;
+  model: string | null;
   exit_class: ExitClass;
   verifier_result: 'PASSED' | 'FAILED' | null;
   first_pass: boolean;

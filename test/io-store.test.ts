@@ -110,6 +110,7 @@ test('metrics append + read; listTaskIds / listRunIds sorted', () => {
       task_id: 't1',
       run_id: 'run-001',
       attempt_number: 1,
+      model: 'codex-test',
       exit_class: 'ok',
       verifier_result: 'PASSED',
       first_pass: true,

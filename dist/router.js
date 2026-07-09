@@ -9530,6 +9530,7 @@ var init_policy_schema = __esm({
           properties: {
             kind: { enum: ["codex"] },
             api_key_env: { type: "string", minLength: 1 },
+            model: { type: "string", minLength: 1 },
             max_wall_minutes_default: { type: "integer", minimum: 1 },
             stall_minutes: { type: "integer", minimum: 1 }
           }
@@ -10680,6 +10681,22 @@ function parseCodexUsage(logText) {
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
+function parseCodexModel(logText) {
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let o;
+    try {
+      o = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const rec = o;
+    const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
+    if (typeof m === "string" && m !== "") return m;
+  }
+  return null;
+}
 function estimateCostUsd(usage, env) {
   const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? "");
   const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? "");
@@ -11061,8 +11078,10 @@ async function runWorkerBody(deps, id, runId2, launcher) {
     onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
   });
   if (outcome.exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
-  const usage = parseCodexUsage(safeRead(paths.workerLog(id, runId2)));
+  const log = safeRead(paths.workerLog(id, runId2));
+  const usage = parseCodexUsage(log);
   const costUsd = usage !== null ? estimateCostUsd(usage, process.env) : null;
+  const model = parseCodexModel(log) ?? launcher.model;
   const result2 = {
     run_id: runId2,
     task_id: id,
@@ -11075,7 +11094,7 @@ async function runWorkerBody(deps, id, runId2, launcher) {
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
-    worker: launcher.model !== void 0 ? { kind: launcher.kind, model: launcher.model } : { kind: launcher.kind },
+    worker: model !== void 0 ? { kind: launcher.kind, model } : { kind: launcher.kind },
     ...usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
@@ -11124,6 +11143,7 @@ function appendRunMetric(deps, result2, st) {
     task_id: result2.task_id,
     run_id: result2.run_id,
     attempt_number: result2.attempt_number,
+    model: result2.worker.model ?? null,
     exit_class: result2.exit_class,
     verifier_result: result2.verifier?.result ?? null,
     first_pass: result2.attempt_number === 1 && result2.verifier?.result === "PASSED",
@@ -11486,11 +11506,12 @@ function recover(deps, opts = {}) {
 init_policyLoad();
 
 // src/app/codexLauncher.ts
-function codexLauncher(_policy, opts = {}) {
+function codexLauncher(policy, opts = {}) {
   const bin = process.env.ROUTER_CODEX_BIN ?? "codex";
+  const model = opts.model ?? policy.worker?.model;
   return {
     kind: "codex",
-    ...opts.model !== void 0 ? { model: opts.model } : {},
+    ...model !== void 0 ? { model } : {},
     buildArgv(ctx) {
       const argv = [
         bin,
@@ -11503,7 +11524,7 @@ function codexLauncher(_policy, opts = {}) {
         "--skip-git-repo-check",
         "--json"
       ];
-      if (opts.model !== void 0) argv.push("-m", opts.model);
+      if (model !== void 0) argv.push("-m", model);
       return argv;
     }
   };

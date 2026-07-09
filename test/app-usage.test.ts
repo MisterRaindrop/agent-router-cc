@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { estimateCostUsd, parseCodexUsage } from '../src/app/usage.ts';
+import { estimateCostUsd, parseCodexModel, parseCodexUsage } from '../src/app/usage.ts';
 
 test('parseCodexUsage sums turn.completed usage across turns', () => {
   const log = [
@@ -16,6 +16,13 @@ test('parseCodexUsage sums turn.completed usage across turns', () => {
 
 test('parseCodexUsage returns null when no usage present', () => {
   assert.equal(parseCodexUsage('no json here\n{"type":"turn.started"}\n'), null);
+});
+
+test('parseCodexModel picks up a model field when present, null otherwise', () => {
+  assert.equal(parseCodexModel('{"type":"thread.started","model":"gpt-5.5"}\n'), 'gpt-5.5');
+  assert.equal(parseCodexModel('{"type":"turn.started","turn":{"model":"o3"}}\n'), 'o3');
+  // current real codex exec --json carries no model field:
+  assert.equal(parseCodexModel('{"type":"thread.started","thread_id":"x"}\n{"type":"turn.completed"}\n'), null);
 });
 
 test('estimateCostUsd is null without configured prices, computed with them', () => {

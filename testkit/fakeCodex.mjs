@@ -5,7 +5,9 @@
 import { writeFileSync } from 'node:fs';
 
 writeFileSync('src/a.ts', 'export const x = 2; // edited by fake codex\n');
-// Mirror codex exec --json: a turn.completed event carrying token usage.
+// Mirror codex exec --json: a thread.started (carrying a model, future-proofing the
+// model parser) and a turn.completed carrying token usage.
+process.stdout.write(JSON.stringify({ type: 'thread.started', model: 'fake-model-1' }) + '\n');
 process.stdout.write(
   JSON.stringify({
     type: 'turn.completed',
