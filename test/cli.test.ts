@@ -109,6 +109,21 @@ test('list --json and stats --json render', async () => {
   }
 });
 
+test('list --state filters (regression #10: --state was ignored)', async () => {
+  const dir = repoWithPolicy();
+  try {
+    await cli(dir, ['new', 'draft-task']);
+    await cli(dir, ['new', 'queued-task']);
+    await cli(dir, ['validate', 'queued-task']);
+    await cli(dir, ['queue', 'queued-task']);
+    const l = await cli(dir, ['list', '--state', 'QUEUED', '--json']);
+    const ids = JSON.parse(l.out).tasks.map((t: { id: string }) => t.id);
+    assert.deepEqual(ids, ['queued-task']);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 test('cancel moves a task to CANCELLED', async () => {
   const dir = repoWithPolicy();
   try {

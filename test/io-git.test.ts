@@ -122,6 +122,44 @@ test('rawDiff + applyCheck: clean patch applies, garbage does not', () => {
   }
 });
 
+test('collectDiff counts lines for a path containing a TAB (numstat parse, #8)', () => {
+  const dir = fx.initRepo();
+  try {
+    const tabName = 'weird\tname.txt';
+    fx.write(dir, tabName, 'a\nb\n');
+    const base = fx.addCommit(dir, 'base');
+    fx.write(dir, tabName, 'a\nB\nc\nd\n');
+    const head = fx.addCommit(dir, 'edit');
+    const m = byPath(collectDiff(dir, base, head));
+    const e = m.get(tabName);
+    assert.ok(e, 'tab-named file must be found (path not truncated)');
+    assert.ok((e!.added + e!.deleted) > 0, 'line churn must be counted, not silently 0');
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('mergeAbort restores the working tree after a conflict (#11)', async () => {
+  const { mergeNoFF, mergeAbort } = await import('../src/io/git.ts');
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'f.txt', 'base\n');
+    fx.addCommit(dir, 'base');
+    fx.git(dir, ['checkout', '-q', '-b', 'feature']);
+    fx.write(dir, 'f.txt', 'feature\n');
+    fx.addCommit(dir, 'feat');
+    fx.git(dir, ['checkout', '-q', 'main']);
+    fx.write(dir, 'f.txt', 'mainline\n');
+    fx.addCommit(dir, 'main-edit');
+    assert.throws(() => mergeNoFF(dir, 'feature'));
+    mergeAbort(dir);
+    // clean tree, no MERGE_HEAD, HEAD content intact
+    assert.equal(fx.git(dir, ['status', '--porcelain']).trim(), '');
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 test('worktreeAdd creates a branch; worktreeRemove cleans up', () => {
   const dir = fx.initRepo();
   try {
