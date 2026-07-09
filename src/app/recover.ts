@@ -1,0 +1,88 @@
+import { statSync } from 'node:fs';
+import { hostname } from 'node:os';
+import type { Lease } from '../domain/types.ts';
+import type { RouterPaths } from '../io/paths.ts';
+import { isProcessAlive } from '../io/lock.ts';
+import { killProcessGroup } from '../io/signals.ts';
+import * as store from '../io/store.ts';
+import { rebuildRegistry } from './registry.ts';
+import { currentState, transition, type TransitionDeps } from './transition.ts';
+
+// Crash recovery. A worker is a detached process group whose fate lives on disk
+// (lease + heartbeat). recover reconciles RUNNING tasks whose supervisor died or
+// whose heartbeat went stale: it kills any lingering process group, then marks
+// the run STALE. Runs from the SessionStart hook and manually — fully idempotent.
+
+export interface RecoverOptions {
+  /** A heartbeat older than this (ms) marks the run dead. Default 60s (3x interval). */
+  heartbeatStaleMs?: number;
+}
+
+export interface RecoverResult {
+  recovered: { id: string; run: string | null; reason: string }[];
+  stillRunning: string[];
+  reindexErrors: { id: string; error: string }[];
+}
+
+/** Returns a death reason, or null if the run appears healthy. */
+function runDeadReason(
+  paths: RouterPaths,
+  id: string,
+  lease: Lease | null,
+  heartbeatStaleMs: number,
+): string | null {
+  if (lease === null) return 'no_lease';
+
+  const sameHost = lease.host === hostname();
+  if (sameHost && !isProcessAlive(lease.supervisor_pid)) return 'supervisor_dead';
+
+  let heartbeatAgeMs: number | null = null;
+  try {
+    heartbeatAgeMs = Date.now() - statSync(paths.heartbeat(id, lease.run_id)).mtimeMs;
+  } catch {
+    heartbeatAgeMs = null;
+  }
+  if (heartbeatAgeMs === null) return 'no_heartbeat';
+  if (heartbeatAgeMs > heartbeatStaleMs) return 'heartbeat_stale';
+
+  const deadline = Date.parse(lease.wall_deadline);
+  if (Number.isFinite(deadline) && Date.now() > deadline) return 'wall_deadline_exceeded';
+
+  return null;
+}
+
+export function recover(deps: TransitionDeps, opts: RecoverOptions = {}): RecoverResult {
+  const { paths } = deps;
+  const heartbeatStaleMs = opts.heartbeatStaleMs ?? 60_000;
+
+  // Repair projections first so we read authoritative state.
+  const { errors: reindexErrors } = rebuildRegistry(deps);
+
+  const recovered: RecoverResult['recovered'] = [];
+  const stillRunning: string[] = [];
+
+  for (const id of store.listTaskIds(paths)) {
+    const st = currentState(paths, id);
+    if (st === null || st.state !== 'RUNNING') continue;
+
+    const run = st.current_run;
+    const lease = run !== null ? store.readLease(paths, id, run) : null;
+    const reason = runDeadReason(paths, id, lease, heartbeatStaleMs);
+
+    if (reason === null) {
+      stillRunning.push(id);
+      continue;
+    }
+
+    // Best-effort: reap any lingering process group before marking STALE.
+    if (lease !== null) killProcessGroup(lease.worker_pgid, 'SIGKILL');
+    transition(deps, id, 'STALE', {
+      actor: 'recover',
+      runId: run,
+      meta: { reason: `router_crash:${reason}` },
+    });
+    recovered.push({ id, run, reason });
+  }
+
+  return { recovered, stillRunning, reindexErrors };
+}
