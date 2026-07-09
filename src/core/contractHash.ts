@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { createHash } from 'node:crypto';
 
 // Contract freeze hash (design D1). Byte-exact over an LF-normalized, canonical

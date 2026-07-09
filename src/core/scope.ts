@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type {
   DiffEntry,
   EffectiveScope,
@@ -9,7 +12,7 @@ import type {
 import { matchAny } from './glob.ts';
 
 // Merge the frozen task contract with the (git-object) policy into the scope the
-// verifier actually enforces. forbidden = policy ∪ task; test_globs from policy;
+// verifier actually enforces. forbidden = policy  union  task; test_globs from policy;
 // max_changed_lines capped by policy. PURE.
 export function buildEffectiveScope(task: TaskYaml, policy: Policy): EffectiveScope {
   const policyMax = policy.scope.max_changed_lines;
@@ -23,10 +26,10 @@ export function buildEffectiveScope(task: TaskYaml, policy: Policy): EffectiveSc
 }
 
 // Diff-side scope enforcement. This is the SOLE point where "what may this task
-// touch" is enforced — the worker prompt's scope is only guidance. PURE: consumes
+// touch" is enforced - the worker prompt's scope is only guidance. PURE: consumes
 // an already-parsed diff (from io/git) and a precomputed EffectiveScope.
 //
-// Rules (see design §10 / D11):
+// Rules (see design section 10 / D11):
 //   - empty diff              => fail (nothing was produced)
 //   - a changed path not in allowed_globs (and any forbidden match) => fail
 //   - for renames/copies, BOTH old and new paths must satisfy scope
@@ -45,7 +48,7 @@ export function evaluateScope(changes: readonly DiffEntry[], scope: EffectiveSco
     return {
       ok: false,
       changedLines: 0,
-      violations: [{ kind: 'empty_diff', detail: 'diff is empty — worker produced no changes' }],
+      violations: [{ kind: 'empty_diff', detail: 'diff is empty - worker produced no changes' }],
     };
   }
 

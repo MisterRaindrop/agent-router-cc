@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { EventRecord, StateFile, TaskState } from '../domain/types.ts';
 import { canTransition } from './stateMachine.ts';
 
@@ -5,7 +8,7 @@ import { canTransition } from './stateMachine.ts';
 // events.jsonl is the source of truth; state.json / registry.json are just
 // projections of this function. PURE: no fs, no clock.
 //
-// Folding also VERIFIES the log's integrity — a hand-edited events.jsonl with a
+// Folding also VERIFIES the log's integrity - a hand-edited events.jsonl with a
 // seq gap, a wrong `from`, or an illegal transition is rejected here. That is
 // how tampering with state is detected.
 
@@ -42,7 +45,7 @@ export function foldEvents(id: string, events: readonly EventRecord[]): StateFil
   for (const e of events) {
     if (e.seq !== expectedSeq) {
       throw new CorruptEventLogError(
-        `task ${id}: event seq gap — expected ${expectedSeq}, got ${e.seq}`,
+        `task ${id}: event seq gap - expected ${expectedSeq}, got ${e.seq}`,
       );
     }
     expectedSeq += 1;

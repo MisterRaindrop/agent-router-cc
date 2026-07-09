@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { matchAny, matchGlob } from '../src/core/glob.ts';
@@ -21,7 +24,7 @@ const scope = (over: Partial<EffectiveScope> = {}): EffectiveScope => ({
   ...over,
 });
 
-// ── glob ──
+// -- glob --
 test('glob: * stays within a segment, ** spans segments', () => {
   assert.equal(matchGlob('src/a.ts', 'src/*'), true);
   assert.equal(matchGlob('src/a/b.ts', 'src/*'), false);
@@ -40,7 +43,7 @@ test('glob: dotfiles and ? and specials', () => {
   assert.equal(matchAny('src/a.ts', ['nope/**', 'src/**']), true);
 });
 
-// ── evaluateScope ──
+// -- evaluateScope --
 test('empty diff fails', () => {
   const v = evaluateScope([], scope());
   assert.equal(v.ok, false);

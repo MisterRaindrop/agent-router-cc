@@ -1,9 +1,12 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { execFileSync } from 'node:child_process';
 import type { DiffEntry, DiffStatus } from '../domain/types.ts';
 
 // Typed git wrappers. Every call is execFileSync with an argv array (shell:false)
 // so nothing is interpreted by a shell. All path-bearing output is read with -z
-// (NUL-terminated), never the human/quoted format — this is the only safe way to
+// (NUL-terminated), never the human/quoted format - this is the only safe way to
 // handle paths with spaces, tabs, or unicode.
 
 export class GitError extends Error {
@@ -95,7 +98,7 @@ function parseNumstat(out: string): Map<string, { added: number; deleted: number
   while (i < toks.length) {
     const head = toks[i++]!;
     // Format: `<added>\t<deleted>\t<path>`. A path may itself contain TABs (git -z
-    // does NOT quote paths), so everything after the second TAB is the path —
+    // does NOT quote paths), so everything after the second TAB is the path -
     // do NOT lose it to destructuring. An empty path signals a rename entry.
     const parts = head.split('\t');
     const addedStr = parts[0] ?? '';

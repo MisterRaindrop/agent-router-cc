@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Dependency-direction guard: src/core/** must stay PURE.
 // No fs, no child_process, no process.*, no wall-clock / randomness reads.
 // This is what makes gate logic unit-testable without git/codex AND
@@ -43,7 +46,7 @@ for (const file of walk(CORE_DIR)) {
   src.split('\n').forEach((line, i) => {
     for (const { re, msg } of FORBIDDEN) {
       if (re.test(line)) {
-        console.error(`${file}:${i + 1}: core purity violation — ${msg}\n    ${line.trim()}`);
+        console.error(`${file}:${i + 1}: core purity violation - ${msg}\n    ${line.trim()}`);
         violations++;
       }
     }
@@ -51,7 +54,7 @@ for (const file of walk(CORE_DIR)) {
 }
 
 if (violations > 0) {
-  console.error(`\ncheck:deps FAILED — ${violations} core-purity violation(s).`);
+  console.error(`\ncheck:deps FAILED - ${violations} core-purity violation(s).`);
   process.exit(1);
 }
-console.log('check:deps OK — src/core is pure.');
+console.log('check:deps OK - src/core is pure.');

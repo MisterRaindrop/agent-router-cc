@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Stand-in for codex-cli used by the CLI e2e test (ROUTER_CODEX_BIN). Ignores its
 // args (prompt, -C, flags), makes an in-scope edit in its cwd (the worktree), and
 // emits a JSONL usage line like `codex exec --json` would.

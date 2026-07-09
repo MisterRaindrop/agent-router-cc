@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { EventRecord, RegistryEntry, StateFile, TaskState } from '../domain/types.ts';
 import type { Clock } from '../io/clock.ts';
 import type { RouterPaths } from '../io/paths.ts';
@@ -7,8 +10,8 @@ import { assertTransition } from '../core/stateMachine.ts';
 import { foldEvents } from '../core/projectState.ts';
 
 // The ONE guarded state-mutation primitive. Every state change funnels through
-// here, under the global lock: read events → fold (validates integrity) →
-// assert the transition is legal → append event → rewrite the state.json and
+// here, under the global lock: read events -> fold (validates integrity) ->
+// assert the transition is legal -> append event -> rewrite the state.json and
 // registry projections. Idempotency is the caller's concern (verbs skip a
 // no-op transition); this primitive is strict.
 

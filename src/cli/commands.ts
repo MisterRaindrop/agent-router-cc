@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,7 +37,7 @@ function depsFor(ctx: Ctx): { deps: TransitionDeps; paths: RouterPaths } {
   const explicit = flagStr(ctx.args.flags, 'router-dir');
   const rd = explicit ?? findRouterDir(ctx.cwd);
   if (rd === undefined || rd === null || !existsSync(rd)) {
-    throw new CliError('no .router found — run `router init` first', 3);
+    throw new CliError('no .router found - run `router init` first', 3);
   }
   const paths = routerPaths(rd);
   return { deps: { paths, clock: systemClock }, paths };
@@ -86,7 +89,7 @@ function taskTemplate(id: string, title: string): string {
   );
 }
 
-// ── verbs ──────────────────────────────────────────────────────────────────
+// -- verbs ------------------------------------------------------------------
 
 const init: Handler = (ctx) => {
   const root = join(ctx.cwd, ROUTER_DIR);
@@ -118,7 +121,7 @@ const newTask: Handler = (ctx) => {
   if (!existsSync(paths.contractMd(id))) writeFileSync(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
   if (!existsSync(paths.planMd(id))) writeFileSync(paths.planMd(id), `# Plan: ${title}\n`);
   emit(ctx.json, { ok: true, id, state: 'DRAFT', task_yaml: paths.taskYaml(id) }, () =>
-    `created ${id} (DRAFT) — edit ${paths.taskYaml(id)} and TASK_CONTRACT.md, then \`router validate ${id}\``,
+    `created ${id} (DRAFT) - edit ${paths.taskYaml(id)} and TASK_CONTRACT.md, then \`router validate ${id}\``,
   );
   return 0;
 };
@@ -240,7 +243,7 @@ const merge: Handler = (ctx) => {
   try {
     mergeNoFF(repoRoot, branch);
   } catch (e) {
-    // Restore the working tree — never leave the user in a half-merged state.
+    // Restore the working tree - never leave the user in a half-merged state.
     mergeAbort(repoRoot);
     throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}`, 1);
   }
@@ -297,7 +300,7 @@ const result: Handler = (ctx) => {
     /* no log */
   }
   emit(ctx.json, { ok: true, result: res }, () => {
-    const checks = (res.verifier?.checks ?? []).map((c) => `  ${c.ok ? '✓' : '✗'} ${c.id}${c.detail ? ` — ${c.detail}` : ''}`).join('\n');
+    const checks = (res.verifier?.checks ?? []).map((c) => `  ${c.ok ? 'ok' : 'x'} ${c.id}${c.detail ? ` - ${c.detail}` : ''}`).join('\n');
     return `${id} ${run}: exit=${res.exit_class} verifier=${res.verifier?.result ?? 'n/a'}\n${checks}\n--- log tail ---\n${tail}`;
   });
   return 0;
@@ -362,7 +365,7 @@ const selftestCmd: Handler = async (ctx) => {
   const { selftest } = await import('../app/selftest.ts');
   const r = await selftest({ keep: flagBool(ctx.args.flags, 'keep') });
   emit(ctx.json, { ok: r.ok, canaries: r.canaries }, () =>
-    r.canaries.map((c) => `  ${c.ok ? '✓' : '✗'} ${c.name}: ${c.actual} (${c.detail})`).join('\n') +
+    r.canaries.map((c) => `  ${c.ok ? 'ok' : 'x'} ${c.name}: ${c.actual} (${c.detail})`).join('\n') +
     `\n${r.ok ? 'selftest PASSED' : 'selftest FAILED'}`,
   );
   return r.ok ? 0 : 1;
@@ -394,8 +397,8 @@ export function helpText(): string {
   return (
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
-    `Lifecycle:  init · new · validate · queue · run · status · result · merge\n` +
-    `Ops:        list · stats · cancel · recover · reindex · selftest\n\n` +
+    `Lifecycle:  init * new * validate * queue * run * status * result * merge\n` +
+    `Ops:        list * stats * cancel * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep\n`
   );
 }

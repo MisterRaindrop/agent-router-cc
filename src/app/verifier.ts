@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -64,7 +67,7 @@ export function verify(req: VerifyRequest): VerifierReport {
   const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
   const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
   if (patch.trim() === '') {
-    checks.push(fail('diff_applies', 'diff is empty — worker produced no committed change'));
+    checks.push(fail('diff_applies', 'diff is empty - worker produced no committed change'));
     return { result: 'FAILED', checks };
   }
   const tmpBase = mkdtempSync(join(tmpdir(), 'router-verify-base-'));

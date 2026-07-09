@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -50,7 +53,7 @@ test('assertTransition throws IllegalTransitionError', () => {
   assert.throws(() => assertTransition('DRAFT', 'MERGED'), IllegalTransitionError);
 });
 
-// ── foldEvents ──
+// -- foldEvents --
 const ev = (seq: number, from: EventRecord['from'], to: EventRecord['to'], meta?: Record<string, unknown>, run_id: string | null = null): EventRecord => ({
   seq,
   ts: `2026-07-09T00:00:0${seq}.000Z`,

@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ExitClass } from '../domain/types.ts';
 
 // Classify how a worker run ended. env_error is deliberately its own class: it

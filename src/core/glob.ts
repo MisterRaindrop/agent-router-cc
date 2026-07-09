@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Minimal gitignore-style glob matcher over forward-slash paths. PURE.
 //   **   matches zero or more path segments
 //   *    matches within a single segment (not '/')

@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Injected by esbuild `define` at bundle time; undefined when running the
 // TypeScript sources directly via `node src/index.ts` (dev / tests).
 declare const __ROUTER_VERSION__: string | undefined;

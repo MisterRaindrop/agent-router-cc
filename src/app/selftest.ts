@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +14,7 @@ import { createTask, currentState, transition, type TransitionDeps } from './tra
 import { runWorkerBody, startRun, type WorkerLauncher } from './worker.ts';
 
 // `router selftest`: three canaries in a throwaway sandbox. Two must PASS, and
-// one — the trap — MUST be caught and FAIL by the scope check. This is the live
+// one - the trap - MUST be caught and FAIL by the scope check. This is the live
 // proof that the gates actually stop a "confused LLM"; it doubles as CI.
 
 const NODE = process.execPath;

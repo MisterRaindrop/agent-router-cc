@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { flagBool, parseArgs } from './args.ts';
 import { HANDLERS, helpText, versionText } from './commands.ts';
 import { CliError, err, out } from './output.ts';

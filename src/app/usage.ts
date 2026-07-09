@@ -1,7 +1,10 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Parse token usage from a codex `exec --json` event stream (captured in the
 // worker log). codex emits one `turn.completed` event per turn carrying a
 // `usage` object; we sum across turns. Cost is derived only if per-MTok prices
-// are configured (ChatGPT-auth runs have no per-token price → cost stays null).
+// are configured (ChatGPT-auth runs have no per-token price -> cost stays null).
 
 export interface Usage {
   input: number;

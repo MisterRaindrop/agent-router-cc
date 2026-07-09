@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Output helpers. Every verb supports --json (stable machine output); otherwise
 // a compact human line is printed.
 

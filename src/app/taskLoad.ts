@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { readFileSync } from 'node:fs';
 import { load, JSON_SCHEMA } from 'js-yaml';
 import type { TaskYaml } from '../domain/types.ts';

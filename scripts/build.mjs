@@ -1,6 +1,9 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Bundle src/index.ts -> dist/router.js as a single committed file.
 // Users need only Node >= 18 and NO npm install: all deps (js-yaml, ajv) are
-// inlined here. See the design doc's "供应链面收敛" principle.
+// inlined here. See the design doc's "supply-chain surface" principle.
 import esbuild from 'esbuild';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

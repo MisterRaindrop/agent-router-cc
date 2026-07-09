@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // PreToolUse guard: refuse direct edits to router-managed state files under
-// .router/. The deterministic CLI is the ONLY writer of state — an agent editing
+// .router/. The deterministic CLI is the ONLY writer of state - an agent editing
 // state.json / events.jsonl / registry.json etc. would corrupt the source of
 // truth. Human/agent-editable contract files (task.yaml, TASK_CONTRACT.md,
 // PLAN.md, policy.yaml) are allowed. Exit 2 blocks the tool call.
@@ -10,7 +13,7 @@ let raw = '';
 try {
   raw = readFileSync(0, 'utf8');
 } catch {
-  process.exit(0); // no input — nothing to guard
+  process.exit(0); // no input - nothing to guard
 }
 
 let data = {};

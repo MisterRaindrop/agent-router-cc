@@ -1,7 +1,10 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { MetricRecord } from '../domain/types.ts';
 
 // Metrics aggregation for `router stats`. The headline is "cost per verified
-// task" — the honest denominator the M1 exit gate is judged on. PURE.
+// task" - the honest denominator the M1 exit gate is judged on. PURE.
 
 export interface Stats {
   totalRuns: number;

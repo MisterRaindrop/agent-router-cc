@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Synthetic git-repo fixture harness for tests. Builds real temp repos so the
 // git wrappers, scope enforcement, and verifier can be exercised without codex.
 import { execFileSync } from 'node:child_process';

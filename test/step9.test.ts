@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -7,7 +10,7 @@ import { instantiateTemplate, validatePlaceholderValue } from '../src/core/white
 import { runCommand } from '../src/io/proc.ts';
 import { buildWorkerEnv } from '../src/io/env.ts';
 
-// ── whitelist ──
+// -- whitelist --
 test('instantiate substitutes placeholders and keeps literals', () => {
   const r = instantiateTemplate(['cmake', '--build', '{build_dir}'], { build_dir: 'build' });
   assert.deepEqual(r.argv, ['cmake', '--build', 'build']);
@@ -41,7 +44,7 @@ test('control characters in a value are rejected', () => {
   assert.ok(validatePlaceholderValue('d', 'a\nb').length > 0);
 });
 
-// ── proc ──
+// -- proc --
 test('runCommand runs argv with shell:false; captures rc/stdout', () => {
   const dir = mkdtempSync(join(tmpdir(), 'router-proc-'));
   try {
@@ -105,7 +108,7 @@ test('runCommand reports a spawn error for a missing program', () => {
   }
 });
 
-// ── env whitelist ──
+// -- env whitelist --
 test('buildWorkerEnv passes only base vars + the one API key, drops secrets', () => {
   const source = {
     PATH: '/usr/bin',
