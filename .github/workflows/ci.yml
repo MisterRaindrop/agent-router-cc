@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Reproducible install from the committed lockfile.
+      - run: npm ci
+      # typecheck + core-purity guard + full test suite.
+      - run: npm run check
+      # The committed bundle must build and run on bare Node.
+      - run: npm run build
+      - run: node dist/router.js --version
+      # Gate-integrity self-check: the scope trap MUST be caught.
+      - run: node dist/router.js selftest
