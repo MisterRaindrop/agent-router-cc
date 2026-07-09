@@ -5,5 +5,11 @@
 import { writeFileSync } from 'node:fs';
 
 writeFileSync('src/a.ts', 'export const x = 2; // edited by fake codex\n');
-process.stdout.write(JSON.stringify({ type: 'token_count', input_tokens: 12, output_tokens: 7 }) + '\n');
+// Mirror codex exec --json: a turn.completed event carrying token usage.
+process.stdout.write(
+  JSON.stringify({
+    type: 'turn.completed',
+    usage: { input_tokens: 1200, cached_input_tokens: 400, output_tokens: 70 },
+  }) + '\n',
+);
 process.exit(0);

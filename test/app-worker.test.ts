@@ -91,7 +91,10 @@ test('happy path: worker edits in-scope, verifier passes, task PASSED', async ()
       deps,
       't1',
       runId,
-      launcher('require("fs").writeFileSync("src/a.ts","export const x = 2;\\n")'),
+      launcher(
+        'require("fs").writeFileSync("src/a.ts","export const x = 2;\\n");' +
+          'console.log(JSON.stringify({type:"turn.completed",usage:{input_tokens:1200,output_tokens:70}}))',
+      ),
     );
     assert.equal(result.exit_class, 'ok');
     assert.equal(result.verifier?.result, 'PASSED');
@@ -100,6 +103,9 @@ test('happy path: worker edits in-scope, verifier passes, task PASSED', async ()
     const metrics = store.readMetrics(paths);
     assert.equal(metrics.at(-1)?.verifier_result, 'PASSED');
     assert.equal(metrics.at(-1)?.first_pass, true);
+    // token usage parsed from the (fake) codex --json stream flows into metrics
+    assert.equal(result.tokens?.input, 1200);
+    assert.equal(metrics.at(-1)?.tokens_output, 70);
   } finally {
     fx.cleanup(repo);
   }

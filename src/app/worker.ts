@@ -12,6 +12,7 @@ import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from './policyLoad.ts';
 import { loadTask } from './taskLoad.ts';
+import { estimateCostUsd, parseCodexUsage } from './usage.ts';
 import { verify } from './verifier.ts';
 import { currentState, transition, type TransitionDeps } from './transition.ts';
 
@@ -175,6 +176,10 @@ export async function runWorkerBody(
   // Router owns the checkpoint commit: capture whatever the worker left.
   if (outcome.exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${runId}`);
 
+  // Token usage from the codex --json stream in the worker log (feeds metrics).
+  const usage = parseCodexUsage(safeRead(paths.workerLog(id, runId)));
+  const costUsd = usage !== null ? estimateCostUsd(usage, process.env) : null;
+
   const result: RunResult = {
     run_id: runId,
     task_id: id,
@@ -188,6 +193,8 @@ export async function runWorkerBody(
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
     worker: launcher.model !== undefined ? { kind: launcher.kind, model: launcher.model } : { kind: launcher.kind },
+    ...(usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {}),
+    ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
 
   let finalState: 'PASSED' | 'FAILED';
