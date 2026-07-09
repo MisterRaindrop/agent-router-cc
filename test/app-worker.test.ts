@@ -9,10 +9,12 @@ import { fixedClock } from '../src/io/clock.ts';
 import * as store from '../src/io/store.ts';
 import { hashContract } from '../src/core/contractHash.ts';
 import { createTask, currentState, transition } from '../src/app/transition.ts';
+import { hostname } from 'node:os';
 import {
   ConcurrencyLimitError,
   runWorkerBody,
   startRun,
+  updateLease,
   type WorkerLauncher,
 } from '../src/app/worker.ts';
 
@@ -148,6 +150,32 @@ test('unlaunchable worker => env_error, marked not-counting-as-attempt', async (
     assert.equal(currentState(paths, 't1')?.state, 'FAILED');
     const events = store.readEvents(paths, 't1');
     assert.equal(events.at(-1)?.meta?.counts_as_attempt, false);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('startRun writes lease.host as os.hostname() (regression #1)', () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+    const { runId } = startRun(deps, 't1');
+    assert.equal(store.readLease(paths, 't1', runId)?.host, hostname());
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('updateLease merges fields without clobbering (regression #3)', () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+    const { runId } = startRun(deps, 't1');
+    updateLease(deps, 't1', runId, { supervisor_pid: 111 });
+    updateLease(deps, 't1', runId, { worker_pgid: 222 });
+    const lease = store.readLease(paths, 't1', runId);
+    assert.equal(lease?.supervisor_pid, 111); // not clobbered by the second write
+    assert.equal(lease?.worker_pgid, 222);
   } finally {
     fx.cleanup(repo);
   }

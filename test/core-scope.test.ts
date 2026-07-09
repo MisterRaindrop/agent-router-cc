@@ -95,6 +95,23 @@ test('rename checks BOTH old and new path', () => {
   assert.ok(v2.violations.some((x) => x.kind === 'forbidden' && x.path === 'src/wal/xlog.c'));
 });
 
+test('renaming a test file OUT of test_globs is caught as test_deletion (#7)', () => {
+  const v = evaluateScope(
+    [de({ status: 'R', path: 'src/foo_old.ts', oldPath: 'tests/foo.test.ts' })],
+    scope({ allowed_globs: ['src/**', 'tests/**'] }),
+  );
+  assert.equal(v.ok, false);
+  assert.ok(v.violations.some((x) => x.kind === 'test_deletion'));
+});
+
+test('glob: non-boundary ** does not cross / (#12)', () => {
+  // trailing ** still spans directories (the common `src/**` case)
+  assert.equal(matchGlob('src/a/b.ts', 'src/**'), true);
+  // ** wedged mid-segment must NOT cross '/'
+  assert.equal(matchGlob('pkg/sub/util.ts', 'pkg**util.ts'), false);
+  assert.equal(matchGlob('pkgXutil.ts', 'pkg**util.ts'), true);
+});
+
 test('max_changed_lines boundary', () => {
   assert.equal(evaluateScope([de({ status: 'M', path: 'src/a.ts', added: 100, deleted: 0 })], scope()).ok, true);
   const over = evaluateScope([de({ status: 'M', path: 'src/a.ts', added: 100, deleted: 1 })], scope());
