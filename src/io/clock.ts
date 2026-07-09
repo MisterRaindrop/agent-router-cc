@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Injectable clock. core/ never reads time; the app passes a Clock into any io
 // that needs a timestamp, so tests can freeze/advance time deterministically.
 export interface Clock {

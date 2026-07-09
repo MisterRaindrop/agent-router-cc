@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { ROUTER_DIR } from '../domain/constants.ts';

@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -16,7 +19,7 @@ import { verify } from './verifier.ts';
 import { currentState, transition, type TransitionDeps } from './transition.ts';
 
 // End-to-end run execution. startRun (the `router run` half) creates the worktree,
-// takes the concurrency slot, writes the lease, and moves QUEUED→RUNNING.
+// takes the concurrency slot, writes the lease, and moves QUEUED->RUNNING.
 // runWorkerBody (the detached `_worker-run` half) supervises the worker, commits
 // its checkpoint, runs the mechanical verifier, and finalizes to PASSED/FAILED.
 
@@ -58,7 +61,7 @@ export interface StartedRun {
   attemptNumber: number;
 }
 
-/** `router run`: allocate a run, create the worktree, move QUEUED→RUNNING. */
+/** `router run`: allocate a run, create the worktree, move QUEUED->RUNNING. */
 export function startRun(deps: TransitionDeps, id: string): StartedRun {
   const { paths } = deps;
   const st = currentState(paths, id);
@@ -73,7 +76,7 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
   const branch = runBranch(id, run);
   const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
 
-  // Pin to the frozen base_sha; a colliding branch means unclean recovery — fail fast.
+  // Pin to the frozen base_sha; a colliding branch means unclean recovery - fail fast.
   worktreeAdd(paths.repoRoot, worktreeDir, branch, st.base_sha);
 
   const startedAt = deps.clock.nowIso();
@@ -129,7 +132,7 @@ function safeMaxConcurrency(deps: TransitionDeps): number {
   }
 }
 
-/** The detached `_worker-run` body: supervise → checkpoint commit → verify → finalize. */
+/** The detached `_worker-run` body: supervise -> checkpoint commit -> verify -> finalize. */
 export async function runWorkerBody(
   deps: TransitionDeps,
   id: string,
@@ -216,7 +219,7 @@ export async function runWorkerBody(
     result.verifier = report;
     finalState = report.result;
   } else {
-    // Worker did not finish cleanly — no verification, straight to FAILED.
+    // Worker did not finish cleanly - no verification, straight to FAILED.
     finalState = 'FAILED';
   }
 

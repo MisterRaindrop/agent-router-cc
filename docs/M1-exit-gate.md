@@ -1,12 +1,12 @@
-# M1 Exit Gate — runbook
+# M1 Exit Gate - runbook
 
 > The single most important check in M1. **If router does not lower the cost per
-> verified task versus Opus running the task directly, stop and redesign** — no
+> verified task versus Opus running the task directly, stop and redesign** - no
 > later milestone can fix a wrong premise.
 
 ## What we measure
 
-The honest headline metric is **cost per verified task** = Σ cost ÷ number of runs
+The honest headline metric is **cost per verified task** = sum cost / number of runs
 whose mechanical verifier PASSED. Supporting metrics: first-pass verifier rate,
 escalation rate, wall-clock, and env-error rate. All are produced by
 `router stats` from `.router/metrics.jsonl` (one record per run).
@@ -36,7 +36,7 @@ escalation rate, wall-clock, and env-error rate. All are produced by
    - Commit `.router/policy.yaml` (the verifier reads it from the base_sha git
      object, not the worktree).
 
-3. **Author ~10 tasks** that are genuinely verifiable — the repo's tests must go
+3. **Author ~10 tasks** that are genuinely verifiable - the repo's tests must go
    green only if the task is actually done. Good sources: a currently-failing test
    to make pass, a bug with a reproducing test, a small feature with a test.
    For each: `router new <id>`, fill `task.yaml` (tight `allowed_globs`,
@@ -44,7 +44,7 @@ escalation rate, wall-clock, and env-error rate. All are produced by
    then `router validate <id> && router queue <id> && router run <id>`.
    Poll `router status <id>` (or `/router:status`) until PASSED/FAILED.
 
-4. **Record the Opus-direct baseline.** Run 2–3 of the same tasks with Opus doing
+4. **Record the Opus-direct baseline.** Run 2-3 of the same tasks with Opus doing
    the work directly (no router), and record its token/cost + wall for each. This
    is the denominator. Keep the tasks identical so the comparison is fair.
 
@@ -55,16 +55,16 @@ escalation rate, wall-clock, and env-error rate. All are produced by
 ## Go / no-go
 
 - **Go (proceed to M2):** router's cost per *verified* task is clearly lower, and
-  the verifier is catching bad diffs (confirm with `router selftest` — the scope
+  the verifier is catching bad diffs (confirm with `router selftest` - the scope
   trap must FAIL). Orchestration overhead + retries are paid back by cheap
   executor models doing verified work.
 - **No-go (stop, redesign):** router costs the same or more once you count retries
   and orchestration, or first-pass rate is so low that escalation dominates. The
   premise ("cheap models under a deterministic harness beat Opus-direct") is wrong
-  for this workload — fix that before building M2/M3.
+  for this workload - fix that before building M2/M3.
 
 ## Notes
 
-- `router selftest` is a fast, free proxy for gate integrity (no real codex) — run
+- `router selftest` is a fast, free proxy for gate integrity (no real codex) - run
   it in CI. A green exit-gate with a leaking selftest is meaningless.
 - Laptop/thermal noise makes wall-clock advisory; run the gate on a quiet machine.

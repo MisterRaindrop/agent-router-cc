@@ -1,5 +1,8 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Env whitelist (design F3.3). A worker / verification command inherits ONLY a
-// minimal, explicit set of variables plus the single API key it needs — never
+// minimal, explicit set of variables plus the single API key it needs - never
 // the full session env (which would leak ANTHROPIC_API_KEY / AWS_* / etc. to the
 // child).
 

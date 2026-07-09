@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import type { Lease } from '../domain/types.ts';
@@ -11,7 +14,7 @@ import { currentState, transition, type TransitionDeps } from './transition.ts';
 // Crash recovery. A worker is a detached process group whose fate lives on disk
 // (lease + heartbeat). recover reconciles RUNNING tasks whose supervisor died or
 // whose heartbeat went stale: it kills any lingering process group, then marks
-// the run STALE. Runs from the SessionStart hook and manually — fully idempotent.
+// the run STALE. Runs from the SessionStart hook and manually - fully idempotent.
 
 export interface RecoverOptions {
   /** A heartbeat older than this (ms) marks the run dead. Default 60s (3x interval). */
@@ -34,7 +37,7 @@ function runDeadReason(
   if (lease === null) return 'no_lease';
 
   // Same host: the supervisor's pid liveness is authoritative. If it's alive, the
-  // run is being managed — do NOT fall through to the heartbeat, because the
+  // run is being managed - do NOT fall through to the heartbeat, because the
   // supervisor blocks its event loop during a synchronous build/test verify (which
   // can take minutes), freezing the heartbeat while the run is perfectly healthy.
   // The supervisor owns worker timeout/stall detection itself.

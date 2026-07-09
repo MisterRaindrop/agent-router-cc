@@ -1,9 +1,12 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { TaskState } from '../domain/types.ts';
 
 // The complete task lifecycle graph. The full M2 set (escalation ladder,
 // NEEDS_REPLAN) lives here from day 1 so those transitions "exist"; M1 only
-// drives a subset (DRAFT→VALIDATED→QUEUED→RUNNING→VERIFYING→PASSED→MERGED,
-// plus RUNNING/VERIFYING→FAILED, RUNNING→STALE, any→CANCELLED).
+// drives a subset (DRAFT->VALIDATED->QUEUED->RUNNING->VERIFYING->PASSED->MERGED,
+// plus RUNNING/VERIFYING->FAILED, RUNNING->STALE, any->CANCELLED).
 //
 // This module is PURE: no fs, no clock, no process. It is the structural
 // guarantee that the LLM cannot enact an illegal state change.

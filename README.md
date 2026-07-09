@@ -1,7 +1,7 @@
 # router
 
 A Claude Code plugin and deterministic CLI for orchestrating coding tasks. The
-LLM produces artifacts — a task contract, a plan, a patch, a summary — and the
+LLM produces artifacts - a task contract, a plan, a patch, a summary - and the
 `router` CLI owns every gate: the task state machine, locks, git-worktree
 isolation, worker process supervision, diff-side scope enforcement, a mechanical
 verifier, and metrics. An executor model (codex) does the work in a sandboxed
@@ -9,7 +9,7 @@ worktree; nothing merges until the deterministic checks pass.
 
 ## Requirements
 
-- Node.js ≥ 18. **No install step** — `dist/router.js` is a committed, dependency-
+- Node.js >= 18. **No install step** - `dist/router.js` is a committed, dependency-
   inlined bundle. Clone and run.
 - `git` on PATH. For real execution, the [codex CLI](https://github.com/openai/codex)
   logged in (or an API key).
@@ -39,7 +39,7 @@ must be caught) as a fast integrity check.
 ## As a Claude Code plugin
 
 Install the plugin to get `/router:*` slash commands (`/router:delegate`,
-`/router:status`, `/router:result`, `/router:stats`, `/router:selftest`, …), the
+`/router:status`, `/router:result`, `/router:stats`, `/router:selftest`, ...), the
 `reviewer`/`summarizer` subagents, and hooks that run `router recover` on session
 start and block direct edits to router-managed state under `.router/`.
 
@@ -55,7 +55,7 @@ start and block direct edits to router-managed state under `.router/`.
   `policy.yaml`, which is read from the `base_sha` git object (not the worktree),
   so a worker can't loosen the rules. Everything runs `shell:false`.
 - **Workers are supervised.** Each run is a detached process group with a wall
-  timeout, stall watchdog, and SIGTERM→SIGKILL escalation; its output goes to a log,
+  timeout, stall watchdog, and SIGTERM->SIGKILL escalation; its output goes to a log,
   never the orchestrator's context.
 
 ## Development
@@ -66,7 +66,7 @@ npm run check     # tsc --noEmit + core-purity guard + node --test
 npm run build     # bundle src/ -> dist/router.js (commit the result)
 ```
 
-`src/` is layered `domain → core → io → app → cli`. `core/` is pure (no fs,
-child_process, process, clock, or randomness — enforced by `npm run check:deps`),
+`src/` is layered `domain -> core -> io -> app -> cli`. `core/` is pure (no fs,
+child_process, process, clock, or randomness - enforced by `npm run check:deps`),
 which is what makes the gate logic unit-testable and keeps the LLM out of state
 transitions. Tests run on `node:test` against synthetic git-repo fixtures.

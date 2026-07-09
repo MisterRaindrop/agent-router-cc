@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import {
   closeSync,
   fsyncSync,
@@ -11,13 +14,13 @@ import { dirname, join } from 'node:path';
 
 // Atomic file replace: write a temp file IN THE SAME DIRECTORY (so rename is a
 // same-filesystem move, hence atomic), fsync it, then rename over the target.
-// A crash mid-write leaves either the old file or nothing — never a torn file.
+// A crash mid-write leaves either the old file or nothing - never a torn file.
 
 let counter = 0;
 
 function tmpPath(target: string): string {
   // pid + monotonic counter keeps concurrent writers in the same process distinct;
-  // Math.random avoided (forbidden in tests' spirit) — counter suffices here.
+  // Math.random avoided (forbidden in tests' spirit) - counter suffices here.
   counter += 1;
   return join(dirname(target), `.tmp.${process.pid}.${counter}.${target.length}`);
 }

@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -6,9 +9,9 @@ import { classifyExit } from '../core/exitTaxonomy.ts';
 import { killProcessGroup } from './signals.ts';
 
 // Worker supervision. The worker is spawned as the leader of its OWN process
-// group (detached) so we can kill the WHOLE group — worker + every child it
-// spawned — without touching ourselves. We enforce a hard wall timeout and a
-// stall watchdog (no log growth AND no worktree change), escalate SIGTERM→SIGKILL,
+// group (detached) so we can kill the WHOLE group - worker + every child it
+// spawned - without touching ourselves. We enforce a hard wall timeout and a
+// stall watchdog (no log growth AND no worktree change), escalate SIGTERM->SIGKILL,
 // and classify the exit. Worker output goes only to the log file (never our
 // stdout), so the orchestrator's context stays clean.
 
@@ -121,7 +124,7 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
 
       let killing = false;
       const escalateKill = (): void => {
-        if (killing) return; // run once — the stall/wall watchdogs may fire repeatedly
+        if (killing) return; // run once - the stall/wall watchdogs may fire repeatedly
         killing = true;
         killProcessGroup(pgid, 'SIGTERM');
         timers.push(setTimeout(() => killProcessGroup(pgid, 'SIGKILL'), sigkillGraceMs));

@@ -1,6 +1,6 @@
 ---
 name: router-reviewer
-description: Reviews a completed router run's diff before merge, for high-risk tasks. M2 seam — declared now, invoked by the escalation/approval path in M2.
+description: Reviews a completed router run's diff before merge, for high-risk tasks. M2 seam - declared now, invoked by the escalation/approval path in M2.
 model: sonnet
 tools: Read, Bash(node:*)
 ---
@@ -15,4 +15,4 @@ contract hash) have passed; your job is the judgement the CLI cannot make:
 - Are there missing tests for the behavior changed?
 
 Return a verdict (approve / request-changes) with specific file:line reasons. You do
-not merge — a human runs `router merge` after your review.
+not merge - a human runs `router merge` after your review.

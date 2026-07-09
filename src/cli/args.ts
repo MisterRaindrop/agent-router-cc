@@ -1,5 +1,8 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Tiny hand-rolled argv parser (no dependency). Flag arities are declared so a
-// value-flag consumes the next token while a boolean-flag does not — this avoids
+// value-flag consumes the next token while a boolean-flag does not - this avoids
 // ambiguity like `run --json t1` swallowing the positional.
 
 const BOOLEAN_FLAGS = new Set(['json', 'force', 'keep', 'help']);

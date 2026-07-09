@@ -1,8 +1,11 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Policy } from '../domain/types.ts';
 import type { WorkerContext, WorkerLauncher } from './worker.ts';
 
 // Builds the codex-cli invocation for a run. Non-interactive `codex exec`, pinned
-// to the worktree, workspace-write sandbox, JSONL events (token usage → metrics
+// to the worktree, workspace-write sandbox, JSONL events (token usage -> metrics
 // in M2). The binary is `codex` by default; ROUTER_CODEX_BIN overrides it (used
 // by tests to substitute a fake worker without real codex).
 

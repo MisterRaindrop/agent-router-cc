@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Ajv } from 'ajv';
 import type { ErrorObject } from 'ajv';
 import type { Policy, TaskYaml } from './types.ts';

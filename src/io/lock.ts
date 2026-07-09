@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import {
   mkdirSync,
   readFileSync,
@@ -9,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { hostname } from 'node:os';
 
 // Global mutual-exclusion lock for state mutations. Held only for millisecond-
-// scale critical sections (a transition / registry write) — NEVER for the
+// scale critical sections (a transition / registry write) - NEVER for the
 // lifetime of a worker (that exclusivity is the max_concurrent_workers slot +
 // lease). See design doc D5.
 //
@@ -17,7 +20,7 @@ import { hostname } from 'node:os';
 // create the lock directory. Everything else (pid-liveness, mtime TTL) exists
 // only to reclaim a lock abandoned by a dead/hung/pid-reused owner.
 //
-// Assumes a local filesystem — mtime-based staleness is unreliable on NFS.
+// Assumes a local filesystem - mtime-based staleness is unreliable on NFS.
 
 export interface LockOptions {
   /** A lock older than this (by dir mtime) is considered abandoned. */
@@ -81,7 +84,7 @@ function readOwner(lockDir: string): OwnerInfo | null {
   try {
     return JSON.parse(readFileSync(ownerFile(lockDir), 'utf8')) as OwnerInfo;
   } catch {
-    return null; // mid-acquire race, or malformed — caller treats as transient
+    return null; // mid-acquire race, or malformed - caller treats as transient
   }
 }
 
@@ -101,7 +104,7 @@ function isStale(lockDir: string, staleMs: number): boolean {
   const sameHost = owner.host === hostname();
   const pidDead = sameHost && !isProcessAlive(owner.pid);
   const tooOld = age !== null && age > staleMs;
-  // Dead pid (same host) → reclaim. Otherwise only reclaim on TTL, which also
+  // Dead pid (same host) -> reclaim. Otherwise only reclaim on TTL, which also
   // covers pid-reuse (alive pid that isn't really our owner) and cross-host.
   return pidDead || tooOld;
 }
@@ -114,7 +117,7 @@ export function acquireLock(lockDir: string, opts: LockOptions = {}): LockHandle
   const deadline = Date.now() + timeoutMs;
   // The lock dir's parent (.router) must exist; init creates it in production,
   // but make acquisition robust when it doesn't. The lock dir ITSELF is created
-  // non-recursively below — that mkdir is the atomic mutual-exclusion primitive.
+  // non-recursively below - that mkdir is the atomic mutual-exclusion primitive.
   mkdirSync(dirname(lockDir), { recursive: true });
 
   for (;;) {
@@ -147,7 +150,7 @@ export function acquireLock(lockDir: string, opts: LockOptions = {}): LockHandle
 
 export function releaseLock(handle: LockHandle): void {
   // Only remove the lock if we still own it (we may have been reclaimed while
-  // holding — pathological, but never delete a live owner's lock).
+  // holding - pathological, but never delete a live owner's lock).
   const owner = readOwner(handle.lockDir);
   if (owner !== null && owner.nonce !== handle.nonce) return;
   try {

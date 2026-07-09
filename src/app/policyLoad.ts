@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import { existsSync, readFileSync } from 'node:fs';
 import { load, JSON_SCHEMA } from 'js-yaml';
 import type { Policy } from '../domain/types.ts';
@@ -8,7 +11,7 @@ import type { RouterPaths } from '../io/paths.ts';
 
 // Loading policy.yaml. The security-critical read (used by the verifier for the
 // command whitelist and forbidden globs) comes from the git object at base_sha,
-// NOT the worktree — so a worker cannot loosen the rules by editing its checkout.
+// NOT the worktree - so a worker cannot loosen the rules by editing its checkout.
 // JSON_SCHEMA is used so no `!!js/*` YAML tags can execute code.
 
 export class PolicyError extends Error {

@@ -1,6 +1,9 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Process-group signalling. Killing the GROUP (negative pid) reaches the worker
 // and every child it spawned. Used by recover (kill an abandoned group) and by
-// the supervisor (SIGTERM→SIGKILL escalation).
+// the supervisor (SIGTERM->SIGKILL escalation).
 export type KillSignal = NodeJS.Signals | number;
 
 /**

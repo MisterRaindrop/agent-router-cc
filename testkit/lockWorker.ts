@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Child process used by the lock concurrency test. Acquires the global lock,
 // writes BEGIN/END around a short critical section, then releases.
 import { appendFileSync } from 'node:fs';

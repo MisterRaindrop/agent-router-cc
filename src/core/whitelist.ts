@@ -1,6 +1,9 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { WhitelistTemplate } from '../domain/types.ts';
 
-// Command whitelist. verification_commands are NOT free text from the LLM — the
+// Command whitelist. verification_commands are NOT free text from the LLM - the
 // only runnable commands are argv templates checked into policy.yaml. router
 // instantiates a template with task-supplied placeholder values, each of which
 // is type-checked here. Combined with shell:false execution (io/proc), this
@@ -29,7 +32,7 @@ export function validatePlaceholderValue(name: string, value: string): string[] 
 /**
  * Instantiate an argv template with placeholder values. Literal tokens pass
  * through; a token that is exactly `{name}` is replaced by params[name] (a whole
- * argument — no partial interpolation, so a value can never inject extra argv).
+ * argument - no partial interpolation, so a value can never inject extra argv).
  */
 export function instantiateTemplate(
   template: WhitelistTemplate,

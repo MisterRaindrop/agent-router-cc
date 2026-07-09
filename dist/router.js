@@ -10253,7 +10253,7 @@ function foldEvents(id, events) {
   for (const e of events) {
     if (e.seq !== expectedSeq) {
       throw new CorruptEventLogError(
-        `task ${id}: event seq gap \u2014 expected ${expectedSeq}, got ${e.seq}`
+        `task ${id}: event seq gap - expected ${expectedSeq}, got ${e.seq}`
       );
     }
     expectedSeq += 1;
@@ -10783,7 +10783,7 @@ function evaluateScope(changes, scope) {
     return {
       ok: false,
       changedLines: 0,
-      violations: [{ kind: "empty_diff", detail: "diff is empty \u2014 worker produced no changes" }]
+      violations: [{ kind: "empty_diff", detail: "diff is empty - worker produced no changes" }]
     };
   }
   let changedLines = 0;
@@ -10932,7 +10932,7 @@ function verify(req) {
   const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
   const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
   if (patch.trim() === "") {
-    checks.push(fail("diff_applies", "diff is empty \u2014 worker produced no committed change"));
+    checks.push(fail("diff_applies", "diff is empty - worker produced no committed change"));
     return { result: "FAILED", checks };
   }
   const tmpBase = mkdtempSync(join5(tmpdir(), "router-verify-base-"));
@@ -11570,7 +11570,7 @@ function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const rd = explicit ?? findRouterDir(ctx.cwd);
   if (rd === void 0 || rd === null || !existsSync6(rd)) {
-    throw new CliError("no .router found \u2014 run `router init` first", 3);
+    throw new CliError("no .router found - run `router init` first", 3);
   }
   const paths = routerPaths(rd);
   return { deps: { paths, clock: systemClock }, paths };
@@ -11659,7 +11659,7 @@ var newTask = (ctx) => {
   emit(
     ctx.json,
     { ok: true, id, state: "DRAFT", task_yaml: paths.taskYaml(id) },
-    () => `created ${id} (DRAFT) \u2014 edit ${paths.taskYaml(id)} and TASK_CONTRACT.md, then \`router validate ${id}\``
+    () => `created ${id} (DRAFT) - edit ${paths.taskYaml(id)} and TASK_CONTRACT.md, then \`router validate ${id}\``
   );
   return 0;
 };
@@ -11817,7 +11817,7 @@ var result = (ctx) => {
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
-    const checks = (res.verifier?.checks ?? []).map((c) => `  ${c.ok ? "\u2713" : "\u2717"} ${c.id}${c.detail ? ` \u2014 ${c.detail}` : ""}`).join("\n");
+    const checks = (res.verifier?.checks ?? []).map((c) => `  ${c.ok ? "ok" : "x"} ${c.id}${c.detail ? ` - ${c.detail}` : ""}`).join("\n");
     return `${id} ${run2}: exit=${res.exit_class} verifier=${res.verifier?.result ?? "n/a"}
 ${checks}
 --- log tail ---
@@ -11886,7 +11886,7 @@ var selftestCmd = async (ctx) => {
   emit(
     ctx.json,
     { ok: r.ok, canaries: r.canaries },
-    () => r.canaries.map((c) => `  ${c.ok ? "\u2713" : "\u2717"} ${c.name}: ${c.actual} (${c.detail})`).join("\n") + `
+    () => r.canaries.map((c) => `  ${c.ok ? "ok" : "x"} ${c.name}: ${c.actual} (${c.detail})`).join("\n") + `
 ${r.ok ? "selftest PASSED" : "selftest FAILED"}`
   );
   return r.ok ? 0 : 1;
@@ -11916,8 +11916,8 @@ function helpText() {
 
 Usage: router <command> [options]
 
-Lifecycle:  init \xB7 new \xB7 validate \xB7 queue \xB7 run \xB7 status \xB7 result \xB7 merge
-Ops:        list \xB7 stats \xB7 cancel \xB7 recover \xB7 reindex \xB7 selftest
+Lifecycle:  init * new * validate * queue * run * status * result * merge
+Ops:        list * stats * cancel * recover * reindex * selftest
 
 Flags: --json, --id, --title, --run, --state, --force, --keep
 `;

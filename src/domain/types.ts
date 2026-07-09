@@ -1,6 +1,9 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 // Central domain types. Leaf module: imports nothing, imported by every ring.
 
-// ── Task state machine ──────────────────────────────────────────────────────
+// -- Task state machine ------------------------------------------------------
 // The full graph (incl. M2 states) lives here so transitions "exist" from day 1;
 // M1 only drives a subset (see core/stateMachine.ts).
 export type TaskState =
@@ -19,7 +22,7 @@ export type TaskState =
   | 'CANCELLED'
   | 'ABANDONED';
 
-// ── Worker exit taxonomy ────────────────────────────────────────────────────
+// -- Worker exit taxonomy ----------------------------------------------------
 // env_error is special: it does NOT count toward the escalation ladder.
 export type ExitClass =
   | 'ok'
@@ -32,7 +35,7 @@ export type ExitClass =
 
 export type WorkerKind = 'codex'; // M2 adds 'sonnet' etc.
 
-// ── policy.yaml (human-maintained, read from the base_sha git object) ─────────
+// -- policy.yaml (human-maintained, read from the base_sha git object) ---------
 /** An argv template; tokens like `{build_dir}` are filled from verification_params. */
 export type WhitelistTemplate = string[];
 
@@ -60,7 +63,7 @@ export interface Policy {
   escalation?: { max_attempts?: number };
 }
 
-// ── task.yaml (machine contract; schema-validated; frozen at VALIDATED) ───────
+// -- task.yaml (machine contract; schema-validated; frozen at VALIDATED) -------
 export interface TaskYaml {
   schema_version: 1;
   id: string;
@@ -75,7 +78,7 @@ export interface TaskYaml {
   verification_params?: Record<string, string>;
 }
 
-// ── Effective scope (task ⊕ policy, precomputed by the app layer) ─────────────
+// -- Effective scope (task + policy, precomputed by the app layer) -------------
 // core/scope.ts consumes this so it stays pure and free of merge policy.
 export interface EffectiveScope {
   allowed_globs: string[];
@@ -84,7 +87,7 @@ export interface EffectiveScope {
   max_changed_lines: number;
 }
 
-// ── Parsed git diff entry (produced by io/git, consumed by core/scope) ────────
+// -- Parsed git diff entry (produced by io/git, consumed by core/scope) --------
 export type DiffStatus = 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U' | 'X';
 
 export interface DiffEntry {
@@ -115,7 +118,7 @@ export interface ScopeVerdict {
   violations: ScopeViolation[];
 }
 
-// ── Events, state, runs, metrics ──────────────────────────────────────────────
+// -- Events, state, runs, metrics ----------------------------------------------
 export interface EventRecord {
   seq: number; // monotonic per task, assigned under the global lock
   ts: string; // ISO-8601

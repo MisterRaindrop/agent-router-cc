@@ -1,3 +1,6 @@
+// Copyright 2026 The agent-router-cc Authors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Registry, RegistryEntry } from '../domain/types.ts';
 import { withGlobalLock } from '../io/lock.ts';
 import * as store from '../io/store.ts';
@@ -5,7 +8,7 @@ import { foldEvents } from '../core/projectState.ts';
 import type { TransitionDeps } from './transition.ts';
 
 // registry.json and state.json are rebuildable projections of events.jsonl.
-// reindex re-derives both from the event logs — so a corrupt or deleted
+// reindex re-derives both from the event logs - so a corrupt or deleted
 // registry is never fatal.
 
 export interface ReindexResult {
