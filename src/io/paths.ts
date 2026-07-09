@@ -7,6 +7,7 @@ import { ROUTER_DIR } from '../domain/constants.ts';
 
 export interface RouterPaths {
   readonly root: string; // absolute path to the .router dir
+  readonly repoRoot: string; // the git repo root (parent of .router)
   readonly policy: string;
   readonly registry: string;
   readonly metrics: string;
@@ -48,6 +49,7 @@ export function routerPaths(routerDir: string): RouterPaths {
   const runDir = (id: string, run: string) => join(taskDir(id), 'runs', run);
   return {
     root,
+    repoRoot: dirname(root),
     policy: join(root, 'policy.yaml'),
     registry: join(root, 'registry.json'),
     metrics: join(root, 'metrics.jsonl'),

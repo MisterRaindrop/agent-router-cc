@@ -82,6 +82,10 @@ export function recover(deps: TransitionDeps, opts: RecoverOptions = {}): Recove
     }
 
     // Best-effort: reap any lingering process group before marking STALE.
+    // NOTE (known residual): we cannot verify the pgid still belongs to our
+    // worker, so in the narrow case where the OS has reused a dead worker's pgid
+    // this could signal an unrelated same-user group. Acceptable under the
+    // "confused not adversarial" threat model; a start-time check would remove it.
     if (lease !== null) killProcessGroup(lease.worker_pgid, 'SIGKILL');
     transition(deps, id, 'STALE', {
       actor: 'recover',

@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { load, JSON_SCHEMA } from 'js-yaml';
 import type { Policy } from '../domain/types.ts';
 import { ROUTER_DIR } from '../domain/constants.ts';
@@ -38,7 +37,7 @@ function parseAndValidate(source: string, yamlText: string): Policy {
 
 /** Authoritative load: policy.yaml as committed at base_sha (tamper-proof). */
 export function loadPolicyFromGit(paths: RouterPaths, baseSha: string): Policy {
-  const repoRoot = dirname(paths.root);
+  const repoRoot = paths.repoRoot;
   const text = showFileAtRev(repoRoot, baseSha, POLICY_REL);
   if (text === null) {
     throw new PolicyError(`policy.yaml not found at ${baseSha}:${POLICY_REL}`);

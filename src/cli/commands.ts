@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import type { TaskState, TaskYaml } from '../domain/types.ts';
@@ -134,7 +134,7 @@ const validate: Handler = (ctx) => {
   if (!parsed.ok || parsed.value === null) {
     throw new CliError(`invalid task.yaml: ${parsed.errors.join('; ')}`, 1);
   }
-  const repoRoot = dirname(paths.root);
+  const repoRoot = paths.repoRoot;
   const baseSha = resolveCommit(repoRoot, parsed.value.base_sha ?? 'HEAD');
 
   // Freeze base_sha into the task file, then hash the final on-disk contract.
@@ -195,7 +195,7 @@ const run: Handler = (ctx) => {
   const child = spawn(
     process.execPath,
     [script, '_worker-run', id, '--run', started.runId, '--router-dir', paths.root],
-    { detached: true, stdio: 'ignore', cwd: dirname(paths.root), env: process.env },
+    { detached: true, stdio: 'ignore', cwd: paths.repoRoot, env: process.env },
   );
   // The detached child (_worker-run) is its own process-group leader: record its
   // pid as BOTH the supervisor pid and the supervisor's group. Locked RMW so it
@@ -235,7 +235,7 @@ const merge: Handler = (ctx) => {
   if (st.state !== 'PASSED') throw new CliError(`${id} is ${st.state}, not PASSED`, 1);
   const run = st.current_run;
   if (run === null) throw new CliError(`${id} has no run to merge`, 1);
-  const repoRoot = dirname(paths.root);
+  const repoRoot = paths.repoRoot;
   const branch = runBranch(id, run);
   try {
     mergeNoFF(repoRoot, branch);

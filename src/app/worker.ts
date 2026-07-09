@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { hostname } from 'node:os';
 import type { Lease, MetricRecord, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
 import { countsAsAttempt } from '../core/exitTaxonomy.ts';
@@ -48,10 +47,6 @@ export interface WorkerLauncher {
   buildArgv(ctx: WorkerContext): string[];
 }
 
-function repoRootOf(deps: TransitionDeps): string {
-  return dirname(deps.paths.root);
-}
-
 function nextRunNumber(deps: TransitionDeps, id: string): number {
   const nums = store.listRunIds(deps.paths, id).map((r) => Number(r.slice('run-'.length)));
   return (nums.length > 0 ? Math.max(...nums) : 0) + 1;
@@ -79,7 +74,7 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
   const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
 
   // Pin to the frozen base_sha; a colliding branch means unclean recovery — fail fast.
-  worktreeAdd(repoRootOf(deps), worktreeDir, branch, st.base_sha);
+  worktreeAdd(paths.repoRoot, worktreeDir, branch, st.base_sha);
 
   const startedAt = deps.clock.nowIso();
   store.writeLease(paths, id, run, {
@@ -112,8 +107,8 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
     });
   } catch (err) {
     // Roll back the worktree/branch created for a run that won't start.
-    worktreeRemove(repoRootOf(deps), worktreeDir);
-    deleteBranch(repoRootOf(deps), branch);
+    worktreeRemove(paths.repoRoot, worktreeDir);
+    deleteBranch(paths.repoRoot, branch);
     throw err;
   }
   return { runId: run, worktreeDir, attemptNumber };
@@ -204,7 +199,7 @@ export async function runWorkerBody(
     writeFileSync(paths.diffPatch(id, runId), patch);
     result.diff_sha = createHash('sha256').update(patch).digest('hex');
     const report = verify({
-      repoRoot: repoRootOf(deps),
+      repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: 'HEAD',
