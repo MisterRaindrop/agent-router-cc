@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { Lease, MetricRecord, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
+import type { Lease, MetricRecord, Policy, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
 import { countsAsAttempt } from '../core/exitTaxonomy.ts';
 import { commitAll, deleteBranch, rawDiff, worktreeAdd, worktreeRemove } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
@@ -14,7 +14,7 @@ import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from './policyLoad.ts';
 import { loadTask } from './taskLoad.ts';
-import { estimateCostUsd, parseCodexModel, parseCodexUsage } from './usage.ts';
+import { estimateCostUsd, parseCodexLog, resolvePrice } from './usage.ts';
 import { verify } from './verifier.ts';
 import { currentState, transition, type TransitionDeps } from './transition.ts';
 
@@ -138,6 +138,7 @@ export async function runWorkerBody(
   id: string,
   runId: string,
   launcher: WorkerLauncher,
+  policy?: Policy,
 ): Promise<RunResult> {
   const { paths, clock } = deps;
   const st = currentState(paths, id);
@@ -147,7 +148,8 @@ export async function runWorkerBody(
   const baseSha = st.base_sha!;
   const contractHash = st.contract_hash!;
   const { task, taskYamlText, contractMdText } = loadTask(paths, id);
-  const policyGit = loadPolicyFromGit(paths, baseSha);
+  // Load once; the caller (_worker-run) may pass the policy it already loaded.
+  const policyGit = policy ?? loadPolicyFromGit(paths, baseSha);
   const worktreeDir = paths.worktree(id, runId);
   const apiKeyEnv = policyGit.worker?.api_key_env;
   const env = buildWorkerEnv(process.env, apiKeyEnv !== undefined ? [apiKeyEnv] : []);
@@ -174,12 +176,12 @@ export async function runWorkerBody(
   // Router owns the checkpoint commit: capture whatever the worker left.
   if (outcome.exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${runId}`);
 
-  // Token usage + model from the codex --json stream in the worker log (feeds
-  // metrics). The stream may not report a model; fall back to the pinned one.
-  const log = safeRead(paths.workerLog(id, runId));
-  const usage = parseCodexUsage(log);
-  const costUsd = usage !== null ? estimateCostUsd(usage, process.env) : null;
-  const model = parseCodexModel(log) ?? launcher.model;
+  // Single pass over the worker log: token usage + model (feeds metrics). The
+  // stream may not report a model; fall back to the pinned one. Cost is per-model
+  // via policy.pricing, else the ROUTER_PRICE_* env fallback, else null.
+  const { usage, model: streamModel } = parseCodexLog(safeRead(paths.workerLog(id, runId)));
+  const model = streamModel ?? launcher.model;
+  const costUsd = usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null;
 
   const result: RunResult = {
     run_id: runId,
