@@ -54,6 +54,20 @@ export interface ScopePolicy {
   max_changed_lines: number;
 }
 
+// Budget ceilings evaluated against a task's accumulated metrics.jsonl spend.
+// A run is refused once accumulated spend has reached (>=) any configured cap.
+export interface BudgetCaps {
+  max_cost_usd?: number;
+  max_tokens?: number;
+}
+
+// Diff secret-scan tuning. Opt out with `enabled: false`; extend the conservative
+// built-in patterns with `extra_patterns` (regex sources, matched on added lines).
+export interface SecretScanPolicy {
+  enabled?: boolean;
+  extra_patterns?: string[];
+}
+
 export interface Policy {
   schema_version: 1;
   max_concurrent_workers?: number;
@@ -64,13 +78,22 @@ export interface Policy {
   /** ref-name (e.g. "build", "test") -> allowed argv templates. */
   verification: Record<string, WhitelistTemplate[]>;
   escalation?: {
-    max_attempts?: number;
+    max_attempts?: number; // hard cap on counting attempts per task
     /** A stronger/different executor used for the ESCALATED_2 "rescue" attempt.
      * If absent, the rescue falls back to the last executor in the chain. */
     rescue_worker?: WorkerPolicy;
   };
+  budget_caps?: BudgetCaps; // hard cap on accumulated cost/tokens per task
+  secret_scan?: SecretScanPolicy; // diff secret scanning (on by default)
   /** Per-model USD prices (per million tokens). Key is a model slug or "default". */
   pricing?: Record<string, { input_per_mtok: number; output_per_mtok: number }>;
+}
+
+// -- Approval gate (recorded when a high-risk task is approved for merge) -------
+export interface ApprovalRecord {
+  approved_at: string; // ISO-8601
+  actor: string; // e.g. "cli:approve", "cli:merge"
+  risk_reasons?: string[];
 }
 
 // -- task.yaml (machine contract; schema-validated; frozen at VALIDATED) -------

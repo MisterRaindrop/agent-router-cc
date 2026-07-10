@@ -52,6 +52,25 @@
         "rescue_worker": { "$ref": "#/definitions/worker" }
       }
     },
+    "budget_caps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_cost_usd": { "type": "number", "minimum": 0 },
+        "max_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "secret_scan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "extra_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "pricing": {
       "type": "object",
       "additionalProperties": {

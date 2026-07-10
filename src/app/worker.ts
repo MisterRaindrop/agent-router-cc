@@ -7,6 +7,7 @@ import { hostname } from 'node:os';
 import type { ExitClass, Lease, MetricRecord, Policy, RunResult, TaskState, TaskYaml, WorkerKind } from '../domain/types.ts';
 import { countsAsAttempt, reclassifyQuota } from '../core/exitTaxonomy.ts';
 import { ladderTargetAfterFailure } from '../core/escalation.ts';
+import { checkCaps, type CapsPolicy } from '../core/caps.ts';
 import { commitAll, deleteBranch, rawDiff, resetHard, worktreeAdd, worktreeRemove } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
 import { withGlobalLock } from '../io/lock.ts';
@@ -35,6 +36,23 @@ export class RunStateError extends Error {
     super(message);
     this.name = 'RunStateError';
   }
+}
+/** Thrown by startRun when a budget/attempt cap refuses another run. */
+export class CapExceededError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'CapExceededError';
+  }
+}
+
+/** Extract the enforceable ceilings from a policy (both keys optional). PURE. */
+function capsFromPolicy(policy: Policy): CapsPolicy {
+  return {
+    ...(policy.escalation?.max_attempts !== undefined
+      ? { max_attempts: policy.escalation.max_attempts }
+      : {}),
+    ...(policy.budget_caps !== undefined ? { budget_caps: policy.budget_caps } : {}),
+  };
 }
 
 // A launcher turns a run context into the worker argv. Real codex in step 15;
@@ -79,6 +97,13 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
     throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED/ESCALATED_1/ESCALATED_2`);
   }
   if (st.base_sha === null) throw new RunStateError(`task ${id} has no frozen base_sha`);
+
+  // Hard ceilings: refuse to start a new counting attempt once a budget/attempt
+  // cap is hit. Policy is read from the frozen base_sha git object (tamper-proof,
+  // same source the verifier trusts); caps evaluate the task's accumulated spend.
+  const caps = capsFromPolicy(loadPolicyFromGit(paths, st.base_sha));
+  const capVerdict = checkCaps(store.readMetrics(paths), id, caps);
+  if (!capVerdict.allowed) throw new CapExceededError(capVerdict.reason ?? 'cap exceeded');
 
   const limit = safeMaxConcurrency(deps);
   const attemptNumber = st.attempt_number + 1;
