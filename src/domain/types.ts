@@ -40,12 +40,20 @@ export type WorkerKind = 'codex' | 'claude'; // both are plan-auth CLIs; more ca
 /** An argv template; tokens like `{build_dir}` are filled from verification_params. */
 export type WhitelistTemplate = string[];
 
+/** A rolling-window token budget for one executor (used by budget-aware routing). */
+export interface BudgetPolicy {
+  window_minutes: number; // sliding window the budget is measured over (e.g. 300 = 5h)
+  budget_tokens: number; // seed ceiling for the window (self-calibrated from observed limits)
+  switch_at?: number; // fraction in (0,1]; skip this executor once projected use exceeds it (default 0.9)
+}
+
 export interface WorkerPolicy {
   kind: WorkerKind;
   api_key_env?: string; // env var to whitelist into the worker (plan-auth CLIs need none)
   model?: string; // pinned model slug passed to the worker (-m / --model); recorded in runs
   max_wall_minutes_default?: number;
   stall_minutes?: number;
+  budget?: BudgetPolicy; // when set, routing proactively skips this executor near its ceiling
 }
 
 export interface ScopePolicy {
@@ -66,6 +74,12 @@ export interface Policy {
   escalation?: { max_attempts?: number };
   /** Per-model USD prices (per million tokens). Key is a model slug or "default". */
   pricing?: Record<string, { input_per_mtok: number; output_per_mtok: number }>;
+  /** Budget-aware routing knobs. Routing is inert unless a worker declares a `budget`. */
+  routing?: {
+    estimate_tokens_default?: number; // per-task token estimate when there is no history yet
+    calibration_alpha?: number; // EMA weight for learning budget from observed limits (default 0.5)
+    calibration_margin?: number; // tokens subtracted from the learned ceiling as safety (default 0)
+  };
 }
 
 // -- task.yaml (machine contract; schema-validated; frozen at VALIDATED) -------
@@ -213,6 +227,7 @@ export interface MetricRecord {
   run_id: string;
   attempt_number: number;
   model: string | null;
+  executor?: WorkerKind | null; // which executor produced this run (for the rolling ledger)
   exit_class: ExitClass;
   verifier_result: 'PASSED' | 'FAILED' | null;
   first_pass: boolean;
@@ -235,4 +250,14 @@ export interface BaselineRecord {
   tokens_output: number;
   cost_usd: number | null;
   wall_seconds: number | null;
+}
+
+// A ground-truth "this executor hit its provider limit" observation, appended by a
+// run when it is reclassified `quota_exhausted`. Budget self-calibration reads these
+// (with the token ledger) to learn each executor's real ceiling. Append-only.
+export interface RoutingObservation {
+  ts: string;
+  kind: WorkerKind; // the executor that hit its limit
+  task_id: string;
+  run_id: string;
 }
