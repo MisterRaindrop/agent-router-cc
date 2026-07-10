@@ -84,6 +84,28 @@ claude only *proposes* the contract -- router rejects a malformed or over-broad
 proposal (an unknown build/test ref, a bare `**` scope, a glob matching no tracked
 file) before anything runs. The planner needs no file permissions; it just returns text.
 
+#### Multi-task dispatch
+
+A big goal may decompose into a batch of tasks. Each is labeled by the planner and
+gated deterministically by router:
+
+- **clear** tasks are materialized at DRAFT and dispatched; map them to a cheaper
+  executor with:
+
+  ```yaml
+  tiers:
+    clear: { kind: claude, model: sonnet }
+  ```
+
+- **unclear** tasks are NOT dispatched -- they come back as a handback list for the
+  orchestrating session to clarify or do directly.
+- **depends_on** between tasks is a hard gate: `router run` refuses a task until its
+  dependencies are MERGED. `router ready` lists what can run now; drive the batch
+  wave by wave (run ready tasks in parallel, review + merge, check `ready` again).
+- When the whole batch is merged, run your real build/tests once on the integrated
+  result (in your real checkout) -- that is the integration gate; worktrees only run
+  the environment-free checks.
+
 ### 3. Validate, queue, run
 
 ```sh

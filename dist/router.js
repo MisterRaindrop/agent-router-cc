@@ -2965,7 +2965,7 @@ var VERSION, ROUTER_DIR;
 var init_constants = __esm({
   "src/domain/constants.ts"() {
     "use strict";
-    VERSION = true ? "0.2.0" : "0.0.0-dev";
+    VERSION = true ? "0.3.0" : "0.0.0-dev";
     ROUTER_DIR = ".router";
   }
 });
@@ -9606,6 +9606,13 @@ var init_policy_schema = __esm({
             calibration_alpha: { type: "number", minimum: 0, maximum: 1 },
             calibration_margin: { type: "number", minimum: 0 }
           }
+        },
+        tiers: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            clear: { $ref: "#/definitions/worker" }
+          }
         }
       },
       definitions: {
@@ -9684,6 +9691,22 @@ var init_task_contract_schema = __esm({
         verification_params: {
           type: "object",
           additionalProperties: { type: "string" }
+        },
+        depends_on: {
+          type: "array",
+          items: { type: "string", minLength: 1 }
+        },
+        worker: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: {
+            kind: { enum: ["codex", "claude"] },
+            api_key_env: { type: "string", minLength: 1 },
+            model: { type: "string", minLength: 1 },
+            max_wall_minutes_default: { type: "integer", minimum: 1 },
+            stall_minutes: { type: "integer", minimum: 1 }
+          }
         }
       }
     };
@@ -10211,6 +10234,9 @@ import { join as join3 } from "node:path";
 function readJson(path) {
   if (!existsSync3(path)) return null;
   return JSON.parse(readFileSync2(path, "utf8"));
+}
+function readState(p, id) {
+  return readJson(p.stateFile(id));
 }
 function writeState(p, id, state) {
   writeJsonAtomic(p.stateFile(id), state);
@@ -11289,12 +11315,17 @@ function startRun(deps, id) {
   const caps = capsFromPolicy(loadPolicyFromGit(paths, st.base_sha));
   const capVerdict = checkCaps(readMetrics(paths), id, caps);
   if (!capVerdict.allowed) throw new CapExceededError(capVerdict.reason ?? "cap exceeded");
+  const { task: taskYaml2 } = loadTask(paths, id);
+  const unmet = (taskYaml2.depends_on ?? []).filter((d) => currentState(paths, d)?.state !== "MERGED");
+  if (unmet.length > 0) {
+    throw new DependencyError(`unmet dependencies (must be MERGED first): ${unmet.join(", ")}`);
+  }
   const limit = safeMaxConcurrency(deps);
   const attemptNumber = st.attempt_number + 1;
   const run2 = runId(nextRunNumber(deps, id));
   const worktreeDir = paths.worktree(id, run2);
   const branch = runBranch(id, run2);
-  const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
+  const maxWallMinutes = taskYaml2.max_wall_minutes;
   worktreeAdd(paths.repoRoot, worktreeDir, branch, st.base_sha);
   const startedAt = deps.clock.nowIso();
   writeLease(paths, id, run2, {
@@ -11483,7 +11514,7 @@ function appendRunMetric(deps, result2, escalated) {
   };
   appendMetric(deps.paths, metric);
 }
-var ConcurrencyLimitError, RunStateError, CapExceededError, RUNNABLE_FROM;
+var ConcurrencyLimitError, RunStateError, CapExceededError, DependencyError, RUNNABLE_FROM;
 var init_worker = __esm({
   "src/app/worker.ts"() {
     "use strict";
@@ -11517,6 +11548,12 @@ var init_worker = __esm({
       constructor(reason) {
         super(reason);
         this.name = "CapExceededError";
+      }
+    };
+    DependencyError = class extends Error {
+      constructor(reason) {
+        super(reason);
+        this.name = "DependencyError";
       }
     };
     RUNNABLE_FROM = /* @__PURE__ */ new Set(["QUEUED", "ESCALATED_1", "ESCALATED_2"]);
@@ -12143,25 +12180,26 @@ function buildPlannerPrompt(digest, goal) {
   const refs = digest.verificationRefs.join(", ");
   const lines = [
     "You are a planning assistant for a deterministic coding-task router.",
-    "Turn the GOAL into exactly ONE task contract.",
-    "Respond with ONLY a single JSON object -- no prose, no markdown, no code fences.",
+    "Decompose the GOAL into the SMALLEST set of tasks (1..N; one task is fine).",
+    "Respond with ONLY a single JSON object -- no prose, no markdown, no code fences:",
+    '{ "tasks": [ <task>, ... ] }',
     "",
-    "JSON shape:",
-    "{",
-    '  "id": "kebab-case-slug",',
-    '  "title": "short imperative title",',
-    '  "allowed_globs": ["smallest set of path globs that can satisfy the goal"],',
-    '  "forbidden_globs": [],',
-    '  "max_changed_lines": 100,',
-    `  "build_ref": "one of: ${refs}",`,
-    `  "test_ref": "one of: ${refs}",`,
+    "Each <task> has:",
+    '  "id": "kebab-case-slug", "title": "short imperative title",',
+    '  "clarity": "clear" | "unclear",',
+    '  "depends_on": ["ids of tasks in THIS response that must merge first"],',
+    'and, when clarity is "clear" (well-bounded, mechanically checkable):',
+    '  "allowed_globs": ["smallest set of path globs"], "forbidden_globs": [],',
+    `  "max_changed_lines": 100, "build_ref": "one of: ${refs}", "test_ref": "one of: ${refs}",`,
     '  "contract_md": "markdown with a Goal section and a Definition of Done checklist"',
-    "}",
+    'or, when clarity is "unclear" (needs human judgment/design first):',
+    '  "reason": "what must be clarified before this can be dispatched"',
     "",
     "Constraints:",
+    '- Mark a task "clear" ONLY if an average model could finish it from the contract alone.',
     '- allowed_globs must be minimal and match existing files; never use a bare "**".',
     "- build_ref and test_ref MUST be chosen from the list above.",
-    "- max_changed_lines is a positive integer sized to the goal.",
+    "- depends_on may only reference ids in this same response; no cycles.",
     "",
     `GOAL: ${goal}`,
     "",
@@ -12201,48 +12239,109 @@ function extractJsonObject(text) {
   }
   return null;
 }
-function parseAndCheck(rawText, ctx) {
-  const jsonText = extractJsonObject(rawText);
-  if (jsonText === null) return { ok: false, errors: ["no JSON object found in planner output"] };
-  let obj;
-  try {
-    obj = JSON.parse(jsonText);
-  } catch (e) {
-    return { ok: false, errors: [`planner output is not valid JSON: ${e.message}`] };
-  }
+function checkContractFields(obj, ctx, label) {
   const errors = [];
   const str = (k) => typeof obj[k] === "string" ? obj[k] : "";
-  if (!ID_RE.test(str("id"))) errors.push("id must be a kebab-case slug");
-  if (str("title").trim() === "") errors.push("title must be a non-empty string");
-  if (str("contract_md").trim() === "") errors.push("contract_md must be a non-empty string");
+  if (!ID_RE.test(str("id"))) errors.push(`${label}id must be a kebab-case slug`);
+  if (str("title").trim() === "") errors.push(`${label}title must be a non-empty string`);
+  if (str("contract_md").trim() === "") errors.push(`${label}contract_md must be a non-empty string`);
   const globs = obj["allowed_globs"];
   const globList = Array.isArray(globs) && globs.every((g) => typeof g === "string") ? globs : [];
-  if (globList.length === 0) errors.push("allowed_globs must be a non-empty string array");
+  if (globList.length === 0) errors.push(`${label}allowed_globs must be a non-empty string array`);
   for (const g of globList) {
-    if (BROAD.has(g.trim())) errors.push(`allowed_glob '${g}' is too broad`);
-    else if (!ctx.trackedFiles.some((f) => matchGlob(f, g))) errors.push(`allowed_glob '${g}' matches no tracked file`);
+    if (BROAD.has(g.trim())) errors.push(`${label}allowed_glob '${g}' is too broad`);
+    else if (!ctx.trackedFiles.some((f) => matchGlob(f, g))) errors.push(`${label}allowed_glob '${g}' matches no tracked file`);
   }
   for (const ref of ["build_ref", "test_ref"]) {
     const v = str(ref);
-    if (v === "") errors.push(`${ref} must be a non-empty string`);
-    else if (!ctx.policyRefs.includes(v)) errors.push(`${ref} '${v}' not in policy.verification (${ctx.policyRefs.join(", ")})`);
+    if (v === "") errors.push(`${label}${ref} must be a non-empty string`);
+    else if (!ctx.policyRefs.includes(v)) errors.push(`${label}${ref} '${v}' not in policy.verification (${ctx.policyRefs.join(", ")})`);
   }
   const mcl = obj["max_changed_lines"];
-  if (typeof mcl !== "number" || !Number.isInteger(mcl) || mcl <= 0) errors.push("max_changed_lines must be a positive integer");
-  else if (mcl > MAX_CHANGED_LINES_CEILING) errors.push(`max_changed_lines ${mcl} exceeds ceiling ${MAX_CHANGED_LINES_CEILING}`);
-  if (errors.length > 0) return { ok: false, errors };
+  if (typeof mcl !== "number" || !Number.isInteger(mcl) || mcl <= 0) errors.push(`${label}max_changed_lines must be a positive integer`);
+  else if (mcl > MAX_CHANGED_LINES_CEILING) errors.push(`${label}max_changed_lines ${mcl} exceeds ceiling ${MAX_CHANGED_LINES_CEILING}`);
+  if (errors.length > 0) return { errors };
   const fg = obj["forbidden_globs"];
-  const contract = {
-    id: str("id"),
-    title: str("title"),
-    allowed_globs: globList,
-    forbidden_globs: Array.isArray(fg) && fg.every((g) => typeof g === "string") ? fg : [],
-    max_changed_lines: mcl,
-    build_ref: str("build_ref"),
-    test_ref: str("test_ref"),
-    contract_md: str("contract_md")
+  return {
+    errors: [],
+    contract: {
+      id: str("id"),
+      title: str("title"),
+      allowed_globs: globList,
+      forbidden_globs: Array.isArray(fg) && fg.every((g) => typeof g === "string") ? fg : [],
+      max_changed_lines: mcl,
+      build_ref: str("build_ref"),
+      test_ref: str("test_ref"),
+      contract_md: str("contract_md")
+    }
   };
-  return { ok: true, contract };
+}
+function strList(v) {
+  return Array.isArray(v) && v.every((x) => typeof x === "string") ? v : [];
+}
+function parseAndCheckBatch(rawText, ctx) {
+  const jsonText = extractJsonObject(rawText);
+  if (jsonText === null) return { ok: false, errors: ["no JSON object found in planner output"] };
+  let root;
+  try {
+    root = JSON.parse(jsonText);
+  } catch (e) {
+    return { ok: false, errors: [`planner output is not valid JSON: ${e.message}`] };
+  }
+  const bare = !Array.isArray(root["tasks"]);
+  const entries = bare ? [root] : root["tasks"].map((t) => typeof t === "object" && t !== null ? t : {});
+  if (entries.length === 0) return { ok: false, errors: ["planner returned an empty task list"] };
+  const errors = [];
+  const tasks = [];
+  const handback = [];
+  const ids = [];
+  for (const [i, obj] of entries.entries()) {
+    const id = typeof obj["id"] === "string" ? obj["id"] : `#${i}`;
+    const label = `task ${id}: `;
+    ids.push(id);
+    const clarity = bare ? "clear" : obj["clarity"];
+    if (clarity !== "clear" && clarity !== "unclear") {
+      errors.push(`${label}clarity must be "clear" or "unclear"`);
+      continue;
+    }
+    const depends_on = strList(obj["depends_on"]);
+    if (clarity === "unclear") {
+      if (!ID_RE.test(id)) errors.push(`${label}id must be a kebab-case slug`);
+      const title = typeof obj["title"] === "string" ? obj["title"] : "";
+      if (title.trim() === "") errors.push(`${label}title must be a non-empty string`);
+      const reason = typeof obj["reason"] === "string" ? obj["reason"] : void 0;
+      handback.push({ id, title, depends_on, ...reason !== void 0 ? { reason } : {} });
+      continue;
+    }
+    const checked = checkContractFields(obj, ctx, label);
+    if (checked.contract === void 0) errors.push(...checked.errors);
+    else tasks.push({ ...checked.contract, clarity: "clear", depends_on });
+  }
+  const seen = /* @__PURE__ */ new Set();
+  for (const id of ids) {
+    if (seen.has(id)) errors.push(`duplicate task id '${id}' in batch`);
+    seen.add(id);
+  }
+  const depsById = /* @__PURE__ */ new Map();
+  for (const t of tasks) depsById.set(t.id, t.depends_on);
+  for (const h of handback) depsById.set(h.id, h.depends_on);
+  for (const [id, deps] of depsById) {
+    for (const d of deps) if (!seen.has(d)) errors.push(`task ${id}: depends_on '${d}' is not in this batch`);
+  }
+  const state = /* @__PURE__ */ new Map();
+  const visit2 = (id, stack) => {
+    if (state.get(id) === "done") return;
+    if (state.get(id) === "visiting") {
+      errors.push(`dependency cycle: ${[...stack, id].join(" -> ")}`);
+      return;
+    }
+    state.set(id, "visiting");
+    for (const d of depsById.get(id) ?? []) if (depsById.has(d)) visit2(d, [...stack, id]);
+    state.set(id, "done");
+  };
+  for (const id of depsById.keys()) visit2(id, []);
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, tasks, handback };
 }
 
 // src/app/plan.ts
@@ -12270,6 +12369,7 @@ function invokeClaudePlanner(prompt, env = process.env) {
 }
 
 // src/app/plan.ts
+init_store();
 init_policyLoad();
 init_transition();
 var README_HEAD_LINES = 40;
@@ -12278,19 +12378,21 @@ function readReadmeHead(repoRoot) {
   if (!existsSync5(p)) return void 0;
   return readFileSync5(p, "utf8").split("\n").slice(0, README_HEAD_LINES).join("\n");
 }
-function renderTaskYaml(c) {
+function renderTaskYaml(t, tierWorker) {
   const task = {
     schema_version: 1,
-    id: c.id,
-    title: c.title,
+    id: t.id,
+    title: t.title,
     base_sha: null,
     max_wall_minutes: 30,
-    allowed_globs: c.allowed_globs,
-    forbidden_globs: c.forbidden_globs,
-    max_changed_lines: c.max_changed_lines,
-    build_ref: c.build_ref,
-    test_ref: c.test_ref,
-    verification_params: {}
+    allowed_globs: t.allowed_globs,
+    forbidden_globs: t.forbidden_globs,
+    max_changed_lines: t.max_changed_lines,
+    build_ref: t.build_ref,
+    test_ref: t.test_ref,
+    verification_params: {},
+    ...t.depends_on.length > 0 ? { depends_on: t.depends_on } : {},
+    ...tierWorker !== void 0 ? { worker: tierWorker } : {}
   };
   return dump(task, { lineWidth: 120 });
 }
@@ -12308,14 +12410,23 @@ function runPlan(deps, goal, opts = {}) {
   };
   const res = invokeClaudePlanner(buildPlannerPrompt(digest, goal), process.env);
   if (!res.ok) return { ok: false, errors: [`claude planner failed: ${res.error ?? "unknown error"}`] };
-  const checked = parseAndCheck(res.text, { policyRefs, trackedFiles: tracked.files });
+  const checked = parseAndCheckBatch(res.text, { policyRefs, trackedFiles: tracked.files });
   if (!checked.ok) return { ok: false, errors: checked.errors };
-  const contract = checked.contract;
-  const id = opts.id ?? contract.id;
-  createTask(deps, id, contract.title);
-  writeFileSync3(paths.taskYaml(id), renderTaskYaml(contract));
-  writeFileSync3(paths.contractMd(id), contract.contract_md);
-  return { ok: true, id, contract, risk: classifyRisk(contract.allowed_globs), truncated: tracked.truncated };
+  if (opts.id !== void 0 && checked.tasks.length !== 1) {
+    return { ok: false, errors: [`--id is only valid for a single-task plan (planner returned ${checked.tasks.length})`] };
+  }
+  const tasks = opts.id !== void 0 ? [{ ...checked.tasks[0], id: opts.id }] : checked.tasks;
+  const clash = tasks.filter((t) => readState(paths, t.id) !== null).map((t) => t.id);
+  if (clash.length > 0) return { ok: false, errors: clash.map((id) => `task '${id}' already exists`) };
+  const tierWorker = policy.tiers?.clear;
+  const created = [];
+  for (const t of tasks) {
+    createTask(deps, t.id, t.title);
+    writeFileSync3(paths.taskYaml(t.id), renderTaskYaml(t, tierWorker));
+    writeFileSync3(paths.contractMd(t.id), t.contract_md);
+    created.push({ id: t.id, title: t.title, risk: classifyRisk(t.allowed_globs), depends_on: t.depends_on });
+  }
+  return { ok: true, created, handback: checked.handback, truncated: tracked.truncated };
 }
 
 // src/cli/commands.ts
@@ -12538,6 +12649,7 @@ var run = (ctx) => {
     started = startRun(deps, id);
   } catch (e) {
     if (e instanceof CapExceededError) throw new CliError(`refused: ${e.message}`, 1);
+    if (e instanceof DependencyError) throw new CliError(`blocked: ${e.message}`, 1);
     throw e;
   }
   const script = process.argv[1] ?? "";
@@ -12576,7 +12688,9 @@ var workerRun = async (ctx) => {
     launchers = [makeLauncher(rescueWorker)];
   } else {
     const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
-    launchers = ordered.map(makeLauncher);
+    const pinned = loadTask(paths, id).task.worker;
+    const chain = pinned !== void 0 ? [pinned, ...ordered.filter((w) => !(w.kind === pinned.kind && w.model === pinned.model))] : ordered;
+    launchers = chain.map(makeLauncher);
   }
   const [primary, ...rest] = launchers;
   const result2 = await runWorkerBody(deps, id, runId2, primary, policy, rest);
@@ -12900,6 +13014,27 @@ var routing = (ctx) => {
   });
   return 0;
 };
+var ready = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const queued = listTaskIds(paths).filter((t) => currentState(paths, t)?.state === "QUEUED");
+  const items = queued.map((t) => {
+    let deps = [];
+    try {
+      deps = loadTask(paths, t).task.depends_on ?? [];
+    } catch {
+    }
+    const unmet = deps.filter((d) => currentState(paths, d)?.state !== "MERGED");
+    return { id: t, unmet };
+  });
+  const runnable = items.filter((i) => i.unmet.length === 0).map((i) => i.id);
+  const blocked = items.filter((i) => i.unmet.length > 0);
+  emit(ctx.json, { ok: true, ready: runnable, blocked }, () => {
+    const lines = [runnable.length > 0 ? `ready: ${runnable.join(", ")}` : "ready: (none)"];
+    for (const b of blocked) lines.push(`  blocked ${b.id}: waiting on ${b.unmet.join(", ")}`);
+    return lines.join("\n");
+  });
+  return 0;
+};
 var plan = async (ctx) => {
   const { deps } = depsFor(ctx);
   const goal = flagStr(ctx.args.flags, "goal") ?? ctx.args.positionals[0];
@@ -12908,19 +13043,37 @@ var plan = async (ctx) => {
   const outcome = runPlan(deps, goal, idFlag !== void 0 ? { id: idFlag } : {});
   if (!outcome.ok) throw new CliError(`plan rejected:
   - ${outcome.errors.join("\n  - ")}`, 1);
-  const id = outcome.id;
-  if (!flagBool(ctx.args.flags, "execute")) {
-    emit(
-      ctx.json,
-      { ok: true, id, state: "DRAFT", risk: outcome.risk.level, reasons: outcome.risk.reasons, truncated: outcome.truncated },
-      () => `planned ${id} (DRAFT, risk ${outcome.risk.level}); review .router/tasks/${id}/, then \`router validate ${id}\` or re-run with --execute`
+  const summary = {
+    ok: true,
+    created: outcome.created.map((c) => ({ id: c.id, title: c.title, risk: c.risk.level, depends_on: c.depends_on })),
+    handback: outcome.handback,
+    truncated: outcome.truncated
+  };
+  const text = () => {
+    const lines = outcome.created.map(
+      (c) => `planned ${c.id} (DRAFT, risk ${c.risk.level}${c.depends_on.length > 0 ? `, after ${c.depends_on.join(",")}` : ""})`
     );
+    for (const h of outcome.handback) {
+      lines.push(`handback ${h.id}: ${h.title}${h.reason !== void 0 ? ` -- ${h.reason}` : ""} (needs the main session)`);
+    }
+    lines.push("review .router/tasks/<id>/, then `router run <id>` (or re-run plan with --execute)");
+    return lines.join("\n");
+  };
+  if (!flagBool(ctx.args.flags, "execute")) {
+    emit(ctx.json, summary, text);
     return 0;
   }
-  const chainCtx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id } } };
-  validate(chainCtx);
-  queue(chainCtx);
-  return await run(chainCtx);
+  let rc = 0;
+  for (const c of outcome.created) {
+    const chainCtx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id: c.id } } };
+    validate(chainCtx);
+    queue(chainCtx);
+  }
+  for (const c of outcome.created.filter((t) => t.depends_on.length === 0)) {
+    const chainCtx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id: c.id } } };
+    rc = Math.max(rc, await run(chainCtx));
+  }
+  return rc;
 };
 var selftestCmd = async (ctx) => {
   const { selftest: selftest2 } = await Promise.resolve().then(() => (init_selftest(), selftest_exports));
@@ -12949,6 +13102,7 @@ var HANDLERS = {
   stats,
   baseline,
   routing,
+  ready,
   cancel,
   gc,
   recover: recoverCmd,
@@ -12964,7 +13118,7 @@ function helpText() {
 Usage: router <command> [options]
 
 Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge
-Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest
+Ops:        list * ready * stats * baseline * routing * cancel * gc * recover * reindex * selftest
 
 Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,
        --dry-run, --keep-metrics, --since, --execute

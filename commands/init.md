@@ -1,12 +1,10 @@
 ---
-description: Initialize router in this repo -- scaffold .router/ and a policy.yaml template
+description: Initialize router in this repo -- scaffold .router/ (zero-config)
 allowed-tools: Bash(node:*)
 ---
 !`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" init`
 
-Confirm `.router/` was created. The default `policy.yaml` works out of the box
-(placeholder build/test that always pass), so the only required step is to commit
-`.router/` -- router reads the policy from the committed base_sha, not the working
-tree. Tell the user: for a real correctness gate, replace the `verification`
-commands in `.router/policy.yaml` with their project's actual build + test; the file
-has commented examples for pricing, budgets, and escalation when they want to tune.
+Confirm `.router/` was created, then commit it (router reads policy from the
+committed base_sha, not the working tree). Nothing else is required: the default
+policy works as-is. Do not ask the user to configure anything now -- the build/test
+conversation happens later, at integration time, after a batch is merged.

@@ -59,12 +59,17 @@ out of the box; to make a PASS also mean "your build and tests pass", set your r
 commands under `verification` (see below). Then let the agent do a task:
 
 ```
-/router:plan implement X in src/     # claude drafts a contract; router validates it -> DRAFT
+/router:plan implement X in src/     # claude decomposes the goal; router validates -> DRAFT tasks
+/router:ready                        # which tasks can run now (dependencies merged)
 /router:run <id>                     # validate + queue + run in a supervised worker
 /router:status <id>                  # poll until PASSED or FAILED
 /router:result <id>                  # the per-check verifier report
 /router:merge <id>                   # you merge the verified diff (high-risk: /router:approve first)
 ```
+
+A big goal may decompose into several tasks: clear ones are dispatched (optionally to
+a cheaper model via `tiers`), unclear ones come back for discussion, and dependent
+tasks unlock as their prerequisites merge.
 
 Prefer to write the contract yourself instead of having claude draft it? Use
 `/router:delegate <id> <description>`. Full walkthrough and the resilience/safety
@@ -89,9 +94,10 @@ verification:                        # the commands the gate runs (argv arrays, 
 ```
 
 A task references these by `build_ref` / `test_ref`. Optional blocks add resilience and
-safety, and cost visibility: `escalation`, `budget_caps`, `secret_scan`, `routing`, and
+safety, and cost visibility: `escalation`, `budget_caps`, `secret_scan`, `routing`,
+`tiers` (which executor runs planner-labeled "clear" tasks, e.g. a cheaper model), and
 `pricing` (per-model USD, so `/router:stats` reports spend and savings). The `router
-init` template includes commented examples of each. See docs/quickstart.md.
+init` template includes commented examples. See docs/quickstart.md.
 
 ## How the gates work
 
