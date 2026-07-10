@@ -48,11 +48,12 @@ and a hook that reconciles crashed runs on session start.
 In the repo you want to work in:
 
 ```
-/router:init                         # scaffolds .router/
+/router:init                         # scaffolds .router/ with a ready-to-use policy
 ```
 
-Edit `.router/policy.yaml` -- set your project's real build + test commands and the
-scope limits (see below) -- and commit it. Then let the agent do a task:
+Commit `.router/` (router reads the policy from git, not the working tree). It works
+out of the box; to make a PASS also mean "your build and tests pass", set your real
+commands under `verification` (see below). Then let the agent do a task:
 
 ```
 /router:plan implement X in src/     # claude drafts a contract; router validates it -> DRAFT
@@ -80,12 +81,14 @@ scope:
   test_globs: ["test/**"]            # tests can't be deleted/emptied to fake a pass
   max_changed_lines: 400
 verification:                        # the commands the gate runs (argv arrays, no shell)
-  build: [["npm", "run", "build"]]
-  test:  [["npm", "test"]]
+  build: [["npm", "run", "build"]]   # init ships a placeholder that always passes;
+  test:  [["npm", "test"]]           # replace with your real commands for a true gate
 ```
 
 A task references these by `build_ref` / `test_ref`. Optional blocks add resilience and
-safety: `escalation`, `budget_caps`, `secret_scan`, `routing` (see docs/quickstart.md).
+safety, and cost visibility: `escalation`, `budget_caps`, `secret_scan`, `routing`, and
+`pricing` (per-model USD, so `/router:stats` reports spend and savings). The `router
+init` template includes commented examples of each. See docs/quickstart.md.
 
 ## How the gates work
 
