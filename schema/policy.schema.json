@@ -48,7 +48,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "max_attempts": { "type": "integer", "minimum": 1 }
+        "max_attempts": { "type": "integer", "minimum": 1 },
+        "rescue_worker": { "$ref": "#/definitions/worker" }
       }
     },
     "pricing": {

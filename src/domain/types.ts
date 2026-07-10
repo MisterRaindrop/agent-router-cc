@@ -63,7 +63,12 @@ export interface Policy {
   scope: ScopePolicy;
   /** ref-name (e.g. "build", "test") -> allowed argv templates. */
   verification: Record<string, WhitelistTemplate[]>;
-  escalation?: { max_attempts?: number };
+  escalation?: {
+    max_attempts?: number;
+    /** A stronger/different executor used for the ESCALATED_2 "rescue" attempt.
+     * If absent, the rescue falls back to the last executor in the chain. */
+    rescue_worker?: WorkerPolicy;
+  };
   /** Per-model USD prices (per million tokens). Key is a model slug or "default". */
   pricing?: Record<string, { input_per_mtok: number; output_per_mtok: number }>;
 }
