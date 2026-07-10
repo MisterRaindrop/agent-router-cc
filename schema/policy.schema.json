@@ -91,6 +91,13 @@
         "calibration_alpha": { "type": "number", "minimum": 0, "maximum": 1 },
         "calibration_margin": { "type": "number", "minimum": 0 }
       }
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "clear": { "$ref": "#/definitions/worker" }
+      }
     }
   },
   "definitions": {

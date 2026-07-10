@@ -42,6 +42,22 @@
     "verification_params": {
       "type": "object",
       "additionalProperties": { "type": "string" }
+    },
+    "depends_on": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["codex", "claude"] },
+        "api_key_env": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "max_wall_minutes_default": { "type": "integer", "minimum": 1 },
+        "stall_minutes": { "type": "integer", "minimum": 1 }
+      }
     }
   }
 }

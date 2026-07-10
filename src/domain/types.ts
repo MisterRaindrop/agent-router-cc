@@ -93,6 +93,8 @@ export interface Policy {
   };
   budget_caps?: BudgetCaps; // hard cap on accumulated cost/tokens per task
   secret_scan?: SecretScanPolicy; // diff secret scanning (on by default)
+  /** Tier mapping for dispatch: which executor runs planner-labeled "clear" tasks. */
+  tiers?: { clear?: WorkerPolicy };
   /** Per-model USD prices (per million tokens). Key is a model slug or "default". */
   pricing?: Record<string, { input_per_mtok: number; output_per_mtok: number }>;
   /** Budget-aware routing knobs. Routing is inert unless a worker declares a `budget`. */
@@ -123,6 +125,10 @@ export interface TaskYaml {
   build_ref: string;
   test_ref: string;
   verification_params?: Record<string, string>;
+  /** Task ids that must be MERGED before this task may run (deterministic gate). */
+  depends_on?: string[];
+  /** Executor pinned at plan time (tier mapping); head of the run's fallback chain. */
+  worker?: WorkerPolicy;
 }
 
 // -- Effective scope (task + policy, precomputed by the app layer) -------------
@@ -311,4 +317,22 @@ export interface RepoDigest {
 
 export type PlanCheckResult =
   | { ok: true; contract: ProposedContract }
+  | { ok: false; errors: string[] };
+
+/** One task in a planner batch: contract fields + dispatch labels. */
+export type ProposedTask = ProposedContract & {
+  clarity: 'clear' | 'unclear';
+  depends_on: string[];
+};
+
+/** An unclear task returned to the main session instead of being dispatched. */
+export interface HandbackItem {
+  id: string;
+  title: string;
+  reason?: string;
+  depends_on: string[];
+}
+
+export type PlanBatchResult =
+  | { ok: true; tasks: ProposedTask[]; handback: HandbackItem[] }
   | { ok: false; errors: string[] };
