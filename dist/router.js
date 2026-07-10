@@ -2965,7 +2965,7 @@ var VERSION, ROUTER_DIR;
 var init_constants = __esm({
   "src/domain/constants.ts"() {
     "use strict";
-    VERSION = true ? "0.1.0" : "0.0.0-dev";
+    VERSION = true ? "0.2.0" : "0.0.0-dev";
     ROUTER_DIR = ".router";
   }
 });

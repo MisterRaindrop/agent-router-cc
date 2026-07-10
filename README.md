@@ -6,6 +6,9 @@ reaches your branch until mechanical checks -- **build, tests, scope, secret sca
 all pass. You review and merge. The LLM only produces artifacts; the plugin owns every
 gate.
 
+> **Status: beta (0.x).** Usable today; the policy schema and commands may still change
+> before 1.0.
+
 ## With router vs. without
 
 |                        | Prompting the agent directly            | With router                                             |
