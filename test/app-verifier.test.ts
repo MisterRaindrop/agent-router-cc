@@ -68,7 +68,7 @@ function req(dir: string, base: string, wt: string, over: Partial<VerifyRequest>
   };
 }
 
-test('all 5 checks pass for an in-scope, building, passing change', () => {
+test('all checks pass for an in-scope, building, passing change', () => {
   const { dir, base } = baseRepo();
   try {
     const wt = makeRun(dir, base, (w) => {
@@ -77,8 +77,42 @@ test('all 5 checks pass for an in-scope, building, passing change', () => {
     });
     const report = verify(req(dir, base, wt));
     assert.equal(report.result, 'PASSED', JSON.stringify(report.checks));
-    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'build', 'test', 'contract_hash']);
+    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'secret_scan', 'build', 'test', 'contract_hash']);
     assert.ok(report.checks.every((c) => c.ok));
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('secret scan fails verification when a private key is added (after scope, before build)', () => {
+  const { dir, base } = baseRepo();
+  try {
+    const wt = makeRun(dir, base, (w) => {
+      fx.write(w, 'src/a.ts', 'const k = "-----BEGIN RSA PRIVATE KEY-----";\n');
+      fx.addCommit(w, 'leak');
+    });
+    const report = verify(req(dir, base, wt));
+    assert.equal(report.result, 'FAILED');
+    // fail-fast: scope passed, secret_scan caught it before build ran
+    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'secret_scan']);
+    assert.equal(report.checks.at(-1)?.ok, false);
+    assert.match(report.checks.at(-1)?.detail ?? '', /private_key_header/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('secret scan can be disabled via policy.secret_scan.enabled=false', () => {
+  const { dir, base } = baseRepo();
+  try {
+    const wt = makeRun(dir, base, (w) => {
+      fx.write(w, 'src/a.ts', 'const k = "-----BEGIN RSA PRIVATE KEY-----";\n');
+      fx.addCommit(w, 'leak');
+    });
+    const report = verify(req(dir, base, wt, { policy: policy({ secret_scan: { enabled: false } }) }));
+    assert.equal(report.result, 'PASSED', JSON.stringify(report.checks));
+    // no secret_scan check present when disabled
+    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'build', 'test', 'contract_hash']);
   } finally {
     fx.cleanup(dir);
   }
@@ -124,8 +158,8 @@ test('check 3 fails when the build command exits nonzero', () => {
       req(dir, base, wt, { policy: policy({ verification: { build: [['node', '-e', 'process.exit(1)']], test: [['node', '-e', 'process.exit(0)']] } }) }),
     );
     assert.equal(report.result, 'FAILED');
-    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'build']);
-    assert.equal(report.checks[2]?.rc, 1);
+    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'secret_scan', 'build']);
+    assert.equal(report.checks[3]?.rc, 1);
   } finally {
     fx.cleanup(dir);
   }
@@ -142,8 +176,8 @@ test('check 4 fails when tests exit nonzero (build passed)', () => {
       req(dir, base, wt, { policy: policy({ verification: { build: [['node', '-e', 'process.exit(0)']], test: [['node', '-e', 'process.exit(2)']] } }) }),
     );
     assert.equal(report.result, 'FAILED');
-    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'build', 'test']);
-    assert.equal(report.checks[3]?.rc, 2);
+    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'secret_scan', 'build', 'test']);
+    assert.equal(report.checks[4]?.rc, 2);
   } finally {
     fx.cleanup(dir);
   }
@@ -159,8 +193,8 @@ test('check 5 fails when the frozen contract was modified after validation', () 
     // Same everything, but the on-disk contract text no longer matches FROZEN.
     const report = verify(req(dir, base, wt, { contractMdText: '# Contract\nTAMPERED\n' }));
     assert.equal(report.result, 'FAILED');
-    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'build', 'test', 'contract_hash']);
-    assert.equal(report.checks[4]?.ok, false);
+    assert.deepEqual(report.checks.map((c) => c.id), ['diff_applies', 'scope', 'secret_scan', 'build', 'test', 'contract_hash']);
+    assert.equal(report.checks[5]?.ok, false);
   } finally {
     fx.cleanup(dir);
   }

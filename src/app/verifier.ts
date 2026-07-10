@@ -8,10 +8,11 @@ import type { Policy, TaskYaml, VerifierCheck, VerifierReport } from '../domain/
 import { buildEffectiveScope, evaluateScope } from '../core/scope.ts';
 import { instantiateTemplate } from '../core/whitelist.ts';
 import { hashContract } from '../core/contractHash.ts';
+import { scanSecrets } from '../core/secrets.ts';
 import { applyCheck, collectDiff, rawDiff, worktreeAddDetached, worktreeRemove } from '../io/git.ts';
 import { runCommand } from '../io/proc.ts';
 
-// The mechanical verifier: five checks, in order, fail-fast. Every gate the LLM
+// The mechanical verifier: checks run in order, fail-fast. Every gate the LLM
 // must clear lives here as deterministic code. Policy is passed in already loaded
 // from the base_sha git object (app/policyLoad), so the worker cannot influence
 // the whitelist or scope by editing its worktree.
@@ -95,17 +96,30 @@ export function verify(req: VerifyRequest): VerifierReport {
   }
   checks.push(pass('scope', `${verdict.changedLines} lines`));
 
-  // 3. build.
+  // 3. secret scan (skippable via policy.secret_scan.enabled=false). Runs after
+  // scope so an out-of-scope escape is still reported as a scope violation first.
+  const secretPolicy = req.policy.secret_scan;
+  if (secretPolicy?.enabled !== false) {
+    const findings = scanSecrets(patch, secretPolicy?.extra_patterns ?? []);
+    if (findings.length > 0) {
+      const detail = findings.map((f) => `${f.rule}@L${f.line}`).join(', ');
+      checks.push(fail('secret_scan', `likely secret(s) in diff: ${detail}`));
+      return { result: 'FAILED', checks, changed_lines: changedLines };
+    }
+    checks.push(pass('secret_scan'));
+  }
+
+  // 4. build.
   const build = runRef(req, req.task.build_ref);
   checks.push(build.ok ? pass('build', build.detail) : fail('build', build.detail, build.rc ?? undefined));
   if (!build.ok) return { result: 'FAILED', checks, changed_lines: changedLines };
 
-  // 4. test.
+  // 5. test.
   const test = runRef(req, req.task.test_ref);
   checks.push(test.ok ? pass('test', test.detail) : fail('test', test.detail, test.rc ?? undefined));
   if (!test.ok) return { result: 'FAILED', checks, changed_lines: changedLines };
 
-  // 5. contract hash unchanged since VALIDATED.
+  // 6. contract hash unchanged since VALIDATED.
   const recomputed = hashContract(req.taskYamlText, req.contractMdText);
   if (recomputed !== req.frozenContractHash) {
     checks.push(fail('contract_hash', 'frozen contract was modified after validation'));
