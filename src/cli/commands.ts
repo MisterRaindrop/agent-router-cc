@@ -11,6 +11,7 @@ import { validateTaskYaml } from '../domain/validate.ts';
 import { aggregate, summarizeBaseline } from '../core/stats.ts';
 import { hashContract } from '../core/contractHash.ts';
 import { isTerminal } from '../core/stateMachine.ts';
+import { isRescueAttempt, resolveRescueWorker } from '../core/escalation.ts';
 import { systemClock } from '../io/clock.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, type RouterPaths } from '../io/paths.ts';
@@ -223,7 +224,20 @@ const workerRun: Handler = async (ctx) => {
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
   if (workers.length === 0) throw new CliError('policy defines no worker/workers', 1);
-  const [primary, ...rest] = workers.map(makeLauncher);
+  // A run started from ESCALATED_2 is the "rescue" attempt: use the rescue worker
+  // (stronger/different model) instead of the normal chain. The rung was decided
+  // by the state machine at finalize; we read it from this run's RUNNING event.
+  const events = store.readEvents(paths, id);
+  const runningEv = [...events].reverse().find((e) => e.to === 'RUNNING' && e.run_id === runId);
+  let launchers;
+  if (isRescueAttempt(runningEv?.from ?? null)) {
+    const rescueWorker = resolveRescueWorker(policy);
+    if (rescueWorker === undefined) throw new CliError('rescue attempt: no rescue worker resolvable', 1);
+    launchers = [makeLauncher(rescueWorker)];
+  } else {
+    launchers = workers.map(makeLauncher);
+  }
+  const [primary, ...rest] = launchers;
   // Pass the policy through (no second git load) + the fallback chain.
   const result = await runWorkerBody(deps, id, runId, primary!, policy, rest);
   return result.verifier?.result === 'PASSED' ? 0 : 1;

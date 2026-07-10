@@ -11,7 +11,12 @@ import {
   nextStates,
 } from '../src/core/stateMachine.ts';
 import { CorruptEventLogError, foldEvents } from '../src/core/projectState.ts';
-import type { EventRecord } from '../src/domain/types.ts';
+import {
+  isRescueAttempt,
+  ladderTargetAfterFailure,
+  resolveRescueWorker,
+} from '../src/core/escalation.ts';
+import type { EventRecord, Policy } from '../src/domain/types.ts';
 
 test('happy-path transitions are legal', () => {
   const path = ['DRAFT', 'VALIDATED', 'QUEUED', 'RUNNING', 'VERIFYING', 'PASSED', 'MERGED'] as const;
@@ -47,6 +52,74 @@ test('escalation ladder exists in the graph (M2 seam)', () => {
   assert.ok(canTransition('ESCALATED_2', 'RUNNING'));
   assert.ok(canTransition('ESCALATED_1', 'NEEDS_REPLAN'));
   assert.ok(canTransition('NEEDS_REPLAN', 'DRAFT'));
+});
+
+test('escalation ladder transitions used by the auto-advance are legal', () => {
+  // A run failing at each rung advances FROM FAILED to the next rung.
+  assert.ok(canTransition('FAILED', 'ESCALATED_1'));
+  assert.ok(canTransition('FAILED', 'ESCALATED_2'));
+  assert.ok(canTransition('FAILED', 'NEEDS_REPLAN'));
+  // A rung can start a new attempt (-> RUNNING).
+  assert.ok(canTransition('ESCALATED_1', 'RUNNING'));
+  assert.ok(canTransition('ESCALATED_2', 'RUNNING'));
+  // NEEDS_REPLAN is terminal-ish: no auto-retry, only human replan back to DRAFT.
+  assert.equal(canTransition('NEEDS_REPLAN', 'RUNNING'), false);
+  assert.equal(canTransition('NEEDS_REPLAN', 'QUEUED'), false);
+});
+
+test('ladderTargetAfterFailure: opt-in via max_attempts', () => {
+  // Escalation off: unset or < 2 -> stay FAILED (null).
+  assert.equal(
+    ladderTargetAfterFailure({ attemptNumber: 1, maxAttempts: undefined, countsAsAttempt: true }),
+    null,
+  );
+  assert.equal(
+    ladderTargetAfterFailure({ attemptNumber: 1, maxAttempts: 1, countsAsAttempt: true }),
+    null,
+  );
+});
+
+test('ladderTargetAfterFailure: env/quota (non-counting) never advances', () => {
+  assert.equal(
+    ladderTargetAfterFailure({ attemptNumber: 1, maxAttempts: 3, countsAsAttempt: false }),
+    null,
+  );
+});
+
+test('ladderTargetAfterFailure: climbs retry -> rescue -> replan', () => {
+  const m = 3;
+  assert.equal(ladderTargetAfterFailure({ attemptNumber: 1, maxAttempts: m, countsAsAttempt: true }), 'ESCALATED_1');
+  assert.equal(ladderTargetAfterFailure({ attemptNumber: 2, maxAttempts: m, countsAsAttempt: true }), 'ESCALATED_2');
+  assert.equal(ladderTargetAfterFailure({ attemptNumber: 3, maxAttempts: m, countsAsAttempt: true }), 'NEEDS_REPLAN');
+  // With max_attempts=2, the second failure exhausts attempts -> NEEDS_REPLAN.
+  assert.equal(ladderTargetAfterFailure({ attemptNumber: 1, maxAttempts: 2, countsAsAttempt: true }), 'ESCALATED_1');
+  assert.equal(ladderTargetAfterFailure({ attemptNumber: 2, maxAttempts: 2, countsAsAttempt: true }), 'NEEDS_REPLAN');
+});
+
+test('isRescueAttempt only for a run started from ESCALATED_2', () => {
+  assert.equal(isRescueAttempt('ESCALATED_2'), true);
+  assert.equal(isRescueAttempt('ESCALATED_1'), false);
+  assert.equal(isRescueAttempt('QUEUED'), false);
+  assert.equal(isRescueAttempt(null), false);
+});
+
+test('resolveRescueWorker: explicit wins, else last of chain', () => {
+  const base = { schema_version: 1 as const, scope: { max_changed_lines: 1 }, verification: { build: [['x']] } };
+  // explicit rescue_worker
+  const withRescue: Policy = {
+    ...base,
+    workers: [{ kind: 'codex' }, { kind: 'claude' }],
+    escalation: { max_attempts: 3, rescue_worker: { kind: 'claude', model: 'strong' } },
+  };
+  assert.deepEqual(resolveRescueWorker(withRescue), { kind: 'claude', model: 'strong' });
+  // no explicit -> last of the workers chain
+  const chain: Policy = { ...base, workers: [{ kind: 'codex' }, { kind: 'claude' }], escalation: { max_attempts: 3 } };
+  assert.deepEqual(resolveRescueWorker(chain), { kind: 'claude' });
+  // single `worker` (back-compat) -> that worker
+  const single: Policy = { ...base, worker: { kind: 'codex', model: 'm' } };
+  assert.deepEqual(resolveRescueWorker(single), { kind: 'codex', model: 'm' });
+  // nothing configured -> undefined
+  assert.equal(resolveRescueWorker(base as Policy), undefined);
 });
 
 test('assertTransition throws IllegalTransitionError', () => {

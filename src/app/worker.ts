@@ -4,8 +4,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { ExitClass, Lease, MetricRecord, Policy, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
+import type { ExitClass, Lease, MetricRecord, Policy, RunResult, TaskState, TaskYaml, WorkerKind } from '../domain/types.ts';
 import { countsAsAttempt, reclassifyQuota } from '../core/exitTaxonomy.ts';
+import { ladderTargetAfterFailure } from '../core/escalation.ts';
 import { commitAll, deleteBranch, rawDiff, resetHard, worktreeAdd, worktreeRemove } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
 import { withGlobalLock } from '../io/lock.ts';
@@ -63,12 +64,20 @@ export interface StartedRun {
   attemptNumber: number;
 }
 
+// States from which `router run` may launch a new attempt.
+const RUNNABLE_FROM: ReadonlySet<TaskState> = new Set(['QUEUED', 'ESCALATED_1', 'ESCALATED_2']);
+
 /** `router run`: allocate a run, create the worktree, move QUEUED->RUNNING. */
 export function startRun(deps: TransitionDeps, id: string): StartedRun {
   const { paths } = deps;
   const st = currentState(paths, id);
   if (st === null) throw new RunStateError(`no such task: ${id}`);
-  if (st.state !== 'QUEUED') throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED`);
+  // A run may be started from QUEUED (first attempt) or from an escalation rung
+  // (ESCALATED_1 = retry, ESCALATED_2 = rescue). The rung is chosen by the state
+  // machine at finalize time; `router run` just starts the next attempt.
+  if (!RUNNABLE_FROM.has(st.state)) {
+    throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED/ESCALATED_1/ESCALATED_2`);
+  }
   if (st.base_sha === null) throw new RunStateError(`task ${id} has no frozen base_sha`);
 
   const limit = safeMaxConcurrency(deps);
@@ -247,13 +256,37 @@ export async function runWorkerBody(
     finalState = 'FAILED';
   }
 
+  // Escalation ladder: a FAILED run whose exit COUNTS as an attempt climbs the
+  // ladder (retry -> rescue -> replan), governed by policy.escalation.max_attempts.
+  // env_error/quota do NOT count (return null -> stay FAILED). The rung is decided
+  // by pure core code (never the LLM); the mechanical verifier is unchanged.
+  const ladderTarget =
+    finalState === 'FAILED'
+      ? ladderTargetAfterFailure({
+          attemptNumber: st.attempt_number,
+          maxAttempts: policyGit.escalation?.max_attempts,
+          countsAsAttempt: countsAsAttempt(exitClass),
+        })
+      : null;
+
   store.writeResult(paths, id, runId, result);
-  appendRunMetric(deps, result, st);
+  appendRunMetric(deps, result, ladderTarget !== null);
   transition(deps, id, finalState, {
     actor: 'router:worker',
     runId,
     meta: { exit_class: exitClass, counts_as_attempt: countsAsAttempt(exitClass) },
   });
+  if (ladderTarget !== null) {
+    transition(deps, id, ladderTarget, {
+      actor: 'router:escalate',
+      runId,
+      meta: {
+        rung: ladderTarget,
+        attempt_number: st.attempt_number,
+        max_attempts: policyGit.escalation?.max_attempts ?? null,
+      },
+    });
+  }
   return result;
 }
 
@@ -265,7 +298,7 @@ function safeRead(path: string): string {
   }
 }
 
-function appendRunMetric(deps: TransitionDeps, result: RunResult, st: StateFile): void {
+function appendRunMetric(deps: TransitionDeps, result: RunResult, escalated: boolean): void {
   const metric: MetricRecord = {
     ts: deps.clock.nowIso(),
     task_id: result.task_id,
@@ -279,9 +312,8 @@ function appendRunMetric(deps: TransitionDeps, result: RunResult, st: StateFile)
     tokens_output: result.tokens?.output ?? null,
     cost_usd: result.cost_usd ?? null,
     wall_seconds: result.wall_seconds,
-    escalated: false,
+    escalated,
     env_error: result.env_error,
   };
-  void st;
   store.appendMetric(deps.paths, metric);
 }
