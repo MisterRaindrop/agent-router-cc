@@ -68,7 +68,7 @@ i.e. router is cheaper whenever codex's effective $/token is below ~1/3 of Opus'
 and codex's heavy input caching pushes `Pc_effective` down further. For a real
 figure, set `ROUTER_PRICE_INPUT_PER_MTOK` / `ROUTER_PRICE_OUTPUT_PER_MTOK` to current
 list prices (accounting for cached-input pricing) and read `router stats`
-`costPerVerifiedTask`, then compare to the Opus-direct dollar cost.
+`spentUsdPerVerifiedTask`, then compare to the Opus-direct dollar cost.
 
 ## Caveats
 

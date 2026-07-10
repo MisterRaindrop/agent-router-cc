@@ -217,3 +217,16 @@ export interface MetricRecord {
   escalated: boolean;
   env_error: boolean;
 }
+
+// A recorded Opus-direct measurement, the denominator for savings. Populated by
+// `router baseline add` from a task done directly by Opus (no router). Averaged
+// into the baseline used by `router stats`.
+export interface BaselineRecord {
+  ts: string;
+  task_id: string | null;
+  model: string | null;
+  tokens_input: number;
+  tokens_output: number;
+  cost_usd: number | null;
+  wall_seconds: number | null;
+}

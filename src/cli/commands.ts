@@ -6,9 +6,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
-import type { TaskState, TaskYaml } from '../domain/types.ts';
+import type { BaselineRecord, TaskState, TaskYaml } from '../domain/types.ts';
 import { validateTaskYaml } from '../domain/validate.ts';
-import { aggregate } from '../core/stats.ts';
+import { aggregate, summarizeBaseline } from '../core/stats.ts';
 import { hashContract } from '../core/contractHash.ts';
 import { isTerminal } from '../core/stateMachine.ts';
 import { systemClock } from '../io/clock.ts';
@@ -306,16 +306,67 @@ const result: Handler = (ctx) => {
   return 0;
 };
 
+const usd = (v: number | null): string => (v === null ? 'n/a' : `$${v.toFixed(4)}`);
+const pct = (v: number | null): string => (v === null ? 'n/a' : `${Math.round(v * 100)}%`);
+
 const stats: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
-  const s = aggregate(store.readMetrics(paths));
-  emit(ctx.json, { ok: true, ...s }, () =>
-    [
-      `runs: ${s.totalRuns}  verified: ${s.verifiedRuns}  env_error: ${s.envErrorRuns}`,
-      `cost/verified task: ${s.costPerVerifiedTask ?? 'n/a'}`,
-      `first-pass rate: ${s.firstPassRate ?? 'n/a'}  escalation rate: ${s.escalationRate ?? 'n/a'}`,
-    ].join('\n'),
-  );
+  const baseline = summarizeBaseline(store.readBaseline(paths));
+  const s = aggregate(store.readMetrics(paths), baseline);
+  emit(ctx.json, { ok: true, ...s }, () => {
+    const perTask = s.verifiedRuns > 0 ? Math.round(s.tokensTotal / s.verifiedRuns) : 0;
+    const lines = [
+      `runs ${s.totalRuns}  verified ${s.verifiedRuns}  first-pass ${pct(s.firstPassRate)}  env_error ${s.envErrorRuns}`,
+      `spent:    ${s.tokensInput} in + ${s.tokensOutput} out tokens (${usd(s.spentUsd)})  [~${perTask}/verified task]`,
+    ];
+    if (baseline !== null) {
+      lines.push(
+        `baseline: ${Math.round(baseline.tokensPerTask)} tokens/task (${usd(baseline.costUsdPerTask)}/task, n=${baseline.n})`,
+        `offloaded: ${s.offloadedTokens} baseline tokens  |  net saved: ${usd(s.savedUsd)} (${pct(s.savedPct)})`,
+      );
+    } else {
+      lines.push('baseline: none - `router baseline add ...` to compute savings');
+    }
+    return lines.join('\n');
+  });
+  return 0;
+};
+
+const baseline: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const sub = ctx.args.positionals[0];
+  if (sub === 'list') {
+    const records = store.readBaseline(paths);
+    emit(ctx.json, { ok: true, records }, () =>
+      records.length === 0
+        ? '(no baseline records)'
+        : records
+            .map((r) => `${r.ts}  ${r.task_id ?? '-'}  ${r.tokens_input}+${r.tokens_output} tok  ${usd(r.cost_usd)}`)
+            .join('\n'),
+    );
+    return 0;
+  }
+  if (sub !== 'add') throw new CliError('usage: router baseline add|list', 2);
+
+  const tin = Number(flagStr(ctx.args.flags, 'tokens-in'));
+  const tout = Number(flagStr(ctx.args.flags, 'tokens-out'));
+  if (!Number.isFinite(tin) || !Number.isFinite(tout)) {
+    throw new CliError('baseline add requires --tokens-in and --tokens-out', 2);
+  }
+  const costStr = flagStr(ctx.args.flags, 'cost-usd');
+  const wallStr = flagStr(ctx.args.flags, 'wall');
+  const record: BaselineRecord = {
+    ts: systemClock.nowIso(),
+    task_id: ctx.args.positionals[1] ?? null,
+    model: flagStr(ctx.args.flags, 'model') ?? 'opus',
+    tokens_input: tin,
+    tokens_output: tout,
+    cost_usd: costStr !== undefined ? Number(costStr) : null,
+    wall_seconds: wallStr !== undefined ? Number(wallStr) : null,
+  };
+  store.appendBaseline(paths, record);
+  const n = store.readBaseline(paths).length;
+  emit(ctx.json, { ok: true, record, count: n }, () => `recorded baseline (${tin}+${tout} tok), ${n} total`);
   return 0;
 };
 
@@ -383,6 +434,7 @@ export const HANDLERS: Record<string, Handler> = {
   list,
   result,
   stats,
+  baseline,
   cancel,
   recover: recoverCmd,
   reindex,
@@ -398,7 +450,7 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `Lifecycle:  init * new * validate * queue * run * status * result * merge\n` +
-    `Ops:        list * stats * cancel * recover * reindex * selftest\n\n` +
+    `Ops:        list * stats * baseline * cancel * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep\n`
   );
 }

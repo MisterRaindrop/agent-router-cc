@@ -6,7 +6,20 @@
 // ambiguity like `run --json t1` swallowing the positional.
 
 const BOOLEAN_FLAGS = new Set(['json', 'force', 'keep', 'help']);
-const VALUE_FLAGS = new Set(['id', 'title', 'run', 'state', 'attempt', 'since', 'router-dir']);
+const VALUE_FLAGS = new Set([
+  'id',
+  'title',
+  'run',
+  'state',
+  'attempt',
+  'since',
+  'router-dir',
+  'tokens-in',
+  'tokens-out',
+  'cost-usd',
+  'wall',
+  'model',
+]);
 
 export interface ParsedArgs {
   verb: string | undefined;
