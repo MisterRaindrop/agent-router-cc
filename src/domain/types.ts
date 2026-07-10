@@ -61,6 +61,8 @@ export interface Policy {
   /** ref-name (e.g. "build", "test") -> allowed argv templates. */
   verification: Record<string, WhitelistTemplate[]>;
   escalation?: { max_attempts?: number };
+  /** Per-model USD prices (per million tokens). Key is a model slug or "default". */
+  pricing?: Record<string, { input_per_mtok: number; output_per_mtok: number }>;
 }
 
 // -- task.yaml (machine contract; schema-validated; frozen at VALIDATED) -------

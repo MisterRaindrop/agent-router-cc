@@ -9570,6 +9570,18 @@ var init_policy_schema = __esm({
           properties: {
             max_attempts: { type: "integer", minimum: 1 }
           }
+        },
+        pricing: {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: false,
+            required: ["input_per_mtok", "output_per_mtok"],
+            properties: {
+              input_per_mtok: { type: "number", minimum: 0 },
+              output_per_mtok: { type: "number", minimum: 0 }
+            }
+          }
         }
       }
     };
@@ -10661,11 +10673,12 @@ var init_taskLoad = __esm({
 });
 
 // src/app/usage.ts
-function parseCodexUsage(logText) {
+function parseCodexLog(logText) {
   let found = false;
   let input = 0;
   let output = 0;
   let cached = 0;
+  let model = null;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10682,35 +10695,36 @@ function parseCodexUsage(logText) {
       output += num(rec.usage.output_tokens);
       cached += num(rec.usage.cached_input_tokens);
     }
+    if (model === null) {
+      const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
+      if (typeof m === "string" && m !== "") model = m;
+    }
   }
-  return found ? { input, output, cached } : null;
+  return { usage: found ? { input, output, cached } : null, model };
 }
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
-function parseCodexModel(logText) {
-  for (const line of logText.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("{")) continue;
-    let o;
-    try {
-      o = JSON.parse(t);
-    } catch {
-      continue;
-    }
-    const rec = o;
-    const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
-    if (typeof m === "string" && m !== "") return m;
+function resolvePrice(policy, model, env) {
+  const table = policy.pricing;
+  if (table !== void 0) {
+    const hit = (model !== void 0 ? table[model] : void 0) ?? table["default"];
+    if (hit !== void 0) return hit;
   }
-  return null;
-}
-function estimateCostUsd(usage, env) {
   const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? "");
   const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? "");
   if (!Number.isFinite(pin) && !Number.isFinite(pout)) return null;
-  const inCost = (Number.isFinite(pin) ? pin : 0) * (usage.input / 1e6);
-  const outCost = (Number.isFinite(pout) ? pout : 0) * (usage.output / 1e6);
-  return inCost + outCost;
+  return {
+    ...Number.isFinite(pin) ? { input_per_mtok: pin } : {},
+    ...Number.isFinite(pout) ? { output_per_mtok: pout } : {}
+  };
+}
+function estimateCostUsd(usage, price) {
+  if (price === null) return null;
+  const pin = price.input_per_mtok ?? 0;
+  const pout = price.output_per_mtok ?? 0;
+  if (pin === 0 && pout === 0) return null;
+  return pin * (usage.input / 1e6) + pout * (usage.output / 1e6);
 }
 var init_usage = __esm({
   "src/app/usage.ts"() {
@@ -11054,7 +11068,7 @@ function safeMaxConcurrency(deps) {
     return 1;
   }
 }
-async function runWorkerBody(deps, id, runId2, launcher) {
+async function runWorkerBody(deps, id, runId2, launcher, policy) {
   const { paths, clock } = deps;
   const st = currentState(paths, id);
   if (st === null || st.state !== "RUNNING" || st.current_run !== runId2) {
@@ -11063,7 +11077,7 @@ async function runWorkerBody(deps, id, runId2, launcher) {
   const baseSha = st.base_sha;
   const contractHash = st.contract_hash;
   const { task, taskYamlText, contractMdText } = loadTask(paths, id);
-  const policyGit = loadPolicyFromGit(paths, baseSha);
+  const policyGit = policy ?? loadPolicyFromGit(paths, baseSha);
   const worktreeDir = paths.worktree(id, runId2);
   const apiKeyEnv = policyGit.worker?.api_key_env;
   const env = buildWorkerEnv(process.env, apiKeyEnv !== void 0 ? [apiKeyEnv] : []);
@@ -11085,10 +11099,9 @@ async function runWorkerBody(deps, id, runId2, launcher) {
     onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
   });
   if (outcome.exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
-  const log = safeRead(paths.workerLog(id, runId2));
-  const usage = parseCodexUsage(log);
-  const costUsd = usage !== null ? estimateCostUsd(usage, process.env) : null;
-  const model = parseCodexModel(log) ?? launcher.model;
+  const { usage, model: streamModel } = parseCodexLog(safeRead(paths.workerLog(id, runId2)));
+  const model = streamModel ?? launcher.model;
+  const costUsd = usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null;
   const result2 = {
     run_id: runId2,
     task_id: id,
@@ -11794,7 +11807,7 @@ var workerRun = async (ctx) => {
   if (st === null || st.base_sha === null) throw new CliError(`task ${id} not runnable`, 1);
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const launcher = codexLauncher(policy);
-  const result2 = await runWorkerBody(deps, id, runId2, launcher);
+  const result2 = await runWorkerBody(deps, id, runId2, launcher, policy);
   return result2.verifier?.result === "PASSED" ? 0 : 1;
 };
 var merge = (ctx) => {
@@ -11872,10 +11885,25 @@ ${tail}`;
 };
 var usd = (v) => v === null ? "n/a" : `$${v.toFixed(4)}`;
 var pct = (v) => v === null ? "n/a" : `${Math.round(v * 100)}%`;
+function parseDurationMs(s) {
+  const m = /^(\d+)(m|h|d)$/.exec(s.trim());
+  if (m === null) return null;
+  const n = Number(m[1]);
+  const unit = m[2];
+  return n * (unit === "m" ? 6e4 : unit === "h" ? 36e5 : 864e5);
+}
 var stats = (ctx) => {
   const { paths } = depsFor(ctx);
   const baseline2 = summarizeBaseline(readBaseline(paths));
-  const s = aggregate(readMetrics(paths), baseline2);
+  let metrics = readMetrics(paths);
+  const since = flagStr(ctx.args.flags, "since");
+  if (since !== void 0) {
+    const ms = parseDurationMs(since);
+    if (ms === null) throw new CliError(`bad --since '${since}' (use e.g. 90m, 24h, 7d)`, 2);
+    const cutoff = Date.now() - ms;
+    metrics = metrics.filter((r) => Date.parse(r.ts) >= cutoff);
+  }
+  const s = aggregate(metrics, baseline2);
   emit(ctx.json, { ok: true, ...s }, () => {
     const perTask = s.verifiedRuns > 0 ? Math.round(s.tokensTotal / s.verifiedRuns) : 0;
     const lines = [

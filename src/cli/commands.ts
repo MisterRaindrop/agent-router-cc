@@ -222,7 +222,8 @@ const workerRun: Handler = async (ctx) => {
   if (st === null || st.base_sha === null) throw new CliError(`task ${id} not runnable`, 1);
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const launcher = codexLauncher(policy);
-  const result = await runWorkerBody(deps, id, runId, launcher);
+  // Pass the policy through so runWorkerBody doesn't load it from git a second time.
+  const result = await runWorkerBody(deps, id, runId, launcher, policy);
   return result.verifier?.result === 'PASSED' ? 0 : 1;
 };
 
@@ -309,10 +310,27 @@ const result: Handler = (ctx) => {
 const usd = (v: number | null): string => (v === null ? 'n/a' : `$${v.toFixed(4)}`);
 const pct = (v: number | null): string => (v === null ? 'n/a' : `${Math.round(v * 100)}%`);
 
+/** Parse a duration like "90m", "24h", "7d" to milliseconds; null if malformed. */
+function parseDurationMs(s: string): number | null {
+  const m = /^(\d+)(m|h|d)$/.exec(s.trim());
+  if (m === null) return null;
+  const n = Number(m[1]);
+  const unit = m[2];
+  return n * (unit === 'm' ? 60_000 : unit === 'h' ? 3_600_000 : 86_400_000);
+}
+
 const stats: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const baseline = summarizeBaseline(store.readBaseline(paths));
-  const s = aggregate(store.readMetrics(paths), baseline);
+  let metrics = store.readMetrics(paths);
+  const since = flagStr(ctx.args.flags, 'since');
+  if (since !== undefined) {
+    const ms = parseDurationMs(since);
+    if (ms === null) throw new CliError(`bad --since '${since}' (use e.g. 90m, 24h, 7d)`, 2);
+    const cutoff = Date.now() - ms;
+    metrics = metrics.filter((r) => Date.parse(r.ts) >= cutoff);
+  }
+  const s = aggregate(metrics, baseline);
   emit(ctx.json, { ok: true, ...s }, () => {
     const perTask = s.verifiedRuns > 0 ? Math.round(s.tokensTotal / s.verifiedRuns) : 0;
     const lines = [

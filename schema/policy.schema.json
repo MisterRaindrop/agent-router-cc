@@ -55,6 +55,18 @@
       "properties": {
         "max_attempts": { "type": "integer", "minimum": 1 }
       }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["input_per_mtok", "output_per_mtok"],
+        "properties": {
+          "input_per_mtok": { "type": "number", "minimum": 0 },
+          "output_per_mtok": { "type": "number", "minimum": 0 }
+        }
+      }
     }
   }
 }
