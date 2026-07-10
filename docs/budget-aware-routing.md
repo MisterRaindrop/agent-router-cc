@@ -78,7 +78,11 @@ M2. Order of implementation:
    429 / rate limit / usage limit / quota) is reclassified `quota_exhausted` (and,
    like `env_error`, does not count as an attempt); the run resets the worktree and
    falls through to the next executor. See `reclassifyQuota` (core) and the fallback
-   loop in `runWorkerBody`.
+   loop in `runWorkerBody`. Two real plan-auth executors exist: `codex` (`codex exec
+   --json`) and `claude` (`claude -p --output-format stream-json --permission-mode
+   bypassPermissions`); each parses its own log for usage/model/cost, and claude
+   reports `total_cost_usd` directly. Neither needs an API key. e.g.
+   `workers: [{kind: codex}, {kind: claude}]`.
 2. Rolling-window ledger + per-task estimate + budget-aware selection (proactive
    layer on top). *(next)*
 3. Self-calibration of `budget_tokens` from observed limit errors.

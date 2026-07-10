@@ -9583,9 +9583,9 @@ var init_policy_schema = __esm({
         worker: {
           type: "object",
           additionalProperties: false,
-          required: ["kind", "api_key_env"],
+          required: ["kind"],
           properties: {
-            kind: { enum: ["codex"] },
+            kind: { enum: ["codex", "claude"] },
             api_key_env: { type: "string", minLength: 1 },
             model: { type: "string", minLength: 1 },
             max_wall_minutes_default: { type: "integer", minimum: 1 },
@@ -10489,6 +10489,88 @@ var init_policyLoad = __esm({
   }
 });
 
+// src/app/usage.ts
+function parseCodexLog(logText) {
+  let found = false;
+  let input = 0;
+  let output = 0;
+  let cached = 0;
+  let model = null;
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let o;
+    try {
+      o = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const rec = o;
+    if (rec.type === "turn.completed" && rec.usage) {
+      found = true;
+      input += num(rec.usage.input_tokens);
+      output += num(rec.usage.output_tokens);
+      cached += num(rec.usage.cached_input_tokens);
+    }
+    if (model === null) {
+      const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
+      if (typeof m === "string" && m !== "") model = m;
+    }
+  }
+  return { usage: found ? { input, output, cached } : null, model };
+}
+function parseClaudeLog(logText) {
+  let usage = null;
+  let costUsd = null;
+  let model = null;
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let o;
+    try {
+      o = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const rec = o;
+    if (rec.type === "result" && rec.usage) {
+      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
+    }
+    if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
+  }
+  return { usage, model, costUsd };
+}
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+function resolvePrice(policy, model, env) {
+  const table = policy.pricing;
+  if (table !== void 0) {
+    const hit = (model !== void 0 ? table[model] : void 0) ?? table["default"];
+    if (hit !== void 0) return hit;
+  }
+  const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? "");
+  const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? "");
+  if (!Number.isFinite(pin) && !Number.isFinite(pout)) return null;
+  return {
+    ...Number.isFinite(pin) ? { input_per_mtok: pin } : {},
+    ...Number.isFinite(pout) ? { output_per_mtok: pout } : {}
+  };
+}
+function estimateCostUsd(usage, price) {
+  if (price === null) return null;
+  const pin = price.input_per_mtok ?? 0;
+  const pout = price.output_per_mtok ?? 0;
+  if (pin === 0 && pout === 0) return null;
+  return pin * (usage.input / 1e6) + pout * (usage.output / 1e6);
+}
+var init_usage = __esm({
+  "src/app/usage.ts"() {
+    "use strict";
+  }
+});
+
 // src/core/exitTaxonomy.ts
 function classifyExit(o) {
   if (o.spawnError) return "env_error";
@@ -10688,66 +10770,6 @@ var init_taskLoad = __esm({
         this.name = "TaskContractError";
       }
     };
-  }
-});
-
-// src/app/usage.ts
-function parseCodexLog(logText) {
-  let found = false;
-  let input = 0;
-  let output = 0;
-  let cached = 0;
-  let model = null;
-  for (const line of logText.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("{")) continue;
-    let o;
-    try {
-      o = JSON.parse(t);
-    } catch {
-      continue;
-    }
-    const rec = o;
-    if (rec.type === "turn.completed" && rec.usage) {
-      found = true;
-      input += num(rec.usage.input_tokens);
-      output += num(rec.usage.output_tokens);
-      cached += num(rec.usage.cached_input_tokens);
-    }
-    if (model === null) {
-      const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
-      if (typeof m === "string" && m !== "") model = m;
-    }
-  }
-  return { usage: found ? { input, output, cached } : null, model };
-}
-function num(v) {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-function resolvePrice(policy, model, env) {
-  const table = policy.pricing;
-  if (table !== void 0) {
-    const hit = (model !== void 0 ? table[model] : void 0) ?? table["default"];
-    if (hit !== void 0) return hit;
-  }
-  const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? "");
-  const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? "");
-  if (!Number.isFinite(pin) && !Number.isFinite(pout)) return null;
-  return {
-    ...Number.isFinite(pin) ? { input_per_mtok: pin } : {},
-    ...Number.isFinite(pout) ? { output_per_mtok: pout } : {}
-  };
-}
-function estimateCostUsd(usage, price) {
-  if (price === null) return null;
-  const pin = price.input_per_mtok ?? 0;
-  const pout = price.output_per_mtok ?? 0;
-  if (pin === 0 && pout === 0) return null;
-  return pin * (usage.input / 1e6) + pout * (usage.output / 1e6);
-}
-var init_usage = __esm({
-  "src/app/usage.ts"() {
-    "use strict";
   }
 });
 
@@ -11131,9 +11153,10 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
     break;
   }
   if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
-  const { usage, model: streamModel } = parseCodexLog(safeRead(logPath));
-  const model = streamModel ?? used.model;
-  const costUsd = usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null;
+  const parsed = (used.parseLog ?? parseCodexLog)(safeRead(logPath));
+  const usage = parsed.usage;
+  const model = parsed.model ?? used.model;
+  const costUsd = parsed.costUsd ?? (usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null);
   const result2 = {
     run_id: runId2,
     task_id: id,
@@ -11597,12 +11620,14 @@ function recover(deps, opts = {}) {
 init_policyLoad();
 
 // src/app/codexLauncher.ts
+init_usage();
 function codexLauncher(worker) {
   const bin = process.env.ROUTER_CODEX_BIN ?? "codex";
   const model = worker.model;
   return {
     kind: "codex",
     ...model !== void 0 ? { model } : {},
+    parseLog: parseCodexLog,
     buildArgv(ctx) {
       const argv = [
         bin,
@@ -11620,10 +11645,37 @@ function codexLauncher(worker) {
     }
   };
 }
+function claudeLauncher(worker) {
+  const bin = process.env.ROUTER_CLAUDE_BIN ?? "claude";
+  const model = worker.model;
+  return {
+    kind: "claude",
+    ...model !== void 0 ? { model } : {},
+    parseLog: parseClaudeLog,
+    buildArgv(ctx) {
+      const argv = [
+        bin,
+        "-p",
+        buildPrompt(ctx),
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "bypassPermissions",
+        "--add-dir",
+        ctx.worktreeDir
+      ];
+      if (model !== void 0) argv.push("--model", model);
+      return argv;
+    }
+  };
+}
 function makeLauncher(worker) {
   switch (worker.kind) {
     case "codex":
       return codexLauncher(worker);
+    case "claude":
+      return claudeLauncher(worker);
     default:
       throw new Error(`unsupported worker kind: ${String(worker.kind)}`);
   }

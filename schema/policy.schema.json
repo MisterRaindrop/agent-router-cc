@@ -68,9 +68,9 @@
     "worker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "api_key_env"],
+      "required": ["kind"],
       "properties": {
-        "kind": { "enum": ["codex"] },
+        "kind": { "enum": ["codex", "claude"] },
         "api_key_env": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
         "max_wall_minutes_default": { "type": "integer", "minimum": 1 },

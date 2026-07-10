@@ -14,7 +14,7 @@ import * as store from '../io/store.ts';
 import { superviseWorker, type SupervisionOutcome } from '../io/supervisor.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from './policyLoad.ts';
 import { loadTask } from './taskLoad.ts';
-import { estimateCostUsd, parseCodexLog, resolvePrice } from './usage.ts';
+import { estimateCostUsd, parseCodexLog, resolvePrice, type ParsedLog } from './usage.ts';
 import { verify } from './verifier.ts';
 import { currentState, transition, type TransitionDeps } from './transition.ts';
 
@@ -48,6 +48,8 @@ export interface WorkerLauncher {
   kind: WorkerKind;
   model?: string;
   buildArgv(ctx: WorkerContext): string[];
+  /** Parse this executor's own worker-log format for usage/model/cost. Defaults to codex. */
+  parseLog?: (log: string) => ParsedLog;
 }
 
 function nextRunNumber(deps: TransitionDeps, id: string): number {
@@ -193,11 +195,14 @@ export async function runWorkerBody(
   // Router owns the checkpoint commit: capture whatever the (final) worker left.
   if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${runId}`);
 
-  // Single pass over the final executor's worker log: token usage + model (feeds
-  // metrics). Cost is per-model via policy.pricing, else ROUTER_PRICE_*, else null.
-  const { usage, model: streamModel } = parseCodexLog(safeRead(logPath));
-  const model = streamModel ?? used.model;
-  const costUsd = usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null;
+  // Single pass over the final executor's worker log (its own format) for token
+  // usage + model + any provider-reported cost. Prefer the provider's cost (claude
+  // reports total_cost_usd); else derive per-model via policy.pricing / ROUTER_PRICE_*.
+  const parsed: ParsedLog = (used.parseLog ?? parseCodexLog)(safeRead(logPath));
+  const usage = parsed.usage;
+  const model = parsed.model ?? used.model;
+  const costUsd =
+    parsed.costUsd ?? (usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null);
 
   const result: RunResult = {
     run_id: runId,

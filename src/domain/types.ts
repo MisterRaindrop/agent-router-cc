@@ -34,7 +34,7 @@ export type ExitClass =
   | 'env_error'
   | 'quota_exhausted'; // provider rate-limit/quota hit; does NOT count as an attempt
 
-export type WorkerKind = 'codex'; // more kinds (sonnet, ...) land as launchers are added
+export type WorkerKind = 'codex' | 'claude'; // both are plan-auth CLIs; more can be added
 
 // -- policy.yaml (human-maintained, read from the base_sha git object) ---------
 /** An argv template; tokens like `{build_dir}` are filled from verification_params. */
@@ -42,8 +42,8 @@ export type WhitelistTemplate = string[];
 
 export interface WorkerPolicy {
   kind: WorkerKind;
-  api_key_env: string;
-  model?: string; // pinned model slug passed to the worker (codex -m); recorded in runs
+  api_key_env?: string; // env var to whitelist into the worker (plan-auth CLIs need none)
+  model?: string; // pinned model slug passed to the worker (-m / --model); recorded in runs
   max_wall_minutes_default?: number;
   stall_minutes?: number;
 }
