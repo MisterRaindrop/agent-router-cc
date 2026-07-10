@@ -8,6 +8,7 @@ import type {
   Lease,
   MetricRecord,
   Registry,
+  RoutingObservation,
   RunResult,
   StateFile,
 } from '../domain/types.ts';
@@ -70,12 +71,20 @@ export function readMetrics(p: RouterPaths): MetricRecord[] {
   return readJsonl<MetricRecord>(p.metrics);
 }
 
-// ── baseline ledger (recorded Opus-direct measurements) ──
+// -- baseline ledger (recorded Opus-direct measurements) --
 export function appendBaseline(p: RouterPaths, record: BaselineRecord): void {
   appendJsonl(p.baseline, record);
 }
 export function readBaseline(p: RouterPaths): BaselineRecord[] {
   return readJsonl<BaselineRecord>(p.baseline);
+}
+
+// -- routing observations (provider-limit ground truth for budget calibration) --
+export function appendRouting(p: RouterPaths, record: RoutingObservation): void {
+  appendJsonl(p.routing, record);
+}
+export function readRouting(p: RouterPaths): RoutingObservation[] {
+  return readJsonl<RoutingObservation>(p.routing);
 }
 
 // -- discovery --

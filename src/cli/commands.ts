@@ -19,8 +19,9 @@ import * as store from '../io/store.ts';
 import { createTask, currentState, transition, type TransitionDeps } from '../app/transition.ts';
 import { recover } from '../app/recover.ts';
 import { rebuildRegistry } from '../app/registry.ts';
-import { loadPolicyFromGit } from '../app/policyLoad.ts';
+import { loadPolicyFromDisk, loadPolicyFromGit } from '../app/policyLoad.ts';
 import { makeLauncher } from '../app/codexLauncher.ts';
+import { planExecutorOrder } from '../app/routing.ts';
 import { runWorkerBody, startRun, updateLease } from '../app/worker.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -223,8 +224,11 @@ const workerRun: Handler = async (ctx) => {
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
   if (workers.length === 0) throw new CliError('policy defines no worker/workers', 1);
-  const [primary, ...rest] = workers.map(makeLauncher);
-  // Pass the policy through (no second git load) + the fallback chain.
+  // Budget-aware routing reorders the fallback chain to start at the first executor
+  // with window headroom (identity order when no budgets are configured).
+  const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+  const [primary, ...rest] = ordered.map(makeLauncher);
+  // Pass the policy through (no second git load) + the (reordered) fallback chain.
   const result = await runWorkerBody(deps, id, runId, primary!, policy, rest);
   return result.verifier?.result === 'PASSED' ? 0 : 1;
 };
@@ -443,6 +447,40 @@ const reindex: Handler = (ctx) => {
   return 0;
 };
 
+const routing: Handler = (ctx) => {
+  const { deps, paths } = depsFor(ctx);
+  const policy = loadPolicyFromDisk(paths);
+  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
+  if (workers.length === 0) throw new CliError('policy defines no worker/workers', 1);
+  const { ordered, view } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+  emit(ctx.json, { ok: true, order: ordered.map((w) => w.kind), ...view }, () => {
+    const lines = [
+      `order: ${ordered.map((w) => w.kind).join(' -> ')}` +
+        (view.budgeted ? '' : '   (no budgets configured; identity order)'),
+    ];
+    for (const e of view.decision.entries) {
+      const b = view.budgets.find((x) => x.kind === e.kind);
+      if (e.budget_tokens === null) {
+        lines.push(`  ${e.kind}: unbounded (no budget)`);
+        continue;
+      }
+      const frac = e.fraction === null ? 'n/a' : `${Math.round(e.fraction * 100)}%`;
+      const cal =
+        b !== undefined && Math.round(b.effective_tokens) !== b.seed_tokens
+          ? ` (seed ${b.seed_tokens} -> calibrated ${Math.round(b.effective_tokens)})`
+          : '';
+      lines.push(
+        `  ${e.kind}: ${Math.round(e.consumed)}+${Math.round(e.estimate)}/${e.budget_tokens} tok = ${frac} ${e.fits ? 'ok' : 'OVER'}${cal}`,
+      );
+    }
+    if (!view.decision.anyFits && view.budgeted) {
+      lines.push('  all executors at/over budget; starting the one with most headroom (reactive 429 still backs this up)');
+    }
+    return lines.join('\n');
+  });
+  return 0;
+};
+
 const selftestCmd: Handler = async (ctx) => {
   const { selftest } = await import('../app/selftest.ts');
   const r = await selftest({ keep: flagBool(ctx.args.flags, 'keep') });
@@ -466,6 +504,7 @@ export const HANDLERS: Record<string, Handler> = {
   result,
   stats,
   baseline,
+  routing,
   cancel,
   recover: recoverCmd,
   reindex,
@@ -481,7 +520,7 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `Lifecycle:  init * new * validate * queue * run * status * result * merge\n` +
-    `Ops:        list * stats * baseline * cancel * recover * reindex * selftest\n\n` +
+    `Ops:        list * stats * baseline * routing * cancel * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep\n`
   );
 }

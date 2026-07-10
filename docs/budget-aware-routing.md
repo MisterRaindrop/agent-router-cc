@@ -84,5 +84,15 @@ M2. Order of implementation:
    reports `total_cost_usd` directly. Neither needs an API key. e.g.
    `workers: [{kind: codex}, {kind: claude}]`.
 2. Rolling-window ledger + per-task estimate + budget-aware selection (proactive
-   layer on top). *(next)*
-3. Self-calibration of `budget_tokens` from observed limit errors.
+   layer on top). **DONE** — `core/budget.ts` (PURE) provides `rollingConsumption`
+   (per-executor token sum over a sliding window), `estimateTokens` (trailing
+   average per executor), and `selectExecutor` (reorders the fallback chain to start
+   at the first executor with headroom; identity order when no budgets configured).
+   `app/routing.ts` wires the ledger to the selector; `_worker-run` applies the
+   order and `router routing` prints the current decision. A budget is declared per
+   executor via `policy.workers[].budget: { window_minutes, budget_tokens, switch_at }`.
+3. Self-calibration of `budget_tokens` from observed limit errors. **DONE** — a run
+   reclassified `quota_exhausted` appends a `RoutingObservation` to `routing.jsonl`;
+   `calibrateBudget` (core) EMAs the seed toward the window consumption observed at
+   each 429 (minus `routing.calibration_margin`), so the ceiling learns the real,
+   opaque plan limit instead of trusting the seed.

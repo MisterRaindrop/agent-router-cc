@@ -120,6 +120,20 @@ test('end-to-end: codex quota -> falls back to claude executor -> PASSED', async
   }
 });
 
+test('routing: command reports the executor order (identity when no budget)', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = repo();
+  try {
+    const r = router(dir, ['routing', '--json']);
+    assert.equal(r.code, 0);
+    const out = JSON.parse(r.out);
+    assert.deepEqual(out.order, ['codex']);
+    assert.equal(out.budgeted, false);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 test('end-to-end: stats reflects the verified run', async () => {
   chmodSync(FAKE_CODEX, 0o755);
   const dir = repo();
