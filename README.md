@@ -39,10 +39,25 @@ alias router='node "$(pwd)/agent-router-cc/dist/router.js"'
 router --help
 ```
 
-**As a Claude Code plugin:** install it to get `/router:*` slash commands
-(`/router:delegate`, `/router:status`, `/router:result`, `/router:stats`, ...), the
-`reviewer` / `summarizer` subagents, and a hook that reconciles crashed runs on
-session start.
+### As a Claude Code plugin
+
+One-click install from inside Claude Code:
+
+```
+/plugin marketplace add MisterRaindrop/agent-router-cc
+/plugin install router@agent-router-cc
+```
+
+Or, for local development (no marketplace, picks up your edits):
+
+```sh
+claude --plugin-dir /path/to/agent-router-cc
+```
+
+This adds the `/router:*` slash commands (`/router:delegate`, `/router:status`,
+`/router:result`, `/router:stats`, ...), the `reviewer` / `summarizer` subagents, and
+a hook that reconciles crashed runs on session start. Run `/reload-plugins` to
+activate.
 
 ## Quickstart (about a minute)
 

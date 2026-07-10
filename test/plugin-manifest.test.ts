@@ -26,6 +26,16 @@ test('plugin.json is valid and names the plugin', () => {
   assert.ok(typeof p.description === 'string' && p.description.length > 0);
 });
 
+test('marketplace.json lists the router plugin so it is installable', () => {
+  const m = JSON.parse(read('../.claude-plugin/marketplace.json'));
+  assert.ok(typeof m.name === 'string' && m.name.length > 0, 'marketplace needs a name');
+  assert.ok(m.owner && typeof m.owner.name === 'string', 'marketplace needs an owner.name');
+  assert.ok(Array.isArray(m.plugins) && m.plugins.length > 0, 'marketplace needs plugins');
+  const router = m.plugins.find((p: { name: string }) => p.name === 'router');
+  assert.ok(router, 'marketplace must list the router plugin');
+  assert.ok(typeof router.source === 'string' && router.source.length > 0, 'router plugin needs a source');
+});
+
 test('every command has a description in its frontmatter', () => {
   const dir = new URL('../commands/', import.meta.url);
   const files = readdirSync(dir).filter((f) => f.endsWith('.md'));
