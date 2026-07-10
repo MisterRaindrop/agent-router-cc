@@ -1,0 +1,13 @@
+{
+  "name": "agent-router-cc",
+  "owner": {
+    "name": "MisterRaindrop"
+  },
+  "plugins": [
+    {
+      "name": "router",
+      "source": "./",
+      "description": "Deterministic task-orchestration for Claude Code: the LLM produces artifacts; the router CLI owns every gate (state machine, locks, supervision, whitelisted execution, diff-side scope enforcement, mechanical verification, metrics)."
+    }
+  ]
+}
