@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as fx from '../testkit/gitRepo.ts';
@@ -107,6 +107,19 @@ test('list --json and stats --json render', async () => {
     assert.equal(JSON.parse(l.out).tasks[0].id, 't1');
     const s = await cli(dir, ['stats', '--json']);
     assert.equal(JSON.parse(s.out).totalRuns, 0);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('list falls back to folding events when registry.json is absent', async () => {
+  const dir = repoWithPolicy();
+  try {
+    await cli(dir, ['new', 't1']);
+    const p = routerPaths(join(dir, '.router'));
+    unlinkSync(p.registry); // simulate a fresh checkout with no registry projection
+    const l = await cli(dir, ['list', '--json']);
+    assert.equal(JSON.parse(l.out).tasks[0].id, 't1');
   } finally {
     fx.cleanup(dir);
   }

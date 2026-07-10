@@ -273,14 +273,25 @@ const status: Handler = (ctx) => {
 const list: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const filter = flagStr(ctx.args.flags, 'state');
-  const rows = store
-    .listTaskIds(paths)
-    .map((id) => currentState(paths, id))
-    .filter((s): s is NonNullable<typeof s> => s !== null)
-    .filter((s) => filter === undefined || s.state === filter)
-    .map((s) => ({ id: s.id, state: s.state, run: s.current_run, title: s.title }));
-  emit(ctx.json, { ok: true, tasks: rows }, () =>
-    rows.length === 0 ? '(no tasks)' : rows.map((r) => `${r.state.padEnd(11)} ${r.id}`).join('\n'),
+  // Read the registry.json projection (updated on every transition) instead of
+  // folding every task's full event log. Fall back to folding only if the registry
+  // is absent (e.g. a freshly cloned .router before the first reindex).
+  const reg = store.readRegistry(paths);
+  let rows: { id: string; state: TaskState; run: string | null; title: string }[];
+  if (reg !== null) {
+    rows = Object.entries(reg.tasks)
+      .map(([id, e]) => ({ id, state: e.state, run: e.current_run, title: e.title }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  } else {
+    rows = store
+      .listTaskIds(paths)
+      .map((id) => currentState(paths, id))
+      .filter((s): s is NonNullable<typeof s> => s !== null)
+      .map((s) => ({ id: s.id, state: s.state, run: s.current_run, title: s.title }));
+  }
+  const shown = rows.filter((r) => filter === undefined || r.state === filter);
+  emit(ctx.json, { ok: true, tasks: shown }, () =>
+    shown.length === 0 ? '(no tasks)' : shown.map((r) => `${r.state.padEnd(11)} ${r.id}`).join('\n'),
   );
   return 0;
 };

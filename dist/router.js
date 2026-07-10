@@ -11852,11 +11852,18 @@ var status = (ctx) => {
 var list = (ctx) => {
   const { paths } = depsFor(ctx);
   const filter = flagStr(ctx.args.flags, "state");
-  const rows = listTaskIds(paths).map((id) => currentState(paths, id)).filter((s) => s !== null).filter((s) => filter === void 0 || s.state === filter).map((s) => ({ id: s.id, state: s.state, run: s.current_run, title: s.title }));
+  const reg = readRegistry(paths);
+  let rows;
+  if (reg !== null) {
+    rows = Object.entries(reg.tasks).map(([id, e]) => ({ id, state: e.state, run: e.current_run, title: e.title })).sort((a, b) => a.id.localeCompare(b.id));
+  } else {
+    rows = listTaskIds(paths).map((id) => currentState(paths, id)).filter((s) => s !== null).map((s) => ({ id: s.id, state: s.state, run: s.current_run, title: s.title }));
+  }
+  const shown = rows.filter((r) => filter === void 0 || r.state === filter);
   emit(
     ctx.json,
-    { ok: true, tasks: rows },
-    () => rows.length === 0 ? "(no tasks)" : rows.map((r) => `${r.state.padEnd(11)} ${r.id}`).join("\n")
+    { ok: true, tasks: shown },
+    () => shown.length === 0 ? "(no tasks)" : shown.map((r) => `${r.state.padEnd(11)} ${r.id}`).join("\n")
   );
   return 0;
 };
