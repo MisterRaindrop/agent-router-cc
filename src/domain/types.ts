@@ -289,3 +289,26 @@ export interface RoutingObservation {
   task_id: string;
   run_id: string;
 }
+
+// -- Orchestration (router plan): claude proposes a contract; router validates it --
+export interface ProposedContract {
+  id: string;
+  title: string;
+  allowed_globs: string[];
+  forbidden_globs: string[];
+  max_changed_lines: number;
+  build_ref: string;
+  test_ref: string;
+  contract_md: string; // the TASK_CONTRACT.md body
+}
+
+export interface RepoDigest {
+  files: readonly string[]; // git-tracked paths (may be capped; see `truncated`)
+  truncated: boolean; // true when `files` was capped
+  verificationRefs: readonly string[]; // policy.verification keys the plan may use
+  readmeHead?: string; // first lines of README, when present
+}
+
+export type PlanCheckResult =
+  | { ok: true; contract: ProposedContract }
+  | { ok: false; errors: string[] };
