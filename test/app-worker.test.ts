@@ -194,6 +194,41 @@ test('updateLease merges fields without clobbering (regression #3)', () => {
   }
 });
 
+test('quota fallback: primary hits quota -> switch to fallback -> PASSED (no attempt consumed)', async () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+    const { runId } = startRun(deps, 't1');
+    // primary prints a quota signature and fails; must be reclassified quota_exhausted
+    const primary = launcher('console.log("Error: 429 rate limit exceeded"); process.exit(1)');
+    const fallback = launcher('require("fs").writeFileSync("src/a.ts","export const x = 2;\\n")');
+    const result = await runWorkerBody(deps, 't1', runId, primary, undefined, [fallback]);
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.executor_switches, 1);
+    assert.equal(result.verifier?.result, 'PASSED');
+    assert.equal(currentState(paths, 't1')?.state, 'PASSED');
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('quota fallback: all executors exhausted -> quota_exhausted, FAILED, not an attempt', async () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+    const { runId } = startRun(deps, 't1');
+    const q = () => launcher('console.log("rate_limited"); process.exit(1)');
+    const result = await runWorkerBody(deps, 't1', runId, q(), undefined, [q()]);
+    assert.equal(result.exit_class, 'quota_exhausted');
+    assert.equal(result.executor_switches, 1);
+    assert.equal(result.verifier, undefined);
+    assert.equal(currentState(paths, 't1')?.state, 'FAILED');
+    assert.equal(store.readEvents(paths, 't1').at(-1)?.meta?.counts_as_attempt, false);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
 test('max_concurrent_workers=1 rejects a second concurrent run', () => {
   const { repo, deps } = setup();
   try {

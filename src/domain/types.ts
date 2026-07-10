@@ -31,9 +31,10 @@ export type ExitClass =
   | 'stalled'
   | 'killed'
   | 'worker_crash'
-  | 'env_error';
+  | 'env_error'
+  | 'quota_exhausted'; // provider rate-limit/quota hit; does NOT count as an attempt
 
-export type WorkerKind = 'codex'; // M2 adds 'sonnet' etc.
+export type WorkerKind = 'codex'; // more kinds (sonnet, ...) land as launchers are added
 
 // -- policy.yaml (human-maintained, read from the base_sha git object) ---------
 /** An argv template; tokens like `{build_dir}` are filled from verification_params. */
@@ -56,7 +57,9 @@ export interface ScopePolicy {
 export interface Policy {
   schema_version: 1;
   max_concurrent_workers?: number;
-  worker?: WorkerPolicy;
+  worker?: WorkerPolicy; // single executor (back-compat); `workers` takes precedence
+  workers?: WorkerPolicy[]; // ordered fallback chain: try [0], on quota_exhausted try [1], ...
+  quota_error_pattern?: string; // regex (source) matched against the worker log to detect quota hits
   scope: ScopePolicy;
   /** ref-name (e.g. "build", "test") -> allowed argv templates. */
   verification: Record<string, WhitelistTemplate[]>;
@@ -184,6 +187,7 @@ export interface RunResult {
   ended_at: string;
   wall_seconds: number;
   worker: { kind: WorkerKind; model?: string };
+  executor_switches?: number; // times we fell back to the next executor (quota/env)
   tokens?: { input: number; output: number };
   cost_usd?: number;
   verifier?: VerifierReport;

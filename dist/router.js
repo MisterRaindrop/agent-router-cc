@@ -9523,17 +9523,12 @@ var init_policy_schema = __esm({
       properties: {
         schema_version: { const: 1 },
         max_concurrent_workers: { type: "integer", minimum: 1 },
-        worker: {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind", "api_key_env"],
-          properties: {
-            kind: { enum: ["codex"] },
-            api_key_env: { type: "string", minLength: 1 },
-            model: { type: "string", minLength: 1 },
-            max_wall_minutes_default: { type: "integer", minimum: 1 },
-            stall_minutes: { type: "integer", minimum: 1 }
-          }
+        quota_error_pattern: { type: "string", minLength: 1 },
+        worker: { $ref: "#/definitions/worker" },
+        workers: {
+          type: "array",
+          minItems: 1,
+          items: { $ref: "#/definitions/worker" }
         },
         scope: {
           type: "object",
@@ -9581,6 +9576,20 @@ var init_policy_schema = __esm({
               input_per_mtok: { type: "number", minimum: 0 },
               output_per_mtok: { type: "number", minimum: 0 }
             }
+          }
+        }
+      },
+      definitions: {
+        worker: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "api_key_env"],
+          properties: {
+            kind: { enum: ["codex"] },
+            api_key_env: { type: "string", minLength: 1 },
+            model: { type: "string", minLength: 1 },
+            max_wall_minutes_default: { type: "integer", minimum: 1 },
+            stall_minutes: { type: "integer", minimum: 1 }
           }
         }
       }
@@ -9879,6 +9888,10 @@ function commitAll(cwd, message) {
   if (git(cwd, ["diff", "--cached", "--name-only"]).trim() === "") return false;
   git(cwd, ["commit", "-q", "-m", message]);
   return true;
+}
+function resetHard(cwd, sha) {
+  git(cwd, ["reset", "--hard", sha]);
+  git(cwd, ["clean", "-fd"]);
 }
 function mergeNoFF(cwd, branch) {
   git(cwd, ["merge", "--no-ff", "--no-edit", branch]);
@@ -10487,11 +10500,17 @@ function classifyExit(o) {
   return "task_failed";
 }
 function countsAsAttempt(exitClass) {
-  return exitClass !== "env_error";
+  return exitClass !== "env_error" && exitClass !== "quota_exhausted";
 }
+function reclassifyQuota(exitClass, logText, pattern = DEFAULT_QUOTA_PATTERN) {
+  if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
+  return new RegExp(pattern, "i").test(logText) ? "quota_exhausted" : exitClass;
+}
+var DEFAULT_QUOTA_PATTERN;
 var init_exitTaxonomy = __esm({
   "src/core/exitTaxonomy.ts"() {
     "use strict";
+    DEFAULT_QUOTA_PATTERN = "\\b(rate.?limit|rate_limited|usage limit|usage_limit_reached|quota|insufficient_quota|too many requests|429)\\b";
   }
 });
 
@@ -11068,7 +11087,7 @@ function safeMaxConcurrency(deps) {
     return 1;
   }
 }
-async function runWorkerBody(deps, id, runId2, launcher, policy) {
+async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = []) {
   const { paths, clock } = deps;
   const st = currentState(paths, id);
   if (st === null || st.state !== "RUNNING" || st.current_run !== runId2) {
@@ -11076,50 +11095,64 @@ async function runWorkerBody(deps, id, runId2, launcher, policy) {
   }
   const baseSha = st.base_sha;
   const contractHash = st.contract_hash;
-  const { task, taskYamlText, contractMdText } = loadTask(paths, id);
+  const { task, contractMdText } = loadTask(paths, id);
   const policyGit = policy ?? loadPolicyFromGit(paths, baseSha);
   const worktreeDir = paths.worktree(id, runId2);
-  const apiKeyEnv = policyGit.worker?.api_key_env;
-  const env = buildWorkerEnv(process.env, apiKeyEnv !== void 0 ? [apiKeyEnv] : []);
-  const argv = launcher.buildArgv({
-    task,
-    worktreeDir,
-    contractMdText,
-    planExists: false
-  });
-  const outcome = await superviseWorker({
-    argv,
-    cwd: worktreeDir,
-    env,
-    logPath: paths.workerLog(id, runId2),
-    heartbeatPath: paths.heartbeat(id, runId2),
-    watchDir: worktreeDir,
-    maxWallMs: task.max_wall_minutes * 6e4,
-    stallMs: (policyGit.worker?.stall_minutes ?? 10) * 6e4,
-    onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
-  });
-  if (outcome.exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
-  const { usage, model: streamModel } = parseCodexLog(safeRead(paths.workerLog(id, runId2)));
-  const model = streamModel ?? launcher.model;
+  const logPath = paths.workerLog(id, runId2);
+  const workersList = policyGit.workers ?? (policyGit.worker ? [policyGit.worker] : []);
+  const apiKeyEnvs = [...new Set(workersList.map((w) => w.api_key_env).filter((v) => Boolean(v)))];
+  const env = buildWorkerEnv(process.env, apiKeyEnvs);
+  const chain = [launcher, ...fallbacks];
+  const RETRY = /* @__PURE__ */ new Set(["quota_exhausted", "env_error"]);
+  let outcome;
+  let used = launcher;
+  let exitClass = "task_failed";
+  let switches = 0;
+  for (let i = 0; i < chain.length; i++) {
+    used = chain[i];
+    if (i > 0) writeFileSync3(logPath, "");
+    outcome = await superviseWorker({
+      argv: used.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
+      cwd: worktreeDir,
+      env,
+      logPath,
+      heartbeatPath: paths.heartbeat(id, runId2),
+      watchDir: worktreeDir,
+      maxWallMs: task.max_wall_minutes * 6e4,
+      stallMs: (workersList[i]?.stall_minutes ?? policyGit.worker?.stall_minutes ?? 10) * 6e4,
+      onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
+    });
+    exitClass = reclassifyQuota(outcome.exitClass, safeRead(logPath), policyGit.quota_error_pattern);
+    if (RETRY.has(exitClass) && i < chain.length - 1) {
+      switches += 1;
+      resetHard(worktreeDir, baseSha);
+      continue;
+    }
+    break;
+  }
+  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
+  const { usage, model: streamModel } = parseCodexLog(safeRead(logPath));
+  const model = streamModel ?? used.model;
   const costUsd = usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null;
   const result2 = {
     run_id: runId2,
     task_id: id,
     attempt_number: st.attempt_number,
-    exit_class: outcome.exitClass,
+    exit_class: exitClass,
     rc: outcome.rc,
     timed_out: outcome.timedOut,
     stalled: outcome.stalled,
-    env_error: outcome.exitClass === "env_error",
+    env_error: exitClass === "env_error",
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
-    worker: model !== void 0 ? { kind: launcher.kind, model } : { kind: launcher.kind },
+    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    ...switches > 0 ? { executor_switches: switches } : {},
     ...usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
   let finalState;
-  if (outcome.exitClass === "ok") {
+  if (exitClass === "ok") {
     transition(deps, id, "VERIFYING", { actor: "router:worker", runId: runId2 });
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
     writeFileSync3(paths.diffPatch(id, runId2), patch);
@@ -11146,7 +11179,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy) {
   transition(deps, id, finalState, {
     actor: "router:worker",
     runId: runId2,
-    meta: { exit_class: outcome.exitClass, counts_as_attempt: countsAsAttempt(outcome.exitClass) }
+    meta: { exit_class: exitClass, counts_as_attempt: countsAsAttempt(exitClass) }
   });
   return result2;
 }
@@ -11564,9 +11597,9 @@ function recover(deps, opts = {}) {
 init_policyLoad();
 
 // src/app/codexLauncher.ts
-function codexLauncher(policy, opts = {}) {
+function codexLauncher(worker) {
   const bin = process.env.ROUTER_CODEX_BIN ?? "codex";
-  const model = opts.model ?? policy.worker?.model;
+  const model = worker.model;
   return {
     kind: "codex",
     ...model !== void 0 ? { model } : {},
@@ -11586,6 +11619,14 @@ function codexLauncher(policy, opts = {}) {
       return argv;
     }
   };
+}
+function makeLauncher(worker) {
+  switch (worker.kind) {
+    case "codex":
+      return codexLauncher(worker);
+    default:
+      throw new Error(`unsupported worker kind: ${String(worker.kind)}`);
+  }
 }
 function buildPrompt(ctx) {
   const scope = ctx.task.allowed_globs.join(", ");
@@ -11806,8 +11847,10 @@ var workerRun = async (ctx) => {
   const st = currentState(paths, id);
   if (st === null || st.base_sha === null) throw new CliError(`task ${id} not runnable`, 1);
   const policy = loadPolicyFromGit(paths, st.base_sha);
-  const launcher = codexLauncher(policy);
-  const result2 = await runWorkerBody(deps, id, runId2, launcher, policy);
+  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
+  if (workers.length === 0) throw new CliError("policy defines no worker/workers", 1);
+  const [primary, ...rest] = workers.map(makeLauncher);
+  const result2 = await runWorkerBody(deps, id, runId2, primary, policy, rest);
   return result2.verifier?.result === "PASSED" ? 0 : 1;
 };
 var merge = (ctx) => {

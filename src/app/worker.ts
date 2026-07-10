@@ -4,14 +4,14 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { Lease, MetricRecord, Policy, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
-import { countsAsAttempt } from '../core/exitTaxonomy.ts';
-import { commitAll, deleteBranch, rawDiff, worktreeAdd, worktreeRemove } from '../io/git.ts';
+import type { ExitClass, Lease, MetricRecord, Policy, RunResult, StateFile, TaskYaml, WorkerKind } from '../domain/types.ts';
+import { countsAsAttempt, reclassifyQuota } from '../core/exitTaxonomy.ts';
+import { commitAll, deleteBranch, rawDiff, resetHard, worktreeAdd, worktreeRemove } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
 import { withGlobalLock } from '../io/lock.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { superviseWorker } from '../io/supervisor.ts';
+import { superviseWorker, type SupervisionOutcome } from '../io/supervisor.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from './policyLoad.ts';
 import { loadTask } from './taskLoad.ts';
 import { estimateCostUsd, parseCodexLog, resolvePrice } from './usage.ts';
@@ -139,6 +139,7 @@ export async function runWorkerBody(
   runId: string,
   launcher: WorkerLauncher,
   policy?: Policy,
+  fallbacks: WorkerLauncher[] = [],
 ): Promise<RunResult> {
   const { paths, clock } = deps;
   const st = currentState(paths, id);
@@ -147,61 +148,77 @@ export async function runWorkerBody(
   }
   const baseSha = st.base_sha!;
   const contractHash = st.contract_hash!;
-  const { task, taskYamlText, contractMdText } = loadTask(paths, id);
+  const { task, contractMdText } = loadTask(paths, id);
   // Load once; the caller (_worker-run) may pass the policy it already loaded.
   const policyGit = policy ?? loadPolicyFromGit(paths, baseSha);
   const worktreeDir = paths.worktree(id, runId);
-  const apiKeyEnv = policyGit.worker?.api_key_env;
-  const env = buildWorkerEnv(process.env, apiKeyEnv !== undefined ? [apiKeyEnv] : []);
+  const logPath = paths.workerLog(id, runId);
+  const workersList = policyGit.workers ?? (policyGit.worker ? [policyGit.worker] : []);
+  const apiKeyEnvs = [...new Set(workersList.map((w) => w.api_key_env).filter((v): v is string => Boolean(v)))];
+  const env = buildWorkerEnv(process.env, apiKeyEnvs);
 
-  const argv = launcher.buildArgv({
-    task,
-    worktreeDir,
-    contractMdText,
-    planExists: false,
-  });
+  // Executor fallback chain: try [0]; on a quota_exhausted / env_error outcome
+  // (neither counts as an attempt), reset the worktree and try the next. The whole
+  // chain is ONE run; the final executor's outcome is what gets verified/finalized.
+  const chain = [launcher, ...fallbacks];
+  const RETRY: ReadonlySet<ExitClass> = new Set(['quota_exhausted', 'env_error']);
+  let outcome!: SupervisionOutcome;
+  let used = launcher;
+  let exitClass: ExitClass = 'task_failed';
+  let switches = 0;
 
-  const outcome = await superviseWorker({
-    argv,
-    cwd: worktreeDir,
-    env,
-    logPath: paths.workerLog(id, runId),
-    heartbeatPath: paths.heartbeat(id, runId),
-    watchDir: worktreeDir,
-    maxWallMs: task.max_wall_minutes * 60_000,
-    stallMs: (policyGit.worker?.stall_minutes ?? 10) * 60_000,
-    onPgid: (pgid) => updateLease(deps, id, runId, { worker_pgid: pgid }),
-  });
+  for (let i = 0; i < chain.length; i++) {
+    used = chain[i]!;
+    if (i > 0) writeFileSync(logPath, ''); // fresh log for this executor's stream
+    outcome = await superviseWorker({
+      argv: used.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
+      cwd: worktreeDir,
+      env,
+      logPath,
+      heartbeatPath: paths.heartbeat(id, runId),
+      watchDir: worktreeDir,
+      maxWallMs: task.max_wall_minutes * 60_000,
+      stallMs: (workersList[i]?.stall_minutes ?? policyGit.worker?.stall_minutes ?? 10) * 60_000,
+      onPgid: (pgid) => updateLease(deps, id, runId, { worker_pgid: pgid }),
+    });
+    exitClass = reclassifyQuota(outcome.exitClass, safeRead(logPath), policyGit.quota_error_pattern);
+    if (RETRY.has(exitClass) && i < chain.length - 1) {
+      switches += 1;
+      resetHard(worktreeDir, baseSha); // clean checkout for the next executor
+      continue;
+    }
+    break;
+  }
 
-  // Router owns the checkpoint commit: capture whatever the worker left.
-  if (outcome.exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${runId}`);
+  // Router owns the checkpoint commit: capture whatever the (final) worker left.
+  if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${runId}`);
 
-  // Single pass over the worker log: token usage + model (feeds metrics). The
-  // stream may not report a model; fall back to the pinned one. Cost is per-model
-  // via policy.pricing, else the ROUTER_PRICE_* env fallback, else null.
-  const { usage, model: streamModel } = parseCodexLog(safeRead(paths.workerLog(id, runId)));
-  const model = streamModel ?? launcher.model;
+  // Single pass over the final executor's worker log: token usage + model (feeds
+  // metrics). Cost is per-model via policy.pricing, else ROUTER_PRICE_*, else null.
+  const { usage, model: streamModel } = parseCodexLog(safeRead(logPath));
+  const model = streamModel ?? used.model;
   const costUsd = usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null;
 
   const result: RunResult = {
     run_id: runId,
     task_id: id,
     attempt_number: st.attempt_number,
-    exit_class: outcome.exitClass,
+    exit_class: exitClass,
     rc: outcome.rc,
     timed_out: outcome.timedOut,
     stalled: outcome.stalled,
-    env_error: outcome.exitClass === 'env_error',
+    env_error: exitClass === 'env_error',
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
-    worker: model !== undefined ? { kind: launcher.kind, model } : { kind: launcher.kind },
+    worker: model !== undefined ? { kind: used.kind, model } : { kind: used.kind },
+    ...(switches > 0 ? { executor_switches: switches } : {}),
     ...(usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
 
   let finalState: 'PASSED' | 'FAILED';
-  if (outcome.exitClass === 'ok') {
+  if (exitClass === 'ok') {
     transition(deps, id, 'VERIFYING', { actor: 'router:worker', runId });
     const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
     writeFileSync(paths.diffPatch(id, runId), patch);
@@ -230,7 +247,7 @@ export async function runWorkerBody(
   transition(deps, id, finalState, {
     actor: 'router:worker',
     runId,
-    meta: { exit_class: outcome.exitClass, counts_as_attempt: countsAsAttempt(outcome.exitClass) },
+    meta: { exit_class: exitClass, counts_as_attempt: countsAsAttempt(exitClass) },
   });
   return result;
 }

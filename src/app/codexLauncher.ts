@@ -1,17 +1,17 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Policy } from '../domain/types.ts';
+import type { WorkerPolicy } from '../domain/types.ts';
 import type { WorkerContext, WorkerLauncher } from './worker.ts';
 
-// Builds the codex-cli invocation for a run. Non-interactive `codex exec`, pinned
-// to the worktree, workspace-write sandbox, JSONL events (token usage -> metrics
-// in M2). The binary is `codex` by default; ROUTER_CODEX_BIN overrides it (used
-// by tests to substitute a fake worker without real codex).
+// Builds the codex-cli invocation for one executor. Non-interactive `codex exec`,
+// pinned to the worktree, workspace-write sandbox, JSONL events (token usage +
+// model -> metrics). The binary is `codex` by default; ROUTER_CODEX_BIN overrides
+// it (used by tests to substitute a fake worker without real codex).
 
-export function codexLauncher(policy: Policy, opts: { model?: string } = {}): WorkerLauncher {
+export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLauncher {
   const bin = process.env.ROUTER_CODEX_BIN ?? 'codex';
-  const model = opts.model ?? policy.worker?.model;
+  const model = worker.model;
   return {
     kind: 'codex',
     ...(model !== undefined ? { model } : {}),
@@ -31,6 +31,17 @@ export function codexLauncher(policy: Policy, opts: { model?: string } = {}): Wo
       return argv;
     },
   };
+}
+
+// Executor factory: map a policy worker entry to its launcher. Only codex today;
+// new kinds (a claude/sonnet CLI or API executor) are added here.
+export function makeLauncher(worker: WorkerPolicy): WorkerLauncher {
+  switch (worker.kind) {
+    case 'codex':
+      return codexLauncher(worker);
+    default:
+      throw new Error(`unsupported worker kind: ${String(worker.kind)}`);
+  }
 }
 
 function buildPrompt(ctx: WorkerContext): string {

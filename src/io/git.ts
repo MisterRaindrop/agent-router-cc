@@ -184,6 +184,13 @@ export function commitAll(cwd: string, message: string): boolean {
   return true;
 }
 
+/** Hard-reset a worktree to `sha` and remove untracked files - used to give the
+ * next executor in a fallback chain a clean checkout after one quota-failed. */
+export function resetHard(cwd: string, sha: string): void {
+  git(cwd, ['reset', '--hard', sha]);
+  git(cwd, ['clean', '-fd']);
+}
+
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */
 export function mergeNoFF(cwd: string, branch: string): void {
   git(cwd, ['merge', '--no-ff', '--no-edit', branch]);
