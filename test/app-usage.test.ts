@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   estimateCostUsd,
+  parseClaudeLog,
   parseCodexLog,
   parseCodexModel,
   parseCodexUsage,
@@ -46,6 +47,14 @@ test('parseCodexLog returns usage and model in a single pass', () => {
   const r = parseCodexLog(log);
   assert.equal(r.model, 'gpt-5.5');
   assert.deepEqual(r.usage, { input: 10, output: 2, cached: 0 });
+});
+
+test('parseClaudeLog reads usage + total_cost_usd from the result event', () => {
+  const log =
+    '{"type":"assistant"}\n{"type":"result","subtype":"success","total_cost_usd":0.02,"usage":{"input_tokens":800,"output_tokens":60,"cache_read_input_tokens":100}}\n';
+  const r = parseClaudeLog(log);
+  assert.deepEqual(r.usage, { input: 800, output: 60, cached: 100 });
+  assert.equal(r.costUsd, 0.02);
 });
 
 test('estimateCostUsd: null price -> null; priced -> computed', () => {

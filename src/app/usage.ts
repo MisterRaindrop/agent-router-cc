@@ -18,6 +18,7 @@ export interface Usage {
 export interface ParsedLog {
   usage: Usage | null;
   model: string | null;
+  costUsd?: number | null; // provider-reported cost (claude), if any; else derived from price
 }
 
 /** Single pass over the log: token usage (summed) and model slug (if the stream reports one). */
@@ -63,6 +64,39 @@ export function parseCodexUsage(logText: string): Usage | null {
 }
 export function parseCodexModel(logText: string): string | null {
   return parseCodexLog(logText).model;
+}
+
+/**
+ * Parse the claude CLI `--output-format stream-json` stream: the final
+ * `type:"result"` event carries `usage` (input/output tokens) and
+ * `total_cost_usd` (an API-equivalent cost, present even on a plan).
+ */
+export function parseClaudeLog(logText: string): ParsedLog {
+  let usage: Usage | null = null;
+  let costUsd: number | null = null;
+  let model: string | null = null;
+  for (const line of logText.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    let o: unknown;
+    try {
+      o = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const rec = o as {
+      type?: string;
+      usage?: Record<string, unknown>;
+      total_cost_usd?: unknown;
+      model?: unknown;
+    };
+    if (rec.type === 'result' && rec.usage) {
+      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      if (typeof rec.total_cost_usd === 'number') costUsd = rec.total_cost_usd;
+    }
+    if (model === null && typeof rec.model === 'string' && rec.model !== '') model = rec.model;
+  }
+  return { usage, model, costUsd };
 }
 
 function num(v: unknown): number {

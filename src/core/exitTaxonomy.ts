@@ -26,7 +26,27 @@ export function classifyExit(o: SupervisionObservation): ExitClass {
   return 'task_failed';
 }
 
-/** env_error does not count toward the escalation ladder (design F2.1). */
+/** Neither an env error nor a provider quota hit counts toward the escalation ladder. */
 export function countsAsAttempt(exitClass: ExitClass): boolean {
-  return exitClass !== 'env_error';
+  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted';
+}
+
+// Default signatures for a provider rate-limit / quota exhaustion in the worker log.
+// Conservative so ordinary failures (a failing test, `exit 1`) are NOT reclassified.
+export const DEFAULT_QUOTA_PATTERN =
+  '\\b(rate.?limit|rate_limited|usage limit|usage_limit_reached|quota|insufficient_quota|too many requests|429)\\b';
+
+/**
+ * A worker that "failed" may actually have hit the provider's quota/rate limit.
+ * If the exit looks like a plain failure/crash AND the log matches the quota
+ * pattern, reclassify as quota_exhausted (so it triggers fallback, not an attempt).
+ * PURE.
+ */
+export function reclassifyQuota(
+  exitClass: ExitClass,
+  logText: string,
+  pattern: string = DEFAULT_QUOTA_PATTERN,
+): ExitClass {
+  if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
+  return new RegExp(pattern, 'i').test(logText) ? 'quota_exhausted' : exitClass;
 }

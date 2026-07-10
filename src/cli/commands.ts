@@ -20,7 +20,7 @@ import { createTask, currentState, transition, type TransitionDeps } from '../ap
 import { recover } from '../app/recover.ts';
 import { rebuildRegistry } from '../app/registry.ts';
 import { loadPolicyFromGit } from '../app/policyLoad.ts';
-import { codexLauncher } from '../app/codexLauncher.ts';
+import { makeLauncher } from '../app/codexLauncher.ts';
 import { runWorkerBody, startRun, updateLease } from '../app/worker.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -221,9 +221,11 @@ const workerRun: Handler = async (ctx) => {
   const st = currentState(paths, id);
   if (st === null || st.base_sha === null) throw new CliError(`task ${id} not runnable`, 1);
   const policy = loadPolicyFromGit(paths, st.base_sha);
-  const launcher = codexLauncher(policy);
-  // Pass the policy through so runWorkerBody doesn't load it from git a second time.
-  const result = await runWorkerBody(deps, id, runId, launcher, policy);
+  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
+  if (workers.length === 0) throw new CliError('policy defines no worker/workers', 1);
+  const [primary, ...rest] = workers.map(makeLauncher);
+  // Pass the policy through (no second git load) + the fallback chain.
+  const result = await runWorkerBody(deps, id, runId, primary!, policy, rest);
   return result.verifier?.result === 'PASSED' ? 0 : 1;
 };
 

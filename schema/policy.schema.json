@@ -8,17 +8,12 @@
   "properties": {
     "schema_version": { "const": 1 },
     "max_concurrent_workers": { "type": "integer", "minimum": 1 },
-    "worker": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "api_key_env"],
-      "properties": {
-        "kind": { "enum": ["codex"] },
-        "api_key_env": { "type": "string", "minLength": 1 },
-        "model": { "type": "string", "minLength": 1 },
-        "max_wall_minutes_default": { "type": "integer", "minimum": 1 },
-        "stall_minutes": { "type": "integer", "minimum": 1 }
-      }
+    "quota_error_pattern": { "type": "string", "minLength": 1 },
+    "worker": { "$ref": "#/definitions/worker" },
+    "workers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/worker" }
     },
     "scope": {
       "type": "object",
@@ -66,6 +61,20 @@
           "input_per_mtok": { "type": "number", "minimum": 0 },
           "output_per_mtok": { "type": "number", "minimum": 0 }
         }
+      }
+    }
+  },
+  "definitions": {
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["codex", "claude"] },
+        "api_key_env": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "max_wall_minutes_default": { "type": "integer", "minimum": 1 },
+        "stall_minutes": { "type": "integer", "minimum": 1 }
       }
     }
   }
