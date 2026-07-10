@@ -9597,6 +9597,15 @@ var init_policy_schema = __esm({
               output_per_mtok: { type: "number", minimum: 0 }
             }
           }
+        },
+        routing: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            estimate_tokens_default: { type: "number", minimum: 0 },
+            calibration_alpha: { type: "number", minimum: 0, maximum: 1 },
+            calibration_margin: { type: "number", minimum: 0 }
+          }
         }
       },
       definitions: {
@@ -9609,7 +9618,17 @@ var init_policy_schema = __esm({
             api_key_env: { type: "string", minLength: 1 },
             model: { type: "string", minLength: 1 },
             max_wall_minutes_default: { type: "integer", minimum: 1 },
-            stall_minutes: { type: "integer", minimum: 1 }
+            stall_minutes: { type: "integer", minimum: 1 },
+            budget: {
+              type: "object",
+              additionalProperties: false,
+              required: ["window_minutes", "budget_tokens"],
+              properties: {
+                window_minutes: { type: "number", minimum: 1 },
+                budget_tokens: { type: "number", minimum: 1 },
+                switch_at: { type: "number", exclusiveMinimum: 0, maximum: 1 }
+              }
+            }
           }
         }
       }
@@ -10036,6 +10055,7 @@ function routerPaths(routerDir) {
     metrics: join(root, "metrics.jsonl"),
     metricsArchive: join(root, "metrics.jsonl.1"),
     baseline: join(root, "baseline.jsonl"),
+    routing: join(root, "routing.jsonl"),
     lockDir: join(root, ".lock"),
     contextDir: join(root, "context"),
     tasksDir,
@@ -10239,6 +10259,12 @@ function appendBaseline(p, record) {
 }
 function readBaseline(p) {
   return readJsonl(p.baseline);
+}
+function appendRouting(p, record) {
+  appendJsonl(p.routing, record);
+}
+function readRouting(p) {
+  return readJsonl(p.routing);
 }
 function listTaskIds(p) {
   if (!existsSync3(p.tasksDir)) return [];
@@ -11343,6 +11369,9 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
       onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
     });
     exitClass = reclassifyQuota(outcome.exitClass, safeRead(logPath), policyGit.quota_error_pattern);
+    if (exitClass === "quota_exhausted") {
+      appendRouting(paths, { ts: clock.nowIso(), kind: used.kind, task_id: id, run_id: runId2 });
+    }
     if (RETRY.has(exitClass) && i < chain.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
@@ -11434,6 +11463,7 @@ function appendRunMetric(deps, result2, escalated) {
     run_id: result2.run_id,
     attempt_number: result2.attempt_number,
     model: result2.worker.model ?? null,
+    executor: result2.worker.kind,
     exit_class: result2.exit_class,
     verifier_result: result2.verifier?.result ?? null,
     first_pass: result2.attempt_number === 1 && result2.verifier?.result === "PASSED",
@@ -11974,6 +12004,129 @@ Constraints:
 `;
 }
 
+// src/core/budget.ts
+var DEFAULT_SWITCH_AT = 0.9;
+var DEFAULT_ALPHA = 0.5;
+var TRAILING_N = 20;
+function recordTokens(r) {
+  return (r.tokens_input ?? 0) + (r.tokens_output ?? 0);
+}
+function rollingConsumption(records, nowMs, windowMinutes) {
+  const floor = nowMs - windowMinutes * 6e4;
+  const out2 = /* @__PURE__ */ new Map();
+  for (const r of records) {
+    if (!r.executor) continue;
+    const t = Date.parse(r.ts);
+    if (Number.isNaN(t) || t <= floor || t > nowMs) continue;
+    out2.set(r.executor, (out2.get(r.executor) ?? 0) + recordTokens(r));
+  }
+  return out2;
+}
+function estimateTokens(records, kind, seed) {
+  const withTokens = records.filter((r) => r.tokens_input !== null || r.tokens_output !== null);
+  const forKind = withTokens.filter((r) => r.executor === kind);
+  const pool = forKind.length > 0 ? forKind : withTokens;
+  if (pool.length === 0) return seed;
+  const recent = pool.slice(-TRAILING_N);
+  let sum2 = 0;
+  for (const r of recent) sum2 += recordTokens(r);
+  return sum2 / recent.length;
+}
+function selectExecutor(input) {
+  const entries = input.chain.map((kind, index) => {
+    const consumed = input.consumed.get(kind) ?? 0;
+    const estimate = input.estimates.get(kind) ?? input.defaultEstimate;
+    const projected = consumed + estimate;
+    const budget = input.budgets.get(kind);
+    if (budget === void 0) {
+      return { index, kind, consumed, estimate, projected, budget_tokens: null, fraction: null, fits: true };
+    }
+    const switchAt = budget.switch_at ?? DEFAULT_SWITCH_AT;
+    const fraction = projected / budget.budget_tokens;
+    return {
+      index,
+      kind,
+      consumed,
+      estimate,
+      projected,
+      budget_tokens: budget.budget_tokens,
+      fraction,
+      fits: fraction <= switchAt
+    };
+  });
+  const anyFits = entries.some((e) => e.fits);
+  const order = entries.map((e) => e).sort((a, b) => {
+    if (a.fits !== b.fits) return a.fits ? -1 : 1;
+    if (!anyFits) {
+      const fa = a.fraction ?? 0;
+      const fb = b.fraction ?? 0;
+      if (fa !== fb) return fa - fb;
+    }
+    return a.index - b.index;
+  }).map((e) => e.index);
+  return { order, chosen: order[0], anyFits, entries };
+}
+function calibrateBudget(seed, kind, observations, metrics, opts) {
+  const alpha = opts.alpha ?? DEFAULT_ALPHA;
+  const margin = opts.margin ?? 0;
+  const relevant = observations.filter((o) => o.kind === kind).map((o) => ({ o, t: Date.parse(o.ts) })).filter((x) => !Number.isNaN(x.t)).sort((a, b) => a.t - b.t);
+  if (relevant.length === 0) return seed;
+  let ema = seed;
+  for (const { t } of relevant) {
+    const ceiling = rollingConsumption(metrics, t, opts.windowMinutes).get(kind) ?? 0;
+    ema = (1 - alpha) * ema + alpha * ceiling;
+  }
+  return Math.max(1, ema - margin);
+}
+
+// src/app/routing.ts
+init_store();
+var DEFAULT_ESTIMATE = 4e4;
+function planExecutorOrder(paths, nowMs, policy, workers) {
+  const metrics = readMetrics(paths);
+  const observations = readRouting(paths);
+  const seed = policy.routing?.estimate_tokens_default ?? DEFAULT_ESTIMATE;
+  const chain = workers.map((w) => w.kind);
+  const consumed = /* @__PURE__ */ new Map();
+  const budgets = /* @__PURE__ */ new Map();
+  const budgetView = [];
+  for (const w of workers) {
+    if (w.budget === void 0) continue;
+    const window_minutes = w.budget.window_minutes;
+    const effective = calibrateBudget(w.budget.budget_tokens, w.kind, observations, metrics, {
+      windowMinutes: window_minutes,
+      ...policy.routing?.calibration_alpha !== void 0 ? { alpha: policy.routing.calibration_alpha } : {},
+      ...policy.routing?.calibration_margin !== void 0 ? { margin: policy.routing.calibration_margin } : {}
+    });
+    const used = rollingConsumption(metrics, nowMs, window_minutes).get(w.kind) ?? 0;
+    budgets.set(w.kind, {
+      budget_tokens: effective,
+      ...w.budget.switch_at !== void 0 ? { switch_at: w.budget.switch_at } : {}
+    });
+    consumed.set(w.kind, used);
+    budgetView.push({
+      kind: w.kind,
+      window_minutes,
+      seed_tokens: w.budget.budget_tokens,
+      effective_tokens: effective,
+      consumed_tokens: used
+    });
+  }
+  const estimates = /* @__PURE__ */ new Map();
+  for (const kind of new Set(chain)) estimates.set(kind, estimateTokens(metrics, kind, seed));
+  const decision = selectExecutor({ chain, consumed, estimates, defaultEstimate: seed, budgets });
+  const ordered = decision.order.map((i) => workers[i]);
+  return {
+    ordered,
+    view: {
+      budgeted: budgetView.length > 0,
+      decision,
+      estimates: [...estimates].map(([kind, tokens]) => ({ kind, tokens })),
+      budgets: budgetView
+    }
+  };
+}
+
 // src/cli/commands.ts
 init_worker();
 init_taskLoad();
@@ -12199,7 +12352,8 @@ var workerRun = async (ctx) => {
     if (rescueWorker === void 0) throw new CliError("rescue attempt: no rescue worker resolvable", 1);
     launchers = [makeLauncher(rescueWorker)];
   } else {
-    launchers = workers.map(makeLauncher);
+    const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+    launchers = ordered.map(makeLauncher);
   }
   const [primary, ...rest] = launchers;
   const result2 = await runWorkerBody(deps, id, runId2, primary, policy, rest);
@@ -12494,6 +12648,35 @@ var gc = (ctx) => {
   });
   return 0;
 };
+var routing = (ctx) => {
+  const { deps, paths } = depsFor(ctx);
+  const policy = loadPolicyFromDisk(paths);
+  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
+  if (workers.length === 0) throw new CliError("policy defines no worker/workers", 1);
+  const { ordered, view } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+  emit(ctx.json, { ok: true, order: ordered.map((w) => w.kind), ...view }, () => {
+    const lines = [
+      `order: ${ordered.map((w) => w.kind).join(" -> ")}` + (view.budgeted ? "" : "   (no budgets configured; identity order)")
+    ];
+    for (const e of view.decision.entries) {
+      const b = view.budgets.find((x) => x.kind === e.kind);
+      if (e.budget_tokens === null) {
+        lines.push(`  ${e.kind}: unbounded (no budget)`);
+        continue;
+      }
+      const frac = e.fraction === null ? "n/a" : `${Math.round(e.fraction * 100)}%`;
+      const cal = b !== void 0 && Math.round(b.effective_tokens) !== b.seed_tokens ? ` (seed ${b.seed_tokens} -> calibrated ${Math.round(b.effective_tokens)})` : "";
+      lines.push(
+        `  ${e.kind}: ${Math.round(e.consumed)}+${Math.round(e.estimate)}/${e.budget_tokens} tok = ${frac} ${e.fits ? "ok" : "OVER"}${cal}`
+      );
+    }
+    if (!view.decision.anyFits && view.budgeted) {
+      lines.push("  all executors at/over budget; starting the one with most headroom (reactive 429 still backs this up)");
+    }
+    return lines.join("\n");
+  });
+  return 0;
+};
 var selftestCmd = async (ctx) => {
   const { selftest: selftest2 } = await Promise.resolve().then(() => (init_selftest(), selftest_exports));
   const r = await selftest2({ keep: flagBool(ctx.args.flags, "keep") });
@@ -12519,6 +12702,7 @@ var HANDLERS = {
   result,
   stats,
   baseline,
+  routing,
   cancel,
   gc,
   recover: recoverCmd,
@@ -12534,7 +12718,7 @@ function helpText() {
 Usage: router <command> [options]
 
 Lifecycle:  init * new * validate * queue * run * status * result * approve * merge
-Ops:        list * stats * baseline * cancel * gc * recover * reindex * selftest
+Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest
 
 Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,
        --dry-run, --keep-metrics, --since

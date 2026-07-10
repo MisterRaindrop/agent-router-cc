@@ -218,6 +218,10 @@ export async function runWorkerBody(
       onPgid: (pgid) => updateLease(deps, id, runId, { worker_pgid: pgid }),
     });
     exitClass = reclassifyQuota(outcome.exitClass, safeRead(logPath), policyGit.quota_error_pattern);
+    // A real provider limit is the ground truth budget calibration learns from.
+    if (exitClass === 'quota_exhausted') {
+      store.appendRouting(paths, { ts: clock.nowIso(), kind: used.kind, task_id: id, run_id: runId });
+    }
     if (RETRY.has(exitClass) && i < chain.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha); // clean checkout for the next executor
@@ -330,6 +334,7 @@ function appendRunMetric(deps: TransitionDeps, result: RunResult, escalated: boo
     run_id: result.run_id,
     attempt_number: result.attempt_number,
     model: result.worker.model ?? null,
+    executor: result.worker.kind,
     exit_class: result.exit_class,
     verifier_result: result.verifier?.result ?? null,
     first_pass: result.attempt_number === 1 && result.verifier?.result === 'PASSED',

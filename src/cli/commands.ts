@@ -22,8 +22,9 @@ import * as store from '../io/store.ts';
 import { createTask, currentState, transition, type TransitionDeps } from '../app/transition.ts';
 import { recover } from '../app/recover.ts';
 import { rebuildRegistry } from '../app/registry.ts';
-import { loadPolicyFromGit } from '../app/policyLoad.ts';
+import { loadPolicyFromDisk, loadPolicyFromGit } from '../app/policyLoad.ts';
 import { makeLauncher } from '../app/codexLauncher.ts';
+import { planExecutorOrder } from '../app/routing.ts';
 import { CapExceededError, runWorkerBody, startRun, updateLease } from '../app/worker.ts';
 import { loadTask } from '../app/taskLoad.ts';
 import { CliError, emit } from './output.ts';
@@ -242,14 +243,19 @@ const workerRun: Handler = async (ctx) => {
   const runningEv = [...events].reverse().find((e) => e.to === 'RUNNING' && e.run_id === runId);
   let launchers;
   if (isRescueAttempt(runningEv?.from ?? null)) {
+    // Rescue: a single stronger executor, with no fallback chain and no budget
+    // reordering, so it can't silently downgrade to a weaker/cheaper model.
     const rescueWorker = resolveRescueWorker(policy);
     if (rescueWorker === undefined) throw new CliError('rescue attempt: no rescue worker resolvable', 1);
     launchers = [makeLauncher(rescueWorker)];
   } else {
-    launchers = workers.map(makeLauncher);
+    // Budget-aware routing reorders the fallback chain to start at the first executor
+    // with window headroom (identity order when no budgets are configured).
+    const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+    launchers = ordered.map(makeLauncher);
   }
   const [primary, ...rest] = launchers;
-  // Pass the policy through (no second git load) + the fallback chain.
+  // Pass the policy through (no second git load) + the (reordered) fallback chain.
   const result = await runWorkerBody(deps, id, runId, primary!, policy, rest);
   return result.verifier?.result === 'PASSED' ? 0 : 1;
 };
@@ -581,6 +587,40 @@ const gc: Handler = (ctx) => {
   return 0;
 };
 
+const routing: Handler = (ctx) => {
+  const { deps, paths } = depsFor(ctx);
+  const policy = loadPolicyFromDisk(paths);
+  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
+  if (workers.length === 0) throw new CliError('policy defines no worker/workers', 1);
+  const { ordered, view } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+  emit(ctx.json, { ok: true, order: ordered.map((w) => w.kind), ...view }, () => {
+    const lines = [
+      `order: ${ordered.map((w) => w.kind).join(' -> ')}` +
+        (view.budgeted ? '' : '   (no budgets configured; identity order)'),
+    ];
+    for (const e of view.decision.entries) {
+      const b = view.budgets.find((x) => x.kind === e.kind);
+      if (e.budget_tokens === null) {
+        lines.push(`  ${e.kind}: unbounded (no budget)`);
+        continue;
+      }
+      const frac = e.fraction === null ? 'n/a' : `${Math.round(e.fraction * 100)}%`;
+      const cal =
+        b !== undefined && Math.round(b.effective_tokens) !== b.seed_tokens
+          ? ` (seed ${b.seed_tokens} -> calibrated ${Math.round(b.effective_tokens)})`
+          : '';
+      lines.push(
+        `  ${e.kind}: ${Math.round(e.consumed)}+${Math.round(e.estimate)}/${e.budget_tokens} tok = ${frac} ${e.fits ? 'ok' : 'OVER'}${cal}`,
+      );
+    }
+    if (!view.decision.anyFits && view.budgeted) {
+      lines.push('  all executors at/over budget; starting the one with most headroom (reactive 429 still backs this up)');
+    }
+    return lines.join('\n');
+  });
+  return 0;
+};
+
 const selftestCmd: Handler = async (ctx) => {
   const { selftest } = await import('../app/selftest.ts');
   const r = await selftest({ keep: flagBool(ctx.args.flags, 'keep') });
@@ -605,6 +645,7 @@ export const HANDLERS: Record<string, Handler> = {
   result,
   stats,
   baseline,
+  routing,
   cancel,
   gc,
   recover: recoverCmd,
@@ -621,7 +662,7 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `Lifecycle:  init * new * validate * queue * run * status * result * approve * merge\n` +
-    `Ops:        list * stats * baseline * cancel * gc * recover * reindex * selftest\n\n` +
+    `Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,\n` +
     `       --dry-run, --keep-metrics, --since\n`
   );
