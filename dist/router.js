@@ -9563,7 +9563,27 @@ var init_policy_schema = __esm({
           type: "object",
           additionalProperties: false,
           properties: {
-            max_attempts: { type: "integer", minimum: 1 }
+            max_attempts: { type: "integer", minimum: 1 },
+            rescue_worker: { $ref: "#/definitions/worker" }
+          }
+        },
+        budget_caps: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            max_cost_usd: { type: "number", minimum: 0 },
+            max_tokens: { type: "integer", minimum: 0 }
+          }
+        },
+        secret_scan: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            enabled: { type: "boolean" },
+            extra_patterns: {
+              type: "array",
+              items: { type: "string", minLength: 1 }
+            }
           }
         },
         pricing: {
@@ -9749,7 +9769,7 @@ var init_stateMachine = __esm({
       PASSED: ["MERGED"],
       MERGED: [],
       STALE: ["QUEUED", "FAILED", "NEEDS_REPLAN"],
-      FAILED: ["ESCALATED_1", "NEEDS_REPLAN", "QUEUED"],
+      FAILED: ["ESCALATED_1", "ESCALATED_2", "NEEDS_REPLAN", "QUEUED"],
       ESCALATED_1: ["RUNNING", "ESCALATED_2", "NEEDS_REPLAN"],
       ESCALATED_2: ["RUNNING", "NEEDS_REPLAN"],
       NEEDS_REPLAN: ["DRAFT"],
@@ -9766,6 +9786,81 @@ var init_stateMachine = __esm({
         this.to = to;
       }
     };
+  }
+});
+
+// src/core/escalation.ts
+function ladderTargetAfterFailure(input) {
+  const { attemptNumber, maxAttempts, countsAsAttempt: countsAsAttempt2 } = input;
+  if (!countsAsAttempt2) return null;
+  if (maxAttempts === void 0 || maxAttempts < 2) return null;
+  if (attemptNumber >= maxAttempts) return "NEEDS_REPLAN";
+  return attemptNumber <= 1 ? "ESCALATED_1" : "ESCALATED_2";
+}
+function isRescueAttempt(fromState) {
+  return fromState === "ESCALATED_2";
+}
+function resolveRescueWorker(policy) {
+  const explicit = policy.escalation?.rescue_worker;
+  if (explicit !== void 0) return explicit;
+  const chain = policy.workers ?? (policy.worker !== void 0 ? [policy.worker] : []);
+  return chain.length > 0 ? chain[chain.length - 1] : void 0;
+}
+var init_escalation = __esm({
+  "src/core/escalation.ts"() {
+    "use strict";
+  }
+});
+
+// src/core/glob.ts
+function compile(glob) {
+  const cached = cache.get(glob);
+  if (cached !== void 0) return cached;
+  let re = "^";
+  let i = 0;
+  while (i < glob.length) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        if (glob[i + 2] === "/") {
+          re += "(?:[^/]+/)*";
+          i += 3;
+        } else if (i + 2 >= glob.length) {
+          re += ".*";
+          i += 2;
+        } else {
+          re += "[^/]*";
+          i += 2;
+        }
+      } else {
+        re += "[^/]*";
+        i += 1;
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+      i += 1;
+    } else if (REGEX_SPECIAL.has(c)) {
+      re += `\\${c}`;
+      i += 1;
+    } else {
+      re += c;
+      i += 1;
+    }
+  }
+  re += "$";
+  const compiled = new RegExp(re);
+  cache.set(glob, compiled);
+  return compiled;
+}
+function matchAny(path, globs) {
+  return globs.some((g) => compile(g).test(path));
+}
+var cache, REGEX_SPECIAL;
+var init_glob = __esm({
+  "src/core/glob.ts"() {
+    "use strict";
+    cache = /* @__PURE__ */ new Map();
+    REGEX_SPECIAL = /* @__PURE__ */ new Set([".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
   }
 });
 
@@ -9958,6 +10053,7 @@ function routerPaths(routerDir) {
     policy: join(root, "policy.yaml"),
     registry: join(root, "registry.json"),
     metrics: join(root, "metrics.jsonl"),
+    metricsArchive: join(root, "metrics.jsonl.1"),
     baseline: join(root, "baseline.jsonl"),
     routing: join(root, "routing.jsonl"),
     lockDir: join(root, ".lock"),
@@ -9970,6 +10066,7 @@ function routerPaths(routerDir) {
     planMd: (id) => join(taskDir(id), "PLAN.md"),
     stateFile: (id) => join(taskDir(id), "state.json"),
     eventsFile: (id) => join(taskDir(id), "events.jsonl"),
+    approval: (id) => join(taskDir(id), "approval.json"),
     taskContextDir: (id) => join(taskDir(id), "context"),
     runsDir: (id) => join(taskDir(id), "runs"),
     runDir,
@@ -10102,7 +10199,8 @@ var init_jsonl = __esm({
 });
 
 // src/io/store.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2, readdirSync } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync2, readdirSync, rmSync, statSync as statSync2, writeFileSync } from "node:fs";
+import { join as join3 } from "node:path";
 function readJson(path) {
   if (!existsSync3(path)) return null;
   return JSON.parse(readFileSync2(path, "utf8"));
@@ -10140,6 +10238,22 @@ function appendMetric(p, record) {
 function readMetrics(p) {
   return readJsonl(p.metrics);
 }
+function overwriteMetrics(p, records) {
+  const text = records.map((r) => JSON.stringify(r)).join("\n");
+  writeFileSync(p.metrics, text.length > 0 ? `${text}
+` : "");
+}
+function writeMetricsArchive(p, records) {
+  const text = records.map((r) => JSON.stringify(r)).join("\n");
+  writeFileSync(p.metricsArchive, text.length > 0 ? `${text}
+` : "");
+}
+function readApproval(p, id) {
+  return readJson(p.approval(id));
+}
+function writeApproval(p, id, record) {
+  writeJsonAtomic(p.approval(id), record);
+}
 function appendBaseline(p, record) {
   appendJsonl(p.baseline, record);
 }
@@ -10161,6 +10275,30 @@ function listRunIds(p, id) {
   if (!existsSync3(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name)).map((e) => e.name).sort();
 }
+function listWorktreeRuns(p, id) {
+  const dir = join3(p.worktreesDir, id);
+  if (!existsSync3(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name)).map((e) => e.name).sort();
+}
+function pathSizeBytes(path) {
+  let total = 0;
+  let st;
+  try {
+    st = statSync2(path);
+  } catch {
+    return 0;
+  }
+  if (st.isDirectory()) {
+    for (const name of readdirSync(path)) total += pathSizeBytes(join3(path, name));
+  } else {
+    total += st.size;
+  }
+  return total;
+}
+function removeEmptyWorktreeParent(p, id) {
+  const dir = join3(p.worktreesDir, id);
+  if (existsSync3(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
+}
 var init_store = __esm({
   "src/io/store.ts"() {
     "use strict";
@@ -10173,11 +10311,11 @@ var init_store = __esm({
 import {
   mkdirSync as mkdirSync3,
   readFileSync as readFileSync3,
-  rmSync,
-  statSync as statSync2,
-  writeFileSync
+  rmSync as rmSync2,
+  statSync as statSync3,
+  writeFileSync as writeFileSync2
 } from "node:fs";
-import { dirname as dirname4, join as join3 } from "node:path";
+import { dirname as dirname4, join as join4 } from "node:path";
 import { hostname } from "node:os";
 function sleepSync(ms) {
   if (ms <= 0) return;
@@ -10208,7 +10346,7 @@ function readOwner(lockDir) {
 }
 function dirAgeMs(lockDir) {
   try {
-    return Date.now() - statSync2(lockDir).mtimeMs;
+    return Date.now() - statSync3(lockDir).mtimeMs;
   } catch {
     return null;
   }
@@ -10238,14 +10376,14 @@ function acquireLock(lockDir, opts = {}) {
         nonce,
         acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      writeFileSync(ownerFile(lockDir), `${JSON.stringify(info)}
+      writeFileSync2(ownerFile(lockDir), `${JSON.stringify(info)}
 `);
       return { lockDir, nonce };
     } catch (err2) {
       if (err2.code !== "EEXIST") throw err2;
       if (isStale(lockDir, staleMs)) {
         try {
-          rmSync(lockDir, { recursive: true, force: true });
+          rmSync2(lockDir, { recursive: true, force: true });
         } catch {
         }
         continue;
@@ -10259,7 +10397,7 @@ function releaseLock(handle) {
   const owner = readOwner(handle.lockDir);
   if (owner !== null && owner.nonce !== handle.nonce) return;
   try {
-    rmSync(handle.lockDir, { recursive: true, force: true });
+    rmSync2(handle.lockDir, { recursive: true, force: true });
   } catch {
   }
 }
@@ -10283,7 +10421,7 @@ var init_lock = __esm({
       }
     };
     nonceCounter = 0;
-    ownerFile = (lockDir) => join3(lockDir, "owner.json");
+    ownerFile = (lockDir) => join4(lockDir, "owner.json");
   }
 });
 
@@ -10622,6 +10760,52 @@ var init_exitTaxonomy = __esm({
   }
 });
 
+// src/core/caps.ts
+function summarizeSpend(records, taskId) {
+  let attemptsUsed = 0;
+  let costUsd = 0;
+  let tokens = 0;
+  for (const r of records) {
+    if (r.task_id !== taskId) continue;
+    if (countsAsAttempt(r.exit_class)) attemptsUsed += 1;
+    if (r.cost_usd !== null) costUsd += r.cost_usd;
+    tokens += (r.tokens_input ?? 0) + (r.tokens_output ?? 0);
+  }
+  return { attemptsUsed, costUsd, tokens };
+}
+function checkCaps(records, taskId, caps) {
+  const usage = summarizeSpend(records, taskId);
+  const maxAttempts = caps.max_attempts;
+  if (maxAttempts !== void 0 && usage.attemptsUsed >= maxAttempts) {
+    return {
+      allowed: false,
+      reason: `attempt cap reached (${usage.attemptsUsed}/${maxAttempts} attempts consumed)`
+    };
+  }
+  const budget = caps.budget_caps;
+  if (budget !== void 0) {
+    if (budget.max_cost_usd !== void 0 && usage.costUsd >= budget.max_cost_usd) {
+      return {
+        allowed: false,
+        reason: `budget cap reached (cost $${usage.costUsd.toFixed(4)} >= $${budget.max_cost_usd.toFixed(4)})`
+      };
+    }
+    if (budget.max_tokens !== void 0 && usage.tokens >= budget.max_tokens) {
+      return {
+        allowed: false,
+        reason: `budget cap reached (${usage.tokens} tokens >= ${budget.max_tokens})`
+      };
+    }
+  }
+  return { allowed: true };
+}
+var init_caps = __esm({
+  "src/core/caps.ts"() {
+    "use strict";
+    init_exitTaxonomy();
+  }
+});
+
 // src/io/env.ts
 function buildWorkerEnv(source, extraKeys = []) {
   const out2 = {};
@@ -10641,17 +10825,17 @@ var init_env = __esm({
 
 // src/io/supervisor.ts
 import { spawn } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
-import { dirname as dirname5, join as join4 } from "node:path";
+import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { dirname as dirname5, join as join5 } from "node:path";
 function activitySignal(logPath, watchDir) {
   let sig = 0;
   try {
-    sig += statSync4(logPath).size;
+    sig += statSync5(logPath).size;
   } catch {
   }
-  for (const p of [watchDir, join4(watchDir, ".git")]) {
+  for (const p of [watchDir, join5(watchDir, ".git")]) {
     try {
-      sig += Math.floor(statSync4(p).mtimeMs);
+      sig += Math.floor(statSync5(p).mtimeMs);
     } catch {
     }
   }
@@ -10726,7 +10910,7 @@ function superviseWorker(spec) {
       timers.push(
         setInterval(() => {
           try {
-            writeFileSync2(spec.heartbeatPath, `${Date.now()}
+            writeFileSync3(spec.heartbeatPath, `${Date.now()}
 `);
           } catch {
           }
@@ -10747,7 +10931,7 @@ function superviseWorker(spec) {
         }, pollIntervalMs)
       );
       try {
-        writeFileSync2(spec.heartbeatPath, `${startedAtMs}
+        writeFileSync3(spec.heartbeatPath, `${startedAtMs}
 `);
       } catch {
       }
@@ -10796,58 +10980,6 @@ var init_taskLoad = __esm({
         this.name = "TaskContractError";
       }
     };
-  }
-});
-
-// src/core/glob.ts
-function compile(glob) {
-  const cached = cache.get(glob);
-  if (cached !== void 0) return cached;
-  let re = "^";
-  let i = 0;
-  while (i < glob.length) {
-    const c = glob[i];
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        if (glob[i + 2] === "/") {
-          re += "(?:[^/]+/)*";
-          i += 3;
-        } else if (i + 2 >= glob.length) {
-          re += ".*";
-          i += 2;
-        } else {
-          re += "[^/]*";
-          i += 2;
-        }
-      } else {
-        re += "[^/]*";
-        i += 1;
-      }
-    } else if (c === "?") {
-      re += "[^/]";
-      i += 1;
-    } else if (REGEX_SPECIAL.has(c)) {
-      re += `\\${c}`;
-      i += 1;
-    } else {
-      re += c;
-      i += 1;
-    }
-  }
-  re += "$";
-  const compiled = new RegExp(re);
-  cache.set(glob, compiled);
-  return compiled;
-}
-function matchAny(path, globs) {
-  return globs.some((g) => compile(g).test(path));
-}
-var cache, REGEX_SPECIAL;
-var init_glob = __esm({
-  "src/core/glob.ts"() {
-    "use strict";
-    cache = /* @__PURE__ */ new Map();
-    REGEX_SPECIAL = /* @__PURE__ */ new Set([".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
   }
 });
 
@@ -10954,6 +11086,50 @@ var init_whitelist = __esm({
   }
 });
 
+// src/core/secrets.ts
+function looksLikeSecret(value) {
+  return value.length >= 20 && /[A-Za-z]/.test(value) && /[0-9]/.test(value);
+}
+function redact(content) {
+  const t = content.trim();
+  return t.length <= 16 ? t : `${t.slice(0, 12)}...(${t.length} chars)`;
+}
+function scanSecrets(diffText, extraPatterns = []) {
+  const findings = [];
+  const extra = extraPatterns.map((p) => new RegExp(p));
+  const lines = diffText.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.startsWith("+") || line.startsWith("+++")) continue;
+    const content = line.slice(1);
+    if (AWS_ACCESS_KEY.test(content)) {
+      findings.push({ rule: "aws_access_key", line: i + 1, snippet: redact(content) });
+    }
+    if (PRIVATE_KEY_HEADER.test(content)) {
+      findings.push({ rule: "private_key_header", line: i + 1, snippet: redact(content) });
+    }
+    const m = SECRET_ASSIGNMENT.exec(content);
+    if (m !== null && looksLikeSecret(m[1])) {
+      findings.push({ rule: "secret_assignment", line: i + 1, snippet: redact(content) });
+    }
+    for (let k = 0; k < extra.length; k++) {
+      if (extra[k].test(content)) {
+        findings.push({ rule: `custom_pattern[${k}]`, line: i + 1, snippet: redact(content) });
+      }
+    }
+  }
+  return findings;
+}
+var AWS_ACCESS_KEY, PRIVATE_KEY_HEADER, SECRET_ASSIGNMENT;
+var init_secrets = __esm({
+  "src/core/secrets.ts"() {
+    "use strict";
+    AWS_ACCESS_KEY = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/;
+    PRIVATE_KEY_HEADER = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+    SECRET_ASSIGNMENT = /(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|token)["']?\s*[:=]\s*["']([^"']{20,})["']/i;
+  }
+});
+
 // src/io/proc.ts
 import { spawnSync } from "node:child_process";
 function runCommand(argv, opts) {
@@ -10987,9 +11163,9 @@ var init_proc = __esm({
 });
 
 // src/app/verifier.ts
-import { mkdtempSync, rmSync as rmSync2 } from "node:fs";
+import { mkdtempSync, rmSync as rmSync3 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 function fail(id, detail, rc) {
   return rc !== void 0 ? { id, ok: false, detail, rc } : { id, ok: false, detail };
 }
@@ -11023,14 +11199,14 @@ function verify(req) {
     checks.push(fail("diff_applies", "diff is empty - worker produced no committed change"));
     return { result: "FAILED", checks };
   }
-  const tmpBase = mkdtempSync(join5(tmpdir(), "router-verify-base-"));
+  const tmpBase = mkdtempSync(join6(tmpdir(), "router-verify-base-"));
   let applies;
   try {
     worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
     applies = applyCheck(tmpBase, patch);
   } finally {
     worktreeRemove(req.repoRoot, tmpBase);
-    rmSync2(tmpBase, { recursive: true, force: true });
+    rmSync3(tmpBase, { recursive: true, force: true });
   }
   if (!applies) {
     checks.push(fail("diff_applies", "patch does not apply cleanly onto base_sha"));
@@ -11045,6 +11221,16 @@ function verify(req) {
     return { result: "FAILED", checks, changed_lines: changedLines };
   }
   checks.push(pass("scope", `${verdict.changedLines} lines`));
+  const secretPolicy = req.policy.secret_scan;
+  if (secretPolicy?.enabled !== false) {
+    const findings = scanSecrets(patch, secretPolicy?.extra_patterns ?? []);
+    if (findings.length > 0) {
+      const detail = findings.map((f) => `${f.rule}@L${f.line}`).join(", ");
+      checks.push(fail("secret_scan", `likely secret(s) in diff: ${detail}`));
+      return { result: "FAILED", checks, changed_lines: changedLines };
+    }
+    checks.push(pass("secret_scan"));
+  }
   const build2 = runRef(req, req.task.build_ref);
   checks.push(build2.ok ? pass("build", build2.detail) : fail("build", build2.detail, build2.rc ?? void 0));
   if (!build2.ok) return { result: "FAILED", checks, changed_lines: changedLines };
@@ -11065,6 +11251,7 @@ var init_verifier = __esm({
     init_scope();
     init_whitelist();
     init_contractHash();
+    init_secrets();
     init_git();
     init_proc();
   }
@@ -11072,8 +11259,14 @@ var init_verifier = __esm({
 
 // src/app/worker.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
+function capsFromPolicy(policy) {
+  return {
+    ...policy.escalation?.max_attempts !== void 0 ? { max_attempts: policy.escalation.max_attempts } : {},
+    ...policy.budget_caps !== void 0 ? { budget_caps: policy.budget_caps } : {}
+  };
+}
 function nextRunNumber(deps, id) {
   const nums = listRunIds(deps.paths, id).map((r) => Number(r.slice("run-".length)));
   return (nums.length > 0 ? Math.max(...nums) : 0) + 1;
@@ -11082,8 +11275,13 @@ function startRun(deps, id) {
   const { paths } = deps;
   const st = currentState(paths, id);
   if (st === null) throw new RunStateError(`no such task: ${id}`);
-  if (st.state !== "QUEUED") throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED`);
+  if (!RUNNABLE_FROM.has(st.state)) {
+    throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED/ESCALATED_1/ESCALATED_2`);
+  }
   if (st.base_sha === null) throw new RunStateError(`task ${id} has no frozen base_sha`);
+  const caps = capsFromPolicy(loadPolicyFromGit(paths, st.base_sha));
+  const capVerdict = checkCaps(readMetrics(paths), id, caps);
+  if (!capVerdict.allowed) throw new CapExceededError(capVerdict.reason ?? "cap exceeded");
   const limit = safeMaxConcurrency(deps);
   const attemptNumber = st.attempt_number + 1;
   const run2 = runId(nextRunNumber(deps, id));
@@ -11158,7 +11356,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   let switches = 0;
   for (let i = 0; i < chain.length; i++) {
     used = chain[i];
-    if (i > 0) writeFileSync3(logPath, "");
+    if (i > 0) writeFileSync4(logPath, "");
     outcome = await superviseWorker({
       argv: used.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
       cwd: worktreeDir,
@@ -11207,7 +11405,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   if (exitClass === "ok") {
     transition(deps, id, "VERIFYING", { actor: "router:worker", runId: runId2 });
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync3(paths.diffPatch(id, runId2), patch);
+    writeFileSync4(paths.diffPatch(id, runId2), patch);
     result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     const report = verify({
       repoRoot: paths.repoRoot,
@@ -11226,13 +11424,29 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   } else {
     finalState = "FAILED";
   }
+  const ladderTarget = finalState === "FAILED" ? ladderTargetAfterFailure({
+    attemptNumber: st.attempt_number,
+    maxAttempts: policyGit.escalation?.max_attempts,
+    countsAsAttempt: countsAsAttempt(exitClass)
+  }) : null;
   writeResult(paths, id, runId2, result2);
-  appendRunMetric(deps, result2, st);
+  appendRunMetric(deps, result2, ladderTarget !== null);
   transition(deps, id, finalState, {
     actor: "router:worker",
     runId: runId2,
     meta: { exit_class: exitClass, counts_as_attempt: countsAsAttempt(exitClass) }
   });
+  if (ladderTarget !== null) {
+    transition(deps, id, ladderTarget, {
+      actor: "router:escalate",
+      runId: runId2,
+      meta: {
+        rung: ladderTarget,
+        attempt_number: st.attempt_number,
+        max_attempts: policyGit.escalation?.max_attempts ?? null
+      }
+    });
+  }
   return result2;
 }
 function safeRead(path) {
@@ -11242,7 +11456,7 @@ function safeRead(path) {
     return "";
   }
 }
-function appendRunMetric(deps, result2, st) {
+function appendRunMetric(deps, result2, escalated) {
   const metric = {
     ts: deps.clock.nowIso(),
     task_id: result2.task_id,
@@ -11257,17 +11471,18 @@ function appendRunMetric(deps, result2, st) {
     tokens_output: result2.tokens?.output ?? null,
     cost_usd: result2.cost_usd ?? null,
     wall_seconds: result2.wall_seconds,
-    escalated: false,
+    escalated,
     env_error: result2.env_error
   };
-  void st;
   appendMetric(deps.paths, metric);
 }
-var ConcurrencyLimitError, RunStateError;
+var ConcurrencyLimitError, RunStateError, CapExceededError, RUNNABLE_FROM;
 var init_worker = __esm({
   "src/app/worker.ts"() {
     "use strict";
     init_exitTaxonomy();
+    init_escalation();
+    init_caps();
     init_git();
     init_env();
     init_lock();
@@ -11291,6 +11506,13 @@ var init_worker = __esm({
         this.name = "RunStateError";
       }
     };
+    CapExceededError = class extends Error {
+      constructor(reason) {
+        super(reason);
+        this.name = "CapExceededError";
+      }
+    };
+    RUNNABLE_FROM = /* @__PURE__ */ new Set(["QUEUED", "ESCALATED_1", "ESCALATED_2"]);
   }
 });
 
@@ -11300,9 +11522,9 @@ __export(selftest_exports, {
   selftest: () => selftest
 });
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 function gitInit(dir) {
   const run2 = (args) => {
     execFileSync2("git", args, { cwd: dir, stdio: "ignore" });
@@ -11313,18 +11535,18 @@ function gitInit(dir) {
   run2(["config", "commit.gpgsign", "false"]);
 }
 function makeSandbox() {
-  const repo = mkdtempSync2(join6(tmpdir2(), "router-selftest-"));
+  const repo = mkdtempSync2(join7(tmpdir2(), "router-selftest-"));
   gitInit(repo);
-  mkdirSync5(join6(repo, "src"), { recursive: true });
-  writeFileSync4(join6(repo, "src", "a.ts"), "export const x = 1;\n");
-  mkdirSync5(join6(repo, "tests"), { recursive: true });
-  writeFileSync4(join6(repo, "tests", "t.test.ts"), "ok\n");
-  mkdirSync5(join6(repo, ".router"), { recursive: true });
-  writeFileSync4(join6(repo, ".router", "policy.yaml"), POLICY);
-  writeFileSync4(join6(repo, ".gitignore"), ".router/worktrees/\n");
+  mkdirSync5(join7(repo, "src"), { recursive: true });
+  writeFileSync5(join7(repo, "src", "a.ts"), "export const x = 1;\n");
+  mkdirSync5(join7(repo, "tests"), { recursive: true });
+  writeFileSync5(join7(repo, "tests", "t.test.ts"), "ok\n");
+  mkdirSync5(join7(repo, ".router"), { recursive: true });
+  writeFileSync5(join7(repo, ".router", "policy.yaml"), POLICY);
+  writeFileSync5(join7(repo, ".gitignore"), ".router/worktrees/\n");
   execFileSync2("git", ["add", "-A"], { cwd: repo, stdio: "ignore" });
   execFileSync2("git", ["commit", "-q", "-m", "base"], { cwd: repo, stdio: "ignore" });
-  const paths = routerPaths(join6(repo, ".router"));
+  const paths = routerPaths(join7(repo, ".router"));
   return { repo, deps: { paths, clock: systemClock }, paths };
 }
 function taskYaml(id, allowed) {
@@ -11341,8 +11563,8 @@ test_ref: test
 function validateQueue(deps, repo, id, yamlText) {
   const base = resolveCommit(repo, "HEAD");
   mkdirSync5(deps.paths.taskDir(id), { recursive: true });
-  writeFileSync4(deps.paths.taskYaml(id), yamlText);
-  writeFileSync4(deps.paths.contractMd(id), CONTRACT);
+  writeFileSync5(deps.paths.taskYaml(id), yamlText);
+  writeFileSync5(deps.paths.contractMd(id), CONTRACT);
   const hash = hashContract(yamlText, CONTRACT);
   createTask(deps, id, id);
   transition(deps, id, "VALIDATED", { actor: "selftest", meta: { base_sha: base, contract_hash: hash } });
@@ -11369,7 +11591,7 @@ async function selftest(opts = {}) {
     }
     return { ok: canaries.every((c) => c.ok), canaries, sandbox: opts.keep ? repo : null };
   } finally {
-    if (!opts.keep) rmSync3(repo, { recursive: true, force: true });
+    if (!opts.keep) rmSync4(repo, { recursive: true, force: true });
   }
 }
 var NODE, OK, POLICY, CONTRACT, scriptLauncher, CANARIES;
@@ -11431,7 +11653,7 @@ verification:
 });
 
 // src/cli/args.ts
-var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help"]);
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run"]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "id",
   "title",
@@ -11444,7 +11666,8 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "tokens-out",
   "cost-usd",
   "wall",
-  "model"
+  "model",
+  "keep-metrics"
 ]);
 function parseArgs(argv) {
   const verb = argv[0];
@@ -11492,8 +11715,8 @@ init_js_yaml();
 init_constants();
 init_validate();
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync7, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join7 } from "node:path";
+import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join8 } from "node:path";
 
 // src/core/stats.ts
 function summarizeBaseline(records) {
@@ -11555,6 +11778,66 @@ function sum(xs) {
 // src/cli/commands.ts
 init_contractHash();
 init_stateMachine();
+init_escalation();
+
+// src/core/risk.ts
+init_glob();
+var SENSITIVE = [
+  { path: "package.json", label: "package.json" },
+  { path: "package-lock.json", label: "lockfile" },
+  { path: "pnpm-lock.yaml", label: "lockfile" },
+  { path: "yarn.lock", label: "lockfile" },
+  { path: "Cargo.lock", label: "lockfile" },
+  { path: "go.sum", label: "lockfile" },
+  { path: "poetry.lock", label: "lockfile" },
+  { path: ".github/workflows/ci.yml", label: "CI config (.github)" },
+  { path: ".gitlab-ci.yml", label: "CI config" },
+  { path: ".circleci/config.yml", label: "CI config" },
+  { path: "migrations/0001_init.sql", label: "migration" },
+  { path: "db/migrate/001_init.rb", label: "migration" }
+];
+function classifyRisk(allowedGlobs) {
+  const reasons = [];
+  for (const s of SENSITIVE) {
+    if (matchAny(s.path, allowedGlobs) && !reasons.includes(s.label)) {
+      reasons.push(s.label);
+    }
+  }
+  return { level: reasons.length > 0 ? "high" : "low", reasons };
+}
+
+// src/core/gc.ts
+init_stateMachine();
+function planMetricRetention(records, opts) {
+  let keep = [...records];
+  if (opts.maxAgeMs !== void 0 && opts.nowMs !== void 0) {
+    const cutoff = opts.nowMs - opts.maxAgeMs;
+    keep = keep.filter((r) => {
+      const t = Date.parse(r.ts);
+      return Number.isNaN(t) ? true : t >= cutoff;
+    });
+  }
+  if (opts.keepLast !== void 0 && keep.length > opts.keepLast) {
+    keep = keep.slice(keep.length - opts.keepLast);
+  }
+  const keepSet = new Set(keep);
+  const dropped = records.filter((r) => !keepSet.has(r));
+  return { keep, dropped };
+}
+function planRunGc(tasks) {
+  const remove = [];
+  const skipped = [];
+  for (const t of tasks) {
+    if (isTerminal(t.state)) {
+      for (const runId2 of t.worktrees) remove.push({ taskId: t.id, runId: runId2 });
+    } else if (t.worktrees.length > 0) {
+      skipped.push({ taskId: t.id, state: t.state, worktrees: t.worktrees.length });
+    }
+  }
+  return { remove, skipped };
+}
+
+// src/cli/commands.ts
 init_clock();
 init_git();
 init_paths();
@@ -11566,7 +11849,7 @@ init_transition();
 init_lock();
 init_signals();
 init_store();
-import { statSync as statSync3 } from "node:fs";
+import { statSync as statSync4 } from "node:fs";
 import { hostname as hostname2 } from "node:os";
 
 // src/app/registry.ts
@@ -11609,7 +11892,7 @@ function runDeadReason(paths, id, lease, heartbeatStaleMs) {
   }
   let heartbeatAgeMs = null;
   try {
-    heartbeatAgeMs = Date.now() - statSync3(paths.heartbeat(id, lease.run_id)).mtimeMs;
+    heartbeatAgeMs = Date.now() - statSync4(paths.heartbeat(id, lease.run_id)).mtimeMs;
   } catch {
     heartbeatAgeMs = null;
   }
@@ -11846,6 +12129,7 @@ function planExecutorOrder(paths, nowMs, policy, workers) {
 
 // src/cli/commands.ts
 init_worker();
+init_taskLoad();
 
 // src/cli/output.ts
 function out(s) {
@@ -11932,7 +12216,7 @@ function taskTemplate(id, title) {
   );
 }
 var init = (ctx) => {
-  const root = join7(ctx.cwd, ROUTER_DIR);
+  const root = join8(ctx.cwd, ROUTER_DIR);
   const force = flagBool(ctx.args.flags, "force");
   const paths = routerPaths(root);
   const created = [];
@@ -11942,12 +12226,12 @@ var init = (ctx) => {
       created.push(d);
     }
   }
-  if (!existsSync6(paths.policy) || force) writeFileSync5(paths.policy, POLICY_TEMPLATE);
+  if (!existsSync6(paths.policy) || force) writeFileSync6(paths.policy, POLICY_TEMPLATE);
   if (!existsSync6(paths.registry)) {
     writeRegistry(paths, { schema_version: 1, rebuilt_at: systemClock.nowIso(), tasks: {} });
   }
-  const gi = join7(paths.root, ".gitignore");
-  if (!existsSync6(gi)) writeFileSync5(gi, "worktrees/\n");
+  const gi = join8(paths.root, ".gitignore");
+  if (!existsSync6(gi)) writeFileSync6(gi, "worktrees/\n");
   emit(ctx.json, { ok: true, root: paths.root, created }, () => `initialized ${paths.root}`);
   return 0;
 };
@@ -11956,9 +12240,9 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   createTask(deps, id, title);
-  if (!existsSync6(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync6(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
-  if (!existsSync6(paths.planMd(id))) writeFileSync5(paths.planMd(id), `# Plan: ${title}
+  if (!existsSync6(paths.taskYaml(id))) writeFileSync6(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync6(paths.contractMd(id))) writeFileSync6(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
+  if (!existsSync6(paths.planMd(id))) writeFileSync6(paths.planMd(id), `# Plan: ${title}
 `);
   emit(
     ctx.json,
@@ -11981,7 +12265,7 @@ var validate = (ctx) => {
   const baseSha = resolveCommit(repoRoot, parsed.value.base_sha ?? "HEAD");
   const frozenTask = { ...parsed.value, base_sha: baseSha };
   const yamlText = dump(frozenTask, { lineWidth: 120 });
-  writeFileSync5(paths.taskYaml(id), yamlText);
+  writeFileSync6(paths.taskYaml(id), yamlText);
   const contractText = existsSync6(paths.contractMd(id)) ? readFileSync7(paths.contractMd(id), "utf8") : "";
   const contractHash = hashContract(yamlText, contractText);
   const policy = loadPolicyFromGit(paths, baseSha);
@@ -12026,7 +12310,13 @@ var queue = simpleTransition("QUEUED", "cli:queue", "QUEUED");
 var run = (ctx) => {
   const { deps, paths } = depsFor(ctx);
   const id = requireId(ctx);
-  const started = startRun(deps, id);
+  let started;
+  try {
+    started = startRun(deps, id);
+  } catch (e) {
+    if (e instanceof CapExceededError) throw new CliError(`refused: ${e.message}`, 1);
+    throw e;
+  }
   const script = process.argv[1] ?? "";
   const child = spawn2(
     process.execPath,
@@ -12054,8 +12344,18 @@ var workerRun = async (ctx) => {
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
   if (workers.length === 0) throw new CliError("policy defines no worker/workers", 1);
-  const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
-  const [primary, ...rest] = ordered.map(makeLauncher);
+  const events = readEvents(paths, id);
+  const runningEv = [...events].reverse().find((e) => e.to === "RUNNING" && e.run_id === runId2);
+  let launchers;
+  if (isRescueAttempt(runningEv?.from ?? null)) {
+    const rescueWorker = resolveRescueWorker(policy);
+    if (rescueWorker === void 0) throw new CliError("rescue attempt: no rescue worker resolvable", 1);
+    launchers = [makeLauncher(rescueWorker)];
+  } else {
+    const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+    launchers = ordered.map(makeLauncher);
+  }
+  const [primary, ...rest] = launchers;
   const result2 = await runWorkerBody(deps, id, runId2, primary, policy, rest);
   return result2.verifier?.result === "PASSED" ? 0 : 1;
 };
@@ -12071,6 +12371,24 @@ var merge = (ctx) => {
   if (st.state !== "PASSED") throw new CliError(`${id} is ${st.state}, not PASSED`, 1);
   const run2 = st.current_run;
   if (run2 === null) throw new CliError(`${id} has no run to merge`, 1);
+  const risk = classifyRisk(loadTask(paths, id).task.allowed_globs);
+  if (risk.level === "high") {
+    const approvedFlag = flagBool(ctx.args.flags, "approve");
+    const recorded = readApproval(paths, id);
+    if (!approvedFlag && recorded === null) {
+      throw new CliError(
+        `${id} is high-risk (${risk.reasons.join(", ")}); re-run with --approve or \`router approve ${id}\``,
+        1
+      );
+    }
+    if (approvedFlag && recorded === null) {
+      writeApproval(paths, id, {
+        approved_at: systemClock.nowIso(),
+        actor: "cli:merge",
+        ...risk.reasons.length > 0 ? { risk_reasons: risk.reasons } : {}
+      });
+    }
+  }
   const repoRoot = paths.repoRoot;
   const branch = runBranch(id, run2);
   try {
@@ -12253,6 +12571,83 @@ var reindex = (ctx) => {
   );
   return 0;
 };
+var approve = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const id = requireId(ctx);
+  const st = currentState(paths, id);
+  if (st === null) throw new CliError(`no such task: ${id}`, 3);
+  const risk = classifyRisk(loadTask(paths, id).task.allowed_globs);
+  writeApproval(paths, id, {
+    approved_at: systemClock.nowIso(),
+    actor: "cli:approve",
+    ...risk.reasons.length > 0 ? { risk_reasons: risk.reasons } : {}
+  });
+  emit(
+    ctx.json,
+    { ok: true, id, risk: risk.level, reasons: risk.reasons },
+    () => `${id} approved (risk ${risk.level}${risk.reasons.length > 0 ? ": " + risk.reasons.join(", ") : ""})`
+  );
+  return 0;
+};
+var fmtBytes = (n) => {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+};
+var gc = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const dryRun = flagBool(ctx.args.flags, "dry-run");
+  const keepStr = flagStr(ctx.args.flags, "keep-metrics");
+  const keepLast = keepStr !== void 0 && keepStr !== "" ? Number(keepStr) : 1e3;
+  if (!Number.isFinite(keepLast) || keepLast < 0) {
+    throw new CliError(`bad --keep-metrics '${keepStr}'`, 2);
+  }
+  const retOpts = { keepLast };
+  const since = flagStr(ctx.args.flags, "since");
+  if (since !== void 0) {
+    const ms = parseDurationMs(since);
+    if (ms === null) throw new CliError(`bad --since '${since}' (use e.g. 90m, 24h, 7d)`, 2);
+    retOpts.maxAgeMs = ms;
+    retOpts.nowMs = Date.now();
+  }
+  const metrics = readMetrics(paths);
+  const retention = planMetricRetention(metrics, retOpts);
+  const tasks = listTaskIds(paths).map((id) => {
+    const st = currentState(paths, id);
+    return { id, state: st?.state ?? "CANCELLED", worktrees: listWorktreeRuns(paths, id) };
+  });
+  const plan = planRunGc(tasks);
+  let freedBytes = 0;
+  for (const a of plan.remove) freedBytes += pathSizeBytes(paths.worktree(a.taskId, a.runId));
+  if (!dryRun) {
+    if (retention.dropped.length > 0) {
+      writeMetricsArchive(paths, retention.dropped);
+      overwriteMetrics(paths, retention.keep);
+    }
+    const touchedTasks = /* @__PURE__ */ new Set();
+    for (const a of plan.remove) {
+      worktreeRemove(paths.repoRoot, paths.worktree(a.taskId, a.runId));
+      touchedTasks.add(a.taskId);
+    }
+    for (const id of touchedTasks) removeEmptyWorktreeParent(paths, id);
+  }
+  const summary = {
+    ok: true,
+    dry_run: dryRun,
+    metrics_dropped: retention.dropped.length,
+    metrics_kept: retention.keep.length,
+    worktrees_removed: plan.remove.map((a) => `${a.taskId}/${a.runId}`),
+    freed_bytes: freedBytes,
+    skipped: plan.skipped
+  };
+  emit(ctx.json, summary, () => {
+    const verb = dryRun ? "would free" : "freed";
+    const skip = plan.skipped.length > 0 ? `
+  kept ${plan.skipped.length} non-terminal task(s) with worktrees: ${plan.skipped.map((s) => `${s.taskId}(${s.state})`).join(", ")}` : "";
+    return `gc${dryRun ? " (dry-run)" : ""}: metrics dropped ${retention.dropped.length}, kept ${retention.keep.length}; ${verb} ${plan.remove.length} worktree(s) (${fmtBytes(freedBytes)})${skip}`;
+  });
+  return 0;
+};
 var routing = (ctx) => {
   const { deps, paths } = depsFor(ctx);
   const policy = loadPolicyFromDisk(paths);
@@ -12301,6 +12696,7 @@ var HANDLERS = {
   run,
   "_worker-run": workerRun,
   merge,
+  approve,
   status,
   list,
   result,
@@ -12308,6 +12704,7 @@ var HANDLERS = {
   baseline,
   routing,
   cancel,
+  gc,
   recover: recoverCmd,
   reindex,
   selftest: selftestCmd
@@ -12320,10 +12717,11 @@ function helpText() {
 
 Usage: router <command> [options]
 
-Lifecycle:  init * new * validate * queue * run * status * result * merge
-Ops:        list * stats * baseline * routing * cancel * recover * reindex * selftest
+Lifecycle:  init * new * validate * queue * run * status * result * approve * merge
+Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest
 
-Flags: --json, --id, --title, --run, --state, --force, --keep
+Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,
+       --dry-run, --keep-metrics, --since
 `;
 }
 

@@ -15,11 +15,13 @@ import { createTask, currentState, transition } from '../src/app/transition.ts';
 import { hostname } from 'node:os';
 import {
   ConcurrencyLimitError,
+  RunStateError,
   runWorkerBody,
   startRun,
   updateLease,
   type WorkerLauncher,
 } from '../src/app/worker.ts';
+import type { Policy } from '../src/domain/types.ts';
 
 const NODE = process.execPath;
 
@@ -224,6 +226,95 @@ test('quota fallback: all executors exhausted -> quota_exhausted, FAILED, not an
     assert.equal(result.verifier, undefined);
     assert.equal(currentState(paths, 't1')?.state, 'FAILED');
     assert.equal(store.readEvents(paths, 't1').at(-1)?.meta?.counts_as_attempt, false);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+// -- escalation ladder ------------------------------------------------------
+
+const ESC_POLICY: Policy = {
+  schema_version: 1,
+  scope: { forbidden_globs: [], test_globs: ['tests/**'], max_changed_lines: 400 },
+  verification: {
+    build: [[NODE, '-e', 'process.exit(0)']],
+    test: [[NODE, '-e', 'process.exit(0)']],
+  },
+  worker: { kind: 'codex', api_key_env: 'OPENAI_API_KEY', stall_minutes: 1 },
+  escalation: { max_attempts: 3 },
+};
+
+/** Start a run and run a failing worker; returns the resulting state + runId. */
+async function failOnce(
+  deps: ReturnType<typeof setup>['deps'],
+  paths: ReturnType<typeof setup>['paths'],
+): Promise<{ state: string; runId: string }> {
+  const { runId } = startRun(deps, 't1');
+  const result = await runWorkerBody(deps, 't1', runId, launcher('process.exit(1)'), ESC_POLICY);
+  assert.equal(result.exit_class, 'task_failed');
+  return { state: currentState(paths, 't1')!.state, runId };
+}
+
+test('escalation ladder: FAILED -> ESCALATED_1 -> ESCALATED_2 -> NEEDS_REPLAN', async () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+
+    // attempt 1 fails -> retry rung
+    const r1 = await failOnce(deps, paths);
+    assert.equal(r1.state, 'ESCALATED_1');
+
+    // attempt 2 fails -> rescue rung
+    const r2 = await failOnce(deps, paths);
+    assert.equal(r2.state, 'ESCALATED_2');
+
+    // attempt 3 starts from ESCALATED_2: the RUNNING event marks it a rescue attempt
+    const { runId: run3 } = startRun(deps, 't1');
+    const running3 = store.readEvents(paths, 't1').find((e) => e.to === 'RUNNING' && e.run_id === run3);
+    assert.equal(running3?.from, 'ESCALATED_2'); // isRescueAttempt() would pick the rescue worker
+    const res3 = await runWorkerBody(deps, 't1', run3, launcher('process.exit(1)'), ESC_POLICY);
+    assert.equal(res3.exit_class, 'task_failed');
+    assert.equal(currentState(paths, 't1')!.state, 'NEEDS_REPLAN');
+
+    // NEEDS_REPLAN is a dead end: no auto-retry from here.
+    assert.throws(() => startRun(deps, 't1'), RunStateError);
+
+    // every failed run that advanced the ladder is flagged escalated in metrics.
+    const metrics = store.readMetrics(paths).filter((m) => m.task_id === 't1');
+    assert.equal(metrics.length, 3);
+    assert.deepEqual(metrics.map((m) => m.attempt_number), [1, 2, 3]);
+    assert.deepEqual(metrics.map((m) => m.escalated), [true, true, true]);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('escalation is opt-in: without escalation policy a FAILED run stays FAILED', async () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+    const { runId } = startRun(deps, 't1');
+    // setup()'s on-disk POLICY has no escalation block -> no ladder advance.
+    const result = await runWorkerBody(deps, 't1', runId, launcher('process.exit(1)'));
+    assert.equal(result.exit_class, 'task_failed');
+    assert.equal(currentState(paths, 't1')!.state, 'FAILED');
+    assert.equal(store.readMetrics(paths).at(-1)?.escalated, false);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('non-counting failure (env_error) does NOT advance the ladder', async () => {
+  const { repo, deps, paths } = setup();
+  try {
+    validatedQueued(deps, repo, 't1');
+    const { runId } = startRun(deps, 't1');
+    // Unlaunchable binary => env_error; even with escalation enabled the ladder
+    // must NOT advance (attempt did not really happen).
+    const result = await runWorkerBody(deps, 't1', runId, launcher('', ['router-no-such-bin-xyz']), ESC_POLICY);
+    assert.equal(result.exit_class, 'env_error');
+    assert.equal(currentState(paths, 't1')!.state, 'FAILED');
+    assert.equal(store.readMetrics(paths).at(-1)?.escalated, false);
   } finally {
     fx.cleanup(repo);
   }

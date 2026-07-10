@@ -11,6 +11,9 @@ import { validateTaskYaml } from '../domain/validate.ts';
 import { aggregate, summarizeBaseline } from '../core/stats.ts';
 import { hashContract } from '../core/contractHash.ts';
 import { isTerminal } from '../core/stateMachine.ts';
+import { isRescueAttempt, resolveRescueWorker } from '../core/escalation.ts';
+import { classifyRisk } from '../core/risk.ts';
+import { planMetricRetention, planRunGc, type TaskGcInput } from '../core/gc.ts';
 import { systemClock } from '../io/clock.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, type RouterPaths } from '../io/paths.ts';
@@ -22,7 +25,8 @@ import { rebuildRegistry } from '../app/registry.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from '../app/policyLoad.ts';
 import { makeLauncher } from '../app/codexLauncher.ts';
 import { planExecutorOrder } from '../app/routing.ts';
-import { runWorkerBody, startRun, updateLease } from '../app/worker.ts';
+import { CapExceededError, runWorkerBody, startRun, updateLease } from '../app/worker.ts';
+import { loadTask } from '../app/taskLoad.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
 
@@ -193,7 +197,15 @@ const queue = simpleTransition('QUEUED', 'cli:queue', 'QUEUED');
 const run: Handler = (ctx) => {
   const { deps, paths } = depsFor(ctx);
   const id = requireId(ctx);
-  const started = startRun(deps, id);
+  let started;
+  try {
+    started = startRun(deps, id);
+  } catch (e) {
+    // A budget/attempt cap is a deterministic refusal, not a crash - surface it
+    // as a clean CLI error (json-aware) instead of a stack trace.
+    if (e instanceof CapExceededError) throw new CliError(`refused: ${e.message}`, 1);
+    throw e;
+  }
   // Hand off to a detached self-supervising _worker-run process (survives session end).
   const script = process.argv[1] ?? '';
   const child = spawn(
@@ -224,10 +236,25 @@ const workerRun: Handler = async (ctx) => {
   const policy = loadPolicyFromGit(paths, st.base_sha);
   const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
   if (workers.length === 0) throw new CliError('policy defines no worker/workers', 1);
-  // Budget-aware routing reorders the fallback chain to start at the first executor
-  // with window headroom (identity order when no budgets are configured).
-  const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
-  const [primary, ...rest] = ordered.map(makeLauncher);
+  // A run started from ESCALATED_2 is the "rescue" attempt: use the rescue worker
+  // (stronger/different model) instead of the normal chain. The rung was decided
+  // by the state machine at finalize; we read it from this run's RUNNING event.
+  const events = store.readEvents(paths, id);
+  const runningEv = [...events].reverse().find((e) => e.to === 'RUNNING' && e.run_id === runId);
+  let launchers;
+  if (isRescueAttempt(runningEv?.from ?? null)) {
+    // Rescue: a single stronger executor, with no fallback chain and no budget
+    // reordering, so it can't silently downgrade to a weaker/cheaper model.
+    const rescueWorker = resolveRescueWorker(policy);
+    if (rescueWorker === undefined) throw new CliError('rescue attempt: no rescue worker resolvable', 1);
+    launchers = [makeLauncher(rescueWorker)];
+  } else {
+    // Budget-aware routing reorders the fallback chain to start at the first executor
+    // with window headroom (identity order when no budgets are configured).
+    const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
+    launchers = ordered.map(makeLauncher);
+  }
+  const [primary, ...rest] = launchers;
   // Pass the policy through (no second git load) + the (reordered) fallback chain.
   const result = await runWorkerBody(deps, id, runId, primary!, policy, rest);
   return result.verifier?.result === 'PASSED' ? 0 : 1;
@@ -245,6 +272,29 @@ const merge: Handler = (ctx) => {
   if (st.state !== 'PASSED') throw new CliError(`${id} is ${st.state}, not PASSED`, 1);
   const run = st.current_run;
   if (run === null) throw new CliError(`${id} has no run to merge`, 1);
+
+  // Approval gate: a task whose allowed_globs can reach sensitive paths is
+  // high-risk and must not merge without an explicit approval (a --approve on
+  // this command, or a previously recorded `router approve`).
+  const risk = classifyRisk(loadTask(paths, id).task.allowed_globs);
+  if (risk.level === 'high') {
+    const approvedFlag = flagBool(ctx.args.flags, 'approve');
+    const recorded = store.readApproval(paths, id);
+    if (!approvedFlag && recorded === null) {
+      throw new CliError(
+        `${id} is high-risk (${risk.reasons.join(', ')}); re-run with --approve or \`router approve ${id}\``,
+        1,
+      );
+    }
+    if (approvedFlag && recorded === null) {
+      store.writeApproval(paths, id, {
+        approved_at: systemClock.nowIso(),
+        actor: 'cli:merge',
+        ...(risk.reasons.length > 0 ? { risk_reasons: risk.reasons } : {}),
+      });
+    }
+  }
+
   const repoRoot = paths.repoRoot;
   const branch = runBranch(id, run);
   try {
@@ -447,6 +497,96 @@ const reindex: Handler = (ctx) => {
   return 0;
 };
 
+const approve: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const id = requireId(ctx);
+  const st = currentState(paths, id);
+  if (st === null) throw new CliError(`no such task: ${id}`, 3);
+  const risk = classifyRisk(loadTask(paths, id).task.allowed_globs);
+  store.writeApproval(paths, id, {
+    approved_at: systemClock.nowIso(),
+    actor: 'cli:approve',
+    ...(risk.reasons.length > 0 ? { risk_reasons: risk.reasons } : {}),
+  });
+  emit(ctx.json, { ok: true, id, risk: risk.level, reasons: risk.reasons }, () =>
+    `${id} approved (risk ${risk.level}${risk.reasons.length > 0 ? ': ' + risk.reasons.join(', ') : ''})`,
+  );
+  return 0;
+};
+
+const fmtBytes = (n: number): string => {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+};
+
+const gc: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const dryRun = flagBool(ctx.args.flags, 'dry-run');
+
+  // metrics.jsonl retention: keep the most-recent N (default 1000), optionally
+  // also dropping anything older than --since; rotate dropped -> metrics.jsonl.1.
+  const keepStr = flagStr(ctx.args.flags, 'keep-metrics');
+  const keepLast = keepStr !== undefined && keepStr !== '' ? Number(keepStr) : 1000;
+  if (!Number.isFinite(keepLast) || keepLast < 0) {
+    throw new CliError(`bad --keep-metrics '${keepStr}'`, 2);
+  }
+  const retOpts: { keepLast: number; maxAgeMs?: number; nowMs?: number } = { keepLast };
+  const since = flagStr(ctx.args.flags, 'since');
+  if (since !== undefined) {
+    const ms = parseDurationMs(since);
+    if (ms === null) throw new CliError(`bad --since '${since}' (use e.g. 90m, 24h, 7d)`, 2);
+    retOpts.maxAgeMs = ms;
+    retOpts.nowMs = Date.now();
+  }
+  const metrics = store.readMetrics(paths);
+  const retention = planMetricRetention(metrics, retOpts);
+
+  // run worktree GC: only ever for terminal tasks (planRunGc enforces this).
+  const tasks: TaskGcInput[] = store.listTaskIds(paths).map((id) => {
+    const st = currentState(paths, id);
+    return { id, state: st?.state ?? 'CANCELLED', worktrees: store.listWorktreeRuns(paths, id) };
+  });
+  const plan = planRunGc(tasks);
+  let freedBytes = 0;
+  for (const a of plan.remove) freedBytes += store.pathSizeBytes(paths.worktree(a.taskId, a.runId));
+
+  if (!dryRun) {
+    if (retention.dropped.length > 0) {
+      store.writeMetricsArchive(paths, retention.dropped);
+      store.overwriteMetrics(paths, retention.keep);
+    }
+    const touchedTasks = new Set<string>();
+    for (const a of plan.remove) {
+      worktreeRemove(paths.repoRoot, paths.worktree(a.taskId, a.runId));
+      touchedTasks.add(a.taskId);
+    }
+    for (const id of touchedTasks) store.removeEmptyWorktreeParent(paths, id);
+  }
+
+  const summary = {
+    ok: true,
+    dry_run: dryRun,
+    metrics_dropped: retention.dropped.length,
+    metrics_kept: retention.keep.length,
+    worktrees_removed: plan.remove.map((a) => `${a.taskId}/${a.runId}`),
+    freed_bytes: freedBytes,
+    skipped: plan.skipped,
+  };
+  emit(ctx.json, summary, () => {
+    const verb = dryRun ? 'would free' : 'freed';
+    const skip =
+      plan.skipped.length > 0
+        ? `\n  kept ${plan.skipped.length} non-terminal task(s) with worktrees: ${plan.skipped.map((s) => `${s.taskId}(${s.state})`).join(', ')}`
+        : '';
+    return (
+      `gc${dryRun ? ' (dry-run)' : ''}: metrics dropped ${retention.dropped.length}, kept ${retention.keep.length}; ` +
+      `${verb} ${plan.remove.length} worktree(s) (${fmtBytes(freedBytes)})${skip}`
+    );
+  });
+  return 0;
+};
+
 const routing: Handler = (ctx) => {
   const { deps, paths } = depsFor(ctx);
   const policy = loadPolicyFromDisk(paths);
@@ -499,6 +639,7 @@ export const HANDLERS: Record<string, Handler> = {
   run,
   '_worker-run': workerRun,
   merge,
+  approve,
   status,
   list,
   result,
@@ -506,6 +647,7 @@ export const HANDLERS: Record<string, Handler> = {
   baseline,
   routing,
   cancel,
+  gc,
   recover: recoverCmd,
   reindex,
   selftest: selftestCmd,
@@ -519,8 +661,9 @@ export function helpText(): string {
   return (
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
-    `Lifecycle:  init * new * validate * queue * run * status * result * merge\n` +
-    `Ops:        list * stats * baseline * routing * cancel * recover * reindex * selftest\n\n` +
-    `Flags: --json, --id, --title, --run, --state, --force, --keep\n`
+    `Lifecycle:  init * new * validate * queue * run * status * result * approve * merge\n` +
+    `Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest\n\n` +
+    `Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,\n` +
+    `       --dry-run, --keep-metrics, --since\n`
   );
 }

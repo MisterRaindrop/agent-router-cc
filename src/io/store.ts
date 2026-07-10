@@ -1,8 +1,10 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
+  ApprovalRecord,
   BaselineRecord,
   EventRecord,
   Lease,
@@ -71,6 +73,25 @@ export function readMetrics(p: RouterPaths): MetricRecord[] {
   return readJsonl<MetricRecord>(p.metrics);
 }
 
+/** Rewrite metrics.jsonl with exactly `records` (used by `router gc` rotation). */
+export function overwriteMetrics(p: RouterPaths, records: readonly MetricRecord[]): void {
+  const text = records.map((r) => JSON.stringify(r)).join('\n');
+  writeFileSync(p.metrics, text.length > 0 ? `${text}\n` : '');
+}
+/** Write the archived (rotated-out) metric records to metrics.jsonl.1. */
+export function writeMetricsArchive(p: RouterPaths, records: readonly MetricRecord[]): void {
+  const text = records.map((r) => JSON.stringify(r)).join('\n');
+  writeFileSync(p.metricsArchive, text.length > 0 ? `${text}\n` : '');
+}
+
+// -- approval gate (recorded when a high-risk task is approved for merge) --
+export function readApproval(p: RouterPaths, id: string): ApprovalRecord | null {
+  return readJson<ApprovalRecord>(p.approval(id));
+}
+export function writeApproval(p: RouterPaths, id: string, record: ApprovalRecord): void {
+  writeJsonAtomic(p.approval(id), record);
+}
+
 // -- baseline ledger (recorded Opus-direct measurements) --
 export function appendBaseline(p: RouterPaths, record: BaselineRecord): void {
   appendJsonl(p.baseline, record);
@@ -103,4 +124,37 @@ export function listRunIds(p: RouterPaths, id: string): string[] {
     .filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name))
     .map((e) => e.name)
     .sort();
+}
+
+/** Run ids that still have a worktree directory under .router/worktrees/<id>/. */
+export function listWorktreeRuns(p: RouterPaths, id: string): string[] {
+  const dir = join(p.worktreesDir, id);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name))
+    .map((e) => e.name)
+    .sort();
+}
+
+/** Total size in bytes of a file or directory tree (0 if absent). */
+export function pathSizeBytes(path: string): number {
+  let total = 0;
+  let st;
+  try {
+    st = statSync(path);
+  } catch {
+    return 0;
+  }
+  if (st.isDirectory()) {
+    for (const name of readdirSync(path)) total += pathSizeBytes(join(path, name));
+  } else {
+    total += st.size;
+  }
+  return total;
+}
+
+/** Remove the empty .router/worktrees/<id>/ parent dir once its runs are gone. */
+export function removeEmptyWorktreeParent(p: RouterPaths, id: string): void {
+  const dir = join(p.worktreesDir, id);
+  if (existsSync(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
 }

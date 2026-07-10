@@ -26,6 +26,8 @@ export interface RouterPaths {
   planMd(id: string): string;
   stateFile(id: string): string;
   eventsFile(id: string): string;
+  approval(id: string): string;
+  metricsArchive: string;
   taskContextDir(id: string): string;
   runsDir(id: string): string;
   runDir(id: string, runId: string): string;
@@ -58,6 +60,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     policy: join(root, 'policy.yaml'),
     registry: join(root, 'registry.json'),
     metrics: join(root, 'metrics.jsonl'),
+    metricsArchive: join(root, 'metrics.jsonl.1'),
     baseline: join(root, 'baseline.jsonl'),
     routing: join(root, 'routing.jsonl'),
     lockDir: join(root, '.lock'),
@@ -70,6 +73,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     planMd: (id) => join(taskDir(id), 'PLAN.md'),
     stateFile: (id) => join(taskDir(id), 'state.json'),
     eventsFile: (id) => join(taskDir(id), 'events.jsonl'),
+    approval: (id) => join(taskDir(id), 'approval.json'),
     taskContextDir: (id) => join(taskDir(id), 'context'),
     runsDir: (id) => join(taskDir(id), 'runs'),
     runDir,
