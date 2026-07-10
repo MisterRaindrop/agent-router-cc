@@ -25,6 +25,7 @@ import { rebuildRegistry } from '../app/registry.ts';
 import { loadPolicyFromDisk, loadPolicyFromGit } from '../app/policyLoad.ts';
 import { makeLauncher } from '../app/codexLauncher.ts';
 import { planExecutorOrder } from '../app/routing.ts';
+import { runPlan } from '../app/plan.ts';
 import { CapExceededError, runWorkerBody, startRun, updateLease } from '../app/worker.ts';
 import { loadTask } from '../app/taskLoad.ts';
 import { CliError, emit } from './output.ts';
@@ -621,6 +622,31 @@ const routing: Handler = (ctx) => {
   return 0;
 };
 
+const plan: Handler = async (ctx) => {
+  const { deps } = depsFor(ctx);
+  const goal = flagStr(ctx.args.flags, 'goal') ?? ctx.args.positionals[0];
+  if (goal === undefined || goal.trim() === '') throw new CliError('usage: router plan "<goal>"', 2);
+  const idFlag = flagStr(ctx.args.flags, 'id');
+  const outcome = runPlan(deps, goal, idFlag !== undefined ? { id: idFlag } : {});
+  if (!outcome.ok) throw new CliError(`plan rejected:\n  - ${outcome.errors.join('\n  - ')}`, 1);
+
+  const id = outcome.id;
+  if (!flagBool(ctx.args.flags, 'execute')) {
+    emit(
+      ctx.json,
+      { ok: true, id, state: 'DRAFT', risk: outcome.risk.level, reasons: outcome.risk.reasons, truncated: outcome.truncated },
+      () =>
+        `planned ${id} (DRAFT, risk ${outcome.risk.level}); review .router/tasks/${id}/, then \`router validate ${id}\` or re-run with --execute`,
+    );
+    return 0;
+  }
+  // --execute: chain the existing pipeline (each step owns its own gates).
+  const chainCtx: Ctx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id } } };
+  validate(chainCtx);
+  queue(chainCtx);
+  return await run(chainCtx);
+};
+
 const selftestCmd: Handler = async (ctx) => {
   const { selftest } = await import('../app/selftest.ts');
   const r = await selftest({ keep: flagBool(ctx.args.flags, 'keep') });
@@ -634,6 +660,7 @@ const selftestCmd: Handler = async (ctx) => {
 export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
+  plan,
   validate,
   queue,
   run,
@@ -661,9 +688,9 @@ export function helpText(): string {
   return (
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
-    `Lifecycle:  init * new * validate * queue * run * status * result * approve * merge\n` +
+    `Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge\n` +
     `Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,\n` +
-    `       --dry-run, --keep-metrics, --since\n`
+    `       --dry-run, --keep-metrics, --since, --execute\n`
   );
 }
