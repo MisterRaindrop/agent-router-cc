@@ -57,20 +57,52 @@ function requireId(ctx: Ctx): string {
 
 const POLICY_TEMPLATE = `schema_version: 1
 max_concurrent_workers: 1
+
+# Executor CLI. codex and claude are both plan-auth (no API key needed).
 worker:
   kind: codex
-  api_key_env: OPENAI_API_KEY
-  max_wall_minutes_default: 30
   stall_minutes: 10
+
+# What a task may change (enforced on the diff, after the run).
 scope:
   forbidden_globs: [".router/**", "**/*.lock"]
   test_globs: ["tests/**", "**/*_test.*", "**/*.test.*"]
   max_changed_lines: 400
+
+# Commands the verifier runs. These defaults ALWAYS PASS (node is a requirement, so
+# they run anywhere) -- router works out of the box. But then a PASS only means the
+# diff applied, stayed in scope, and leaked no secrets. Replace with your project's
+# real commands to make PASS also mean "build + tests pass", e.g.:
+#   build: [["npm", "run", "build"]]
+#   test:  [["npm", "test"]]
 verification:
   build:
-    - ["make", "-C", "{build_dir}"]
+    - ["node", "-e", "process.exit(0)"]
   test:
-    - ["ctest", "--test-dir", "{build_dir}", "--output-on-failure"]
+    - ["node", "-e", "process.exit(0)"]
+
+# ---- Optional tuning (uncomment; all inert by default) -----------------------
+# Fallback chain + budget-aware routing (replaces the single 'worker' above): start
+# each run on the executor with quota headroom, fall over on a rate-limit hit.
+# workers:
+#   - kind: codex
+#     budget: { window_minutes: 300, budget_tokens: 4000000, switch_at: 0.9 }
+#   - kind: claude
+# routing:
+#   estimate_tokens_default: 40000
+#
+# Per-model USD prices (per million tokens). Fill these in and 'router stats' reports
+# real spend and savings; budget routing can then compare executors by cost.
+# pricing:
+#   default: { input_per_mtok: 3, output_per_mtok: 15 }
+#
+# Recover from failures: retry -> stronger model -> hand back to a human.
+# escalation:
+#   max_attempts: 2
+#   rescue_worker: { kind: claude }
+#
+# Hard ceilings per task -- refuse a new run once accumulated spend passes these.
+# budget_caps: { max_cost_usd: 1.0, max_tokens: 2000000 }
 `;
 
 const CONTRACT_TEMPLATE = (id: string, title: string): string =>
@@ -89,7 +121,7 @@ function taskTemplate(id: string, title: string): string {
       max_changed_lines: 400,
       build_ref: 'build',
       test_ref: 'test',
-      verification_params: { build_dir: 'build' },
+      verification_params: {},
     },
     { lineWidth: 120 },
   );
