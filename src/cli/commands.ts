@@ -662,21 +662,39 @@ const plan: Handler = async (ctx) => {
   const outcome = runPlan(deps, goal, idFlag !== undefined ? { id: idFlag } : {});
   if (!outcome.ok) throw new CliError(`plan rejected:\n  - ${outcome.errors.join('\n  - ')}`, 1);
 
-  const id = outcome.id;
-  if (!flagBool(ctx.args.flags, 'execute')) {
-    emit(
-      ctx.json,
-      { ok: true, id, state: 'DRAFT', risk: outcome.risk.level, reasons: outcome.risk.reasons, truncated: outcome.truncated },
-      () =>
-        `planned ${id} (DRAFT, risk ${outcome.risk.level}); review .router/tasks/${id}/, then \`router validate ${id}\` or re-run with --execute`,
+  const summary = {
+    ok: true,
+    created: outcome.created.map((c) => ({ id: c.id, title: c.title, risk: c.risk.level, depends_on: c.depends_on })),
+    handback: outcome.handback,
+    truncated: outcome.truncated,
+  };
+  const text = (): string => {
+    const lines = outcome.created.map(
+      (c) => `planned ${c.id} (DRAFT, risk ${c.risk.level}${c.depends_on.length > 0 ? `, after ${c.depends_on.join(',')}` : ''})`,
     );
+    for (const h of outcome.handback) {
+      lines.push(`handback ${h.id}: ${h.title}${h.reason !== undefined ? ` -- ${h.reason}` : ''} (needs the main session)`);
+    }
+    lines.push('review .router/tasks/<id>/, then `router run <id>` (or re-run plan with --execute)');
+    return lines.join('\n');
+  };
+
+  if (!flagBool(ctx.args.flags, 'execute')) {
+    emit(ctx.json, summary, text);
     return 0;
   }
-  // --execute: chain the existing pipeline (each step owns its own gates).
-  const chainCtx: Ctx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id } } };
-  validate(chainCtx);
-  queue(chainCtx);
-  return await run(chainCtx);
+  // --execute: freeze + queue everything, then start the first wave (no unmet deps).
+  let rc = 0;
+  for (const c of outcome.created) {
+    const chainCtx: Ctx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id: c.id } } };
+    validate(chainCtx);
+    queue(chainCtx);
+  }
+  for (const c of outcome.created.filter((t) => t.depends_on.length === 0)) {
+    const chainCtx: Ctx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id: c.id } } };
+    rc = Math.max(rc, await run(chainCtx));
+  }
+  return rc;
 };
 
 const selftestCmd: Handler = async (ctx) => {

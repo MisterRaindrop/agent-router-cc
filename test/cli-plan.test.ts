@@ -43,7 +43,8 @@ test('router plan materializes a DRAFT task from a valid proposal', () => {
     const r = router(dir, ['plan', 'implement slugify', '--json'], { ROUTER_CLAUDE_BIN: FAKE_PLANNER, ROUTER_FAKE_PLAN: 'valid' });
     assert.equal(r.code, 0);
     const out = JSON.parse(r.out);
-    assert.equal(out.id, 'slugify');
+    assert.equal(out.created[0].id, 'slugify');
+    assert.deepEqual(out.handback, []);
     const st = JSON.parse(router(dir, ['status', 'slugify', '--json']).out);
     assert.equal(st.state, 'DRAFT');
   } finally {
