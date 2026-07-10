@@ -9852,6 +9852,9 @@ function compile(glob) {
   cache.set(glob, compiled);
   return compiled;
 }
+function matchGlob(path, glob) {
+  return compile(glob).test(path);
+}
 function matchAny(path, globs) {
   return globs.some((g) => compile(g).test(path));
 }
@@ -9904,6 +9907,10 @@ function git(cwd, args, input) {
 }
 function resolveCommit(cwd, ref) {
   return git(cwd, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]).trim();
+}
+function listTrackedFiles(cwd, cap = 2e3) {
+  const all = git(cwd, ["ls-files"]).split("\n").filter((l) => l !== "");
+  return { files: all.slice(0, cap), truncated: all.length > cap };
 }
 function showFileAtRev(cwd, sha, relPath) {
   const r = tryGit(cwd, ["show", "--textconv", `${sha}:${relPath}`]);
@@ -10825,7 +10832,7 @@ var init_env = __esm({
 
 // src/io/supervisor.ts
 import { spawn } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { dirname as dirname5, join as join5 } from "node:path";
 function activitySignal(logPath, watchDir) {
   let sig = 0;
@@ -10910,7 +10917,7 @@ function superviseWorker(spec) {
       timers.push(
         setInterval(() => {
           try {
-            writeFileSync3(spec.heartbeatPath, `${Date.now()}
+            writeFileSync4(spec.heartbeatPath, `${Date.now()}
 `);
           } catch {
           }
@@ -10931,7 +10938,7 @@ function superviseWorker(spec) {
         }, pollIntervalMs)
       );
       try {
-        writeFileSync3(spec.heartbeatPath, `${startedAtMs}
+        writeFileSync4(spec.heartbeatPath, `${startedAtMs}
 `);
       } catch {
       }
@@ -10947,12 +10954,12 @@ var init_supervisor = __esm({
 });
 
 // src/app/taskLoad.ts
-import { readFileSync as readFileSync5 } from "node:fs";
+import { readFileSync as readFileSync6 } from "node:fs";
 function loadTask(paths, id) {
-  const taskYamlText = readFileSync5(paths.taskYaml(id), "utf8");
+  const taskYamlText = readFileSync6(paths.taskYaml(id), "utf8");
   let contractMdText = "";
   try {
-    contractMdText = readFileSync5(paths.contractMd(id), "utf8");
+    contractMdText = readFileSync6(paths.contractMd(id), "utf8");
   } catch {
     contractMdText = "";
   }
@@ -11259,7 +11266,7 @@ var init_verifier = __esm({
 
 // src/app/worker.ts
 import { createHash as createHash2 } from "node:crypto";
-import { readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync5 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
 function capsFromPolicy(policy) {
   return {
@@ -11356,7 +11363,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   let switches = 0;
   for (let i = 0; i < chain.length; i++) {
     used = chain[i];
-    if (i > 0) writeFileSync4(logPath, "");
+    if (i > 0) writeFileSync5(logPath, "");
     outcome = await superviseWorker({
       argv: used.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
       cwd: worktreeDir,
@@ -11405,7 +11412,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   if (exitClass === "ok") {
     transition(deps, id, "VERIFYING", { actor: "router:worker", runId: runId2 });
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync4(paths.diffPatch(id, runId2), patch);
+    writeFileSync5(paths.diffPatch(id, runId2), patch);
     result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     const report = verify({
       repoRoot: paths.repoRoot,
@@ -11415,7 +11422,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
       policy: policyGit,
       task,
       frozenContractHash: contractHash,
-      taskYamlText: readFileSync6(paths.taskYaml(id), "utf8"),
+      taskYamlText: readFileSync7(paths.taskYaml(id), "utf8"),
       contractMdText: safeRead(paths.contractMd(id)),
       env
     });
@@ -11451,7 +11458,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
 }
 function safeRead(path) {
   try {
-    return readFileSync6(path, "utf8");
+    return readFileSync7(path, "utf8");
   } catch {
     return "";
   }
@@ -11521,13 +11528,13 @@ var selftest_exports = {};
 __export(selftest_exports, {
   selftest: () => selftest
 });
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { join as join7 } from "node:path";
 function gitInit(dir) {
   const run2 = (args) => {
-    execFileSync2("git", args, { cwd: dir, stdio: "ignore" });
+    execFileSync3("git", args, { cwd: dir, stdio: "ignore" });
   };
   run2(["init", "-q", "-b", "main"]);
   run2(["config", "user.email", "selftest@router.local"]);
@@ -11538,14 +11545,14 @@ function makeSandbox() {
   const repo = mkdtempSync2(join7(tmpdir2(), "router-selftest-"));
   gitInit(repo);
   mkdirSync5(join7(repo, "src"), { recursive: true });
-  writeFileSync5(join7(repo, "src", "a.ts"), "export const x = 1;\n");
+  writeFileSync6(join7(repo, "src", "a.ts"), "export const x = 1;\n");
   mkdirSync5(join7(repo, "tests"), { recursive: true });
-  writeFileSync5(join7(repo, "tests", "t.test.ts"), "ok\n");
+  writeFileSync6(join7(repo, "tests", "t.test.ts"), "ok\n");
   mkdirSync5(join7(repo, ".router"), { recursive: true });
-  writeFileSync5(join7(repo, ".router", "policy.yaml"), POLICY);
-  writeFileSync5(join7(repo, ".gitignore"), ".router/worktrees/\n");
-  execFileSync2("git", ["add", "-A"], { cwd: repo, stdio: "ignore" });
-  execFileSync2("git", ["commit", "-q", "-m", "base"], { cwd: repo, stdio: "ignore" });
+  writeFileSync6(join7(repo, ".router", "policy.yaml"), POLICY);
+  writeFileSync6(join7(repo, ".gitignore"), ".router/worktrees/\n");
+  execFileSync3("git", ["add", "-A"], { cwd: repo, stdio: "ignore" });
+  execFileSync3("git", ["commit", "-q", "-m", "base"], { cwd: repo, stdio: "ignore" });
   const paths = routerPaths(join7(repo, ".router"));
   return { repo, deps: { paths, clock: systemClock }, paths };
 }
@@ -11563,8 +11570,8 @@ test_ref: test
 function validateQueue(deps, repo, id, yamlText) {
   const base = resolveCommit(repo, "HEAD");
   mkdirSync5(deps.paths.taskDir(id), { recursive: true });
-  writeFileSync5(deps.paths.taskYaml(id), yamlText);
-  writeFileSync5(deps.paths.contractMd(id), CONTRACT);
+  writeFileSync6(deps.paths.taskYaml(id), yamlText);
+  writeFileSync6(deps.paths.contractMd(id), CONTRACT);
   const hash = hashContract(yamlText, CONTRACT);
   createTask(deps, id, id);
   transition(deps, id, "VALIDATED", { actor: "selftest", meta: { base_sha: base, contract_hash: hash } });
@@ -11715,7 +11722,7 @@ init_js_yaml();
 init_constants();
 init_validate();
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync6, readFileSync as readFileSync8, writeFileSync as writeFileSync7 } from "node:fs";
 import { join as join8 } from "node:path";
 
 // src/core/stats.ts
@@ -12127,6 +12134,190 @@ function planExecutorOrder(paths, nowMs, policy, workers) {
   };
 }
 
+// src/app/plan.ts
+init_js_yaml();
+import { existsSync as existsSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
+
+// src/core/planPrompt.ts
+function buildPlannerPrompt(digest, goal) {
+  const refs = digest.verificationRefs.join(", ");
+  const lines = [
+    "You are a planning assistant for a deterministic coding-task router.",
+    "Turn the GOAL into exactly ONE task contract.",
+    "Respond with ONLY a single JSON object -- no prose, no markdown, no code fences.",
+    "",
+    "JSON shape:",
+    "{",
+    '  "id": "kebab-case-slug",',
+    '  "title": "short imperative title",',
+    '  "allowed_globs": ["smallest set of path globs that can satisfy the goal"],',
+    '  "forbidden_globs": [],',
+    '  "max_changed_lines": 100,',
+    `  "build_ref": "one of: ${refs}",`,
+    `  "test_ref": "one of: ${refs}",`,
+    '  "contract_md": "markdown with a Goal section and a Definition of Done checklist"',
+    "}",
+    "",
+    "Constraints:",
+    '- allowed_globs must be minimal and match existing files; never use a bare "**".',
+    "- build_ref and test_ref MUST be chosen from the list above.",
+    "- max_changed_lines is a positive integer sized to the goal.",
+    "",
+    `GOAL: ${goal}`,
+    "",
+    "Repository files (git-tracked):",
+    digest.files.join("\n")
+  ];
+  if (digest.truncated) lines.push("(file list truncated)");
+  if (digest.readmeHead !== void 0 && digest.readmeHead !== "") {
+    lines.push("", "README (head):", digest.readmeHead);
+  }
+  return lines.join("\n");
+}
+
+// src/core/planCheck.ts
+init_glob();
+var MAX_CHANGED_LINES_CEILING = 2e3;
+var ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+var BROAD = /* @__PURE__ */ new Set(["*", "**", "**/*", "**/**"]);
+function extractJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+function parseAndCheck(rawText, ctx) {
+  const jsonText = extractJsonObject(rawText);
+  if (jsonText === null) return { ok: false, errors: ["no JSON object found in planner output"] };
+  let obj;
+  try {
+    obj = JSON.parse(jsonText);
+  } catch (e) {
+    return { ok: false, errors: [`planner output is not valid JSON: ${e.message}`] };
+  }
+  const errors = [];
+  const str = (k) => typeof obj[k] === "string" ? obj[k] : "";
+  if (!ID_RE.test(str("id"))) errors.push("id must be a kebab-case slug");
+  if (str("title").trim() === "") errors.push("title must be a non-empty string");
+  if (str("contract_md").trim() === "") errors.push("contract_md must be a non-empty string");
+  const globs = obj["allowed_globs"];
+  const globList = Array.isArray(globs) && globs.every((g) => typeof g === "string") ? globs : [];
+  if (globList.length === 0) errors.push("allowed_globs must be a non-empty string array");
+  for (const g of globList) {
+    if (BROAD.has(g.trim())) errors.push(`allowed_glob '${g}' is too broad`);
+    else if (!ctx.trackedFiles.some((f) => matchGlob(f, g))) errors.push(`allowed_glob '${g}' matches no tracked file`);
+  }
+  for (const ref of ["build_ref", "test_ref"]) {
+    const v = str(ref);
+    if (v === "") errors.push(`${ref} must be a non-empty string`);
+    else if (!ctx.policyRefs.includes(v)) errors.push(`${ref} '${v}' not in policy.verification (${ctx.policyRefs.join(", ")})`);
+  }
+  const mcl = obj["max_changed_lines"];
+  if (typeof mcl !== "number" || !Number.isInteger(mcl) || mcl <= 0) errors.push("max_changed_lines must be a positive integer");
+  else if (mcl > MAX_CHANGED_LINES_CEILING) errors.push(`max_changed_lines ${mcl} exceeds ceiling ${MAX_CHANGED_LINES_CEILING}`);
+  if (errors.length > 0) return { ok: false, errors };
+  const fg = obj["forbidden_globs"];
+  const contract = {
+    id: str("id"),
+    title: str("title"),
+    allowed_globs: globList,
+    forbidden_globs: Array.isArray(fg) && fg.every((g) => typeof g === "string") ? fg : [],
+    max_changed_lines: mcl,
+    build_ref: str("build_ref"),
+    test_ref: str("test_ref"),
+    contract_md: str("contract_md")
+  };
+  return { ok: true, contract };
+}
+
+// src/app/plan.ts
+init_git();
+
+// src/io/claudePlan.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+function invokeClaudePlanner(prompt, env = process.env) {
+  const bin = env.ROUTER_CLAUDE_BIN ?? "claude";
+  try {
+    const out2 = execFileSync2(bin, ["-p", prompt, "--output-format", "json"], {
+      encoding: "utf8",
+      env,
+      maxBuffer: 32 * 1024 * 1024
+    });
+    try {
+      const envelope = JSON.parse(out2);
+      if (typeof envelope.result === "string") return { ok: true, text: envelope.result };
+    } catch {
+    }
+    return { ok: true, text: out2 };
+  } catch (e) {
+    return { ok: false, text: "", error: e.message };
+  }
+}
+
+// src/app/plan.ts
+init_policyLoad();
+init_transition();
+var README_HEAD_LINES = 40;
+function readReadmeHead(repoRoot) {
+  const p = `${repoRoot}/README.md`;
+  if (!existsSync5(p)) return void 0;
+  return readFileSync5(p, "utf8").split("\n").slice(0, README_HEAD_LINES).join("\n");
+}
+function renderTaskYaml(c) {
+  const task = {
+    schema_version: 1,
+    id: c.id,
+    title: c.title,
+    base_sha: null,
+    max_wall_minutes: 30,
+    allowed_globs: c.allowed_globs,
+    forbidden_globs: c.forbidden_globs,
+    max_changed_lines: c.max_changed_lines,
+    build_ref: c.build_ref,
+    test_ref: c.test_ref,
+    verification_params: {}
+  };
+  return dump(task, { lineWidth: 120 });
+}
+function runPlan(deps, goal, opts = {}) {
+  const { paths } = deps;
+  const policy = loadPolicyFromDisk(paths);
+  const policyRefs = Object.keys(policy.verification);
+  const tracked = listTrackedFiles(paths.repoRoot);
+  const readmeHead = readReadmeHead(paths.repoRoot);
+  const digest = {
+    files: tracked.files,
+    truncated: tracked.truncated,
+    verificationRefs: policyRefs,
+    ...readmeHead !== void 0 ? { readmeHead } : {}
+  };
+  const res = invokeClaudePlanner(buildPlannerPrompt(digest, goal), process.env);
+  if (!res.ok) return { ok: false, errors: [`claude planner failed: ${res.error ?? "unknown error"}`] };
+  const checked = parseAndCheck(res.text, { policyRefs, trackedFiles: tracked.files });
+  if (!checked.ok) return { ok: false, errors: checked.errors };
+  const contract = checked.contract;
+  const id = opts.id ?? contract.id;
+  createTask(deps, id, contract.title);
+  writeFileSync3(paths.taskYaml(id), renderTaskYaml(contract));
+  writeFileSync3(paths.contractMd(id), contract.contract_md);
+  return { ok: true, id, contract, risk: classifyRisk(contract.allowed_globs), truncated: tracked.truncated };
+}
+
 // src/cli/commands.ts
 init_worker();
 init_taskLoad();
@@ -12157,7 +12348,7 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const rd = explicit ?? findRouterDir(ctx.cwd);
-  if (rd === void 0 || rd === null || !existsSync6(rd)) {
+  if (rd === void 0 || rd === null || !existsSync7(rd)) {
     throw new CliError("no .router found - run `router init` first", 3);
   }
   const paths = routerPaths(rd);
@@ -12221,17 +12412,17 @@ var init = (ctx) => {
   const paths = routerPaths(root);
   const created = [];
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir, paths.contextDir]) {
-    if (!existsSync6(d)) {
+    if (!existsSync7(d)) {
       mkdirSync6(d, { recursive: true });
       created.push(d);
     }
   }
-  if (!existsSync6(paths.policy) || force) writeFileSync6(paths.policy, POLICY_TEMPLATE);
-  if (!existsSync6(paths.registry)) {
+  if (!existsSync7(paths.policy) || force) writeFileSync7(paths.policy, POLICY_TEMPLATE);
+  if (!existsSync7(paths.registry)) {
     writeRegistry(paths, { schema_version: 1, rebuilt_at: systemClock.nowIso(), tasks: {} });
   }
   const gi = join8(paths.root, ".gitignore");
-  if (!existsSync6(gi)) writeFileSync6(gi, "worktrees/\n");
+  if (!existsSync7(gi)) writeFileSync7(gi, "worktrees/\n");
   emit(ctx.json, { ok: true, root: paths.root, created }, () => `initialized ${paths.root}`);
   return 0;
 };
@@ -12240,9 +12431,9 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   createTask(deps, id, title);
-  if (!existsSync6(paths.taskYaml(id))) writeFileSync6(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync6(paths.contractMd(id))) writeFileSync6(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
-  if (!existsSync6(paths.planMd(id))) writeFileSync6(paths.planMd(id), `# Plan: ${title}
+  if (!existsSync7(paths.taskYaml(id))) writeFileSync7(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync7(paths.contractMd(id))) writeFileSync7(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
+  if (!existsSync7(paths.planMd(id))) writeFileSync7(paths.planMd(id), `# Plan: ${title}
 `);
   emit(
     ctx.json,
@@ -12256,7 +12447,7 @@ var validate = (ctx) => {
   const id = requireId(ctx);
   const st = currentState(paths, id);
   if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  const yamlText0 = readFileSync7(paths.taskYaml(id), "utf8");
+  const yamlText0 = readFileSync8(paths.taskYaml(id), "utf8");
   const parsed = validateTaskYaml(load(yamlText0, { schema: JSON_SCHEMA }));
   if (!parsed.ok || parsed.value === null) {
     throw new CliError(`invalid task.yaml: ${parsed.errors.join("; ")}`, 1);
@@ -12265,8 +12456,8 @@ var validate = (ctx) => {
   const baseSha = resolveCommit(repoRoot, parsed.value.base_sha ?? "HEAD");
   const frozenTask = { ...parsed.value, base_sha: baseSha };
   const yamlText = dump(frozenTask, { lineWidth: 120 });
-  writeFileSync6(paths.taskYaml(id), yamlText);
-  const contractText = existsSync6(paths.contractMd(id)) ? readFileSync7(paths.contractMd(id), "utf8") : "";
+  writeFileSync7(paths.taskYaml(id), yamlText);
+  const contractText = existsSync7(paths.contractMd(id)) ? readFileSync8(paths.contractMd(id), "utf8") : "";
   const contractHash = hashContract(yamlText, contractText);
   const policy = loadPolicyFromGit(paths, baseSha);
   for (const ref of [frozenTask.build_ref, frozenTask.test_ref]) {
@@ -12445,7 +12636,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} ${run2}`, 3);
   let tail = "";
   try {
-    tail = readFileSync7(paths.workerLog(id, run2), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync8(paths.workerLog(id, run2), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -12616,16 +12807,16 @@ var gc = (ctx) => {
     const st = currentState(paths, id);
     return { id, state: st?.state ?? "CANCELLED", worktrees: listWorktreeRuns(paths, id) };
   });
-  const plan = planRunGc(tasks);
+  const plan2 = planRunGc(tasks);
   let freedBytes = 0;
-  for (const a of plan.remove) freedBytes += pathSizeBytes(paths.worktree(a.taskId, a.runId));
+  for (const a of plan2.remove) freedBytes += pathSizeBytes(paths.worktree(a.taskId, a.runId));
   if (!dryRun) {
     if (retention.dropped.length > 0) {
       writeMetricsArchive(paths, retention.dropped);
       overwriteMetrics(paths, retention.keep);
     }
     const touchedTasks = /* @__PURE__ */ new Set();
-    for (const a of plan.remove) {
+    for (const a of plan2.remove) {
       worktreeRemove(paths.repoRoot, paths.worktree(a.taskId, a.runId));
       touchedTasks.add(a.taskId);
     }
@@ -12636,15 +12827,15 @@ var gc = (ctx) => {
     dry_run: dryRun,
     metrics_dropped: retention.dropped.length,
     metrics_kept: retention.keep.length,
-    worktrees_removed: plan.remove.map((a) => `${a.taskId}/${a.runId}`),
+    worktrees_removed: plan2.remove.map((a) => `${a.taskId}/${a.runId}`),
     freed_bytes: freedBytes,
-    skipped: plan.skipped
+    skipped: plan2.skipped
   };
   emit(ctx.json, summary, () => {
     const verb = dryRun ? "would free" : "freed";
-    const skip = plan.skipped.length > 0 ? `
-  kept ${plan.skipped.length} non-terminal task(s) with worktrees: ${plan.skipped.map((s) => `${s.taskId}(${s.state})`).join(", ")}` : "";
-    return `gc${dryRun ? " (dry-run)" : ""}: metrics dropped ${retention.dropped.length}, kept ${retention.keep.length}; ${verb} ${plan.remove.length} worktree(s) (${fmtBytes(freedBytes)})${skip}`;
+    const skip = plan2.skipped.length > 0 ? `
+  kept ${plan2.skipped.length} non-terminal task(s) with worktrees: ${plan2.skipped.map((s) => `${s.taskId}(${s.state})`).join(", ")}` : "";
+    return `gc${dryRun ? " (dry-run)" : ""}: metrics dropped ${retention.dropped.length}, kept ${retention.keep.length}; ${verb} ${plan2.remove.length} worktree(s) (${fmtBytes(freedBytes)})${skip}`;
   });
   return 0;
 };
@@ -12677,6 +12868,28 @@ var routing = (ctx) => {
   });
   return 0;
 };
+var plan = async (ctx) => {
+  const { deps } = depsFor(ctx);
+  const goal = flagStr(ctx.args.flags, "goal") ?? ctx.args.positionals[0];
+  if (goal === void 0 || goal.trim() === "") throw new CliError('usage: router plan "<goal>"', 2);
+  const idFlag = flagStr(ctx.args.flags, "id");
+  const outcome = runPlan(deps, goal, idFlag !== void 0 ? { id: idFlag } : {});
+  if (!outcome.ok) throw new CliError(`plan rejected:
+  - ${outcome.errors.join("\n  - ")}`, 1);
+  const id = outcome.id;
+  if (!flagBool(ctx.args.flags, "execute")) {
+    emit(
+      ctx.json,
+      { ok: true, id, state: "DRAFT", risk: outcome.risk.level, reasons: outcome.risk.reasons, truncated: outcome.truncated },
+      () => `planned ${id} (DRAFT, risk ${outcome.risk.level}); review .router/tasks/${id}/, then \`router validate ${id}\` or re-run with --execute`
+    );
+    return 0;
+  }
+  const chainCtx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id } } };
+  validate(chainCtx);
+  queue(chainCtx);
+  return await run(chainCtx);
+};
 var selftestCmd = async (ctx) => {
   const { selftest: selftest2 } = await Promise.resolve().then(() => (init_selftest(), selftest_exports));
   const r = await selftest2({ keep: flagBool(ctx.args.flags, "keep") });
@@ -12691,6 +12904,7 @@ ${r.ok ? "selftest PASSED" : "selftest FAILED"}`
 var HANDLERS = {
   init,
   new: newTask,
+  plan,
   validate,
   queue,
   run,
@@ -12717,11 +12931,11 @@ function helpText() {
 
 Usage: router <command> [options]
 
-Lifecycle:  init * new * validate * queue * run * status * result * approve * merge
+Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge
 Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest
 
 Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,
-       --dry-run, --keep-metrics, --since
+       --dry-run, --keep-metrics, --since, --execute
 `;
 }
 

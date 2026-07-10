@@ -67,6 +67,23 @@ This scaffolds `.router/tasks/slugify/{task.yaml,TASK_CONTRACT.md}`. Edit them:
 
 Then commit them (`git add -A && git commit`).
 
+#### Shortcut: let claude draft the contract
+
+Instead of hand-writing step 2, `router plan "<goal>"` asks claude to propose a
+contract, validates it deterministically, and writes it at DRAFT for you to review:
+
+```sh
+router plan "implement slugify() in src/"        # writes .router/tasks/<id>/, stops at DRAFT
+# review it, then:
+router validate <id> && router queue <id> && router run <id>
+# or chain it in one shot once you trust the setup:
+router plan "implement slugify() in src/" --execute
+```
+
+claude only *proposes* the contract -- router rejects a malformed or over-broad
+proposal (an unknown build/test ref, a bare `**` scope, a glob matching no tracked
+file) before anything runs. The planner needs no file permissions; it just returns text.
+
 ### 3. Validate, queue, run
 
 ```sh

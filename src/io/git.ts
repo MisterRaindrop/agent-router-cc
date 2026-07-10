@@ -58,6 +58,12 @@ export function resolveCommit(cwd: string, ref: string): string {
   return git(cwd, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]).trim();
 }
 
+/** git-tracked files under cwd, capped to `cap` (reports truncation, never silently). */
+export function listTrackedFiles(cwd: string, cap = 2000): { files: string[]; truncated: boolean } {
+  const all = git(cwd, ['ls-files']).split('\n').filter((l) => l !== '');
+  return { files: all.slice(0, cap), truncated: all.length > cap };
+}
+
 /** Read a file's content at a specific commit, or null if it doesn't exist there. */
 export function showFileAtRev(cwd: string, sha: string, relPath: string): string | null {
   const r = tryGit(cwd, ['show', '--textconv', `${sha}:${relPath}`]);
