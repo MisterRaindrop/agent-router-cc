@@ -50,7 +50,7 @@ tax). That number cannot be decided from token counts alone.
 
 Run the **real-USD mode** from `M1-exit-gate.md`: API-billed codex with
 `ROUTER_PRICE_INPUT_PER_MTOK` / `ROUTER_PRICE_OUTPUT_PER_MTOK` set, plus an Opus
-price, then compare `router stats` `costPerVerifiedTask` against the Opus-direct
+price, then compare `router stats` `spentUsdPerVerifiedTask` against the Opus-direct
 dollar cost - on ~10 tasks in a real target repo. What this dry run establishes is
 only that the harness produces those numbers end-to-end, on a real repo, with real
 codex, and that the gates hold (`router selftest` - scope trap caught).

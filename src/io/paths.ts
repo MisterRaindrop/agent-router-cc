@@ -14,6 +14,7 @@ export interface RouterPaths {
   readonly policy: string;
   readonly registry: string;
   readonly metrics: string;
+  readonly baseline: string;
   readonly lockDir: string;
   readonly contextDir: string;
   readonly tasksDir: string;
@@ -56,6 +57,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     policy: join(root, 'policy.yaml'),
     registry: join(root, 'registry.json'),
     metrics: join(root, 'metrics.jsonl'),
+    baseline: join(root, 'baseline.jsonl'),
     lockDir: join(root, '.lock'),
     contextDir: join(root, 'context'),
     tasksDir,

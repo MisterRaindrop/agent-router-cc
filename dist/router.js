@@ -9914,6 +9914,7 @@ function routerPaths(routerDir) {
     policy: join(root, "policy.yaml"),
     registry: join(root, "registry.json"),
     metrics: join(root, "metrics.jsonl"),
+    baseline: join(root, "baseline.jsonl"),
     lockDir: join(root, ".lock"),
     contextDir: join(root, "context"),
     tasksDir,
@@ -10093,6 +10094,12 @@ function appendMetric(p, record) {
 }
 function readMetrics(p) {
   return readJsonl(p.metrics);
+}
+function appendBaseline(p, record) {
+  appendJsonl(p.baseline, record);
+}
+function readBaseline(p) {
+  return readJsonl(p.baseline);
 }
 function listTaskIds(p) {
   if (!existsSync3(p.tasksDir)) return [];
@@ -11326,7 +11333,20 @@ verification:
 
 // src/cli/args.ts
 var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help"]);
-var VALUE_FLAGS = /* @__PURE__ */ new Set(["id", "title", "run", "state", "attempt", "since", "router-dir"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set([
+  "id",
+  "title",
+  "run",
+  "state",
+  "attempt",
+  "since",
+  "router-dir",
+  "tokens-in",
+  "tokens-out",
+  "cost-usd",
+  "wall",
+  "model"
+]);
 function parseArgs(argv) {
   const verb = argv[0];
   const rest = argv.slice(1);
@@ -11377,13 +11397,26 @@ import { existsSync as existsSync6, mkdirSync as mkdirSync6, readFileSync as rea
 import { join as join7 } from "node:path";
 
 // src/core/stats.ts
-function aggregate(records) {
-  const totalRuns = records.length;
-  const passed = records.filter((r) => r.verifier_result === "PASSED");
-  const verifiedRuns = passed.length;
+function summarizeBaseline(records) {
+  if (records.length === 0) return null;
+  const tokens = records.map((r) => r.tokens_input + r.tokens_output);
   const costs = records.map((r) => r.cost_usd).filter((c) => c !== null);
-  const totalCostUsd = costs.length > 0 ? sum(costs) : null;
-  const costPerVerifiedTask = totalCostUsd !== null && verifiedRuns > 0 ? totalCostUsd / verifiedRuns : null;
+  return {
+    tokensPerTask: sum(tokens) / records.length,
+    // Only report a per-task cost if EVERY record carries one (avoid mixing).
+    costUsdPerTask: costs.length === records.length ? sum(costs) / records.length : null,
+    n: records.length
+  };
+}
+function aggregate(records, baseline2 = null) {
+  const totalRuns = records.length;
+  const verifiedRuns = records.filter((r) => r.verifier_result === "PASSED").length;
+  const tokensInput = sum(records.map((r) => r.tokens_input ?? 0));
+  const tokensOutput = sum(records.map((r) => r.tokens_output ?? 0));
+  const tokensTotal = tokensInput + tokensOutput;
+  const costs = records.map((r) => r.cost_usd).filter((c) => c !== null);
+  const spentUsd = costs.length > 0 ? sum(costs) : null;
+  const spentUsdPerVerifiedTask = spentUsd !== null && verifiedRuns > 0 ? spentUsd / verifiedRuns : null;
   const firstVerdicts = records.filter((r) => r.attempt_number === 1 && r.verifier_result !== null);
   const firstPassRate = firstVerdicts.length > 0 ? firstVerdicts.filter((r) => r.verifier_result === "PASSED").length / firstVerdicts.length : null;
   const maxAttemptByTask = /* @__PURE__ */ new Map();
@@ -11392,14 +11425,26 @@ function aggregate(records) {
   }
   const escalationRate = maxAttemptByTask.size > 0 ? [...maxAttemptByTask.values()].filter((n) => n > 1).length / maxAttemptByTask.size : null;
   const envErrorRuns = records.filter((r) => r.env_error).length;
+  const offloadedTokens = baseline2 !== null ? Math.round(baseline2.tokensPerTask * verifiedRuns) : null;
+  const baselineCostTotal = baseline2 !== null && baseline2.costUsdPerTask !== null ? baseline2.costUsdPerTask * verifiedRuns : null;
+  const savedUsd = baselineCostTotal !== null && spentUsd !== null ? baselineCostTotal - spentUsd : null;
+  const savedPct = savedUsd !== null && baselineCostTotal !== null && baselineCostTotal > 0 ? savedUsd / baselineCostTotal : null;
   return {
     totalRuns,
     verifiedRuns,
-    totalCostUsd,
-    costPerVerifiedTask,
+    tokensInput,
+    tokensOutput,
+    tokensTotal,
+    spentUsd,
+    spentUsdPerVerifiedTask,
     firstPassRate,
     escalationRate,
-    envErrorRuns
+    envErrorRuns,
+    baselineTokensPerTask: baseline2?.tokensPerTask ?? null,
+    baselineCostUsdPerTask: baseline2?.costUsdPerTask ?? null,
+    offloadedTokens,
+    savedUsd,
+    savedPct
   };
 }
 function sum(xs) {
@@ -11825,18 +11870,62 @@ ${tail}`;
   });
   return 0;
 };
+var usd = (v) => v === null ? "n/a" : `$${v.toFixed(4)}`;
+var pct = (v) => v === null ? "n/a" : `${Math.round(v * 100)}%`;
 var stats = (ctx) => {
   const { paths } = depsFor(ctx);
-  const s = aggregate(readMetrics(paths));
-  emit(
-    ctx.json,
-    { ok: true, ...s },
-    () => [
-      `runs: ${s.totalRuns}  verified: ${s.verifiedRuns}  env_error: ${s.envErrorRuns}`,
-      `cost/verified task: ${s.costPerVerifiedTask ?? "n/a"}`,
-      `first-pass rate: ${s.firstPassRate ?? "n/a"}  escalation rate: ${s.escalationRate ?? "n/a"}`
-    ].join("\n")
-  );
+  const baseline2 = summarizeBaseline(readBaseline(paths));
+  const s = aggregate(readMetrics(paths), baseline2);
+  emit(ctx.json, { ok: true, ...s }, () => {
+    const perTask = s.verifiedRuns > 0 ? Math.round(s.tokensTotal / s.verifiedRuns) : 0;
+    const lines = [
+      `runs ${s.totalRuns}  verified ${s.verifiedRuns}  first-pass ${pct(s.firstPassRate)}  env_error ${s.envErrorRuns}`,
+      `spent:    ${s.tokensInput} in + ${s.tokensOutput} out tokens (${usd(s.spentUsd)})  [~${perTask}/verified task]`
+    ];
+    if (baseline2 !== null) {
+      lines.push(
+        `baseline: ${Math.round(baseline2.tokensPerTask)} tokens/task (${usd(baseline2.costUsdPerTask)}/task, n=${baseline2.n})`,
+        `offloaded: ${s.offloadedTokens} baseline tokens  |  net saved: ${usd(s.savedUsd)} (${pct(s.savedPct)})`
+      );
+    } else {
+      lines.push("baseline: none - `router baseline add ...` to compute savings");
+    }
+    return lines.join("\n");
+  });
+  return 0;
+};
+var baseline = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const sub = ctx.args.positionals[0];
+  if (sub === "list") {
+    const records = readBaseline(paths);
+    emit(
+      ctx.json,
+      { ok: true, records },
+      () => records.length === 0 ? "(no baseline records)" : records.map((r) => `${r.ts}  ${r.task_id ?? "-"}  ${r.tokens_input}+${r.tokens_output} tok  ${usd(r.cost_usd)}`).join("\n")
+    );
+    return 0;
+  }
+  if (sub !== "add") throw new CliError("usage: router baseline add|list", 2);
+  const tin = Number(flagStr(ctx.args.flags, "tokens-in"));
+  const tout = Number(flagStr(ctx.args.flags, "tokens-out"));
+  if (!Number.isFinite(tin) || !Number.isFinite(tout)) {
+    throw new CliError("baseline add requires --tokens-in and --tokens-out", 2);
+  }
+  const costStr = flagStr(ctx.args.flags, "cost-usd");
+  const wallStr = flagStr(ctx.args.flags, "wall");
+  const record = {
+    ts: systemClock.nowIso(),
+    task_id: ctx.args.positionals[1] ?? null,
+    model: flagStr(ctx.args.flags, "model") ?? "opus",
+    tokens_input: tin,
+    tokens_output: tout,
+    cost_usd: costStr !== void 0 ? Number(costStr) : null,
+    wall_seconds: wallStr !== void 0 ? Number(wallStr) : null
+  };
+  appendBaseline(paths, record);
+  const n = readBaseline(paths).length;
+  emit(ctx.json, { ok: true, record, count: n }, () => `recorded baseline (${tin}+${tout} tok), ${n} total`);
   return 0;
 };
 var cancel = (ctx) => {
@@ -11903,6 +11992,7 @@ var HANDLERS = {
   list,
   result,
   stats,
+  baseline,
   cancel,
   recover: recoverCmd,
   reindex,
@@ -11917,7 +12007,7 @@ function helpText() {
 Usage: router <command> [options]
 
 Lifecycle:  init * new * validate * queue * run * status * result * merge
-Ops:        list * stats * cancel * recover * reindex * selftest
+Ops:        list * stats * baseline * cancel * recover * reindex * selftest
 
 Flags: --json, --id, --title, --run, --state, --force, --keep
 `;

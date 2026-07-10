@@ -3,6 +3,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import type {
+  BaselineRecord,
   EventRecord,
   Lease,
   MetricRecord,
@@ -67,6 +68,14 @@ export function appendMetric(p: RouterPaths, record: MetricRecord): void {
 }
 export function readMetrics(p: RouterPaths): MetricRecord[] {
   return readJsonl<MetricRecord>(p.metrics);
+}
+
+// ── baseline ledger (recorded Opus-direct measurements) ──
+export function appendBaseline(p: RouterPaths, record: BaselineRecord): void {
+  appendJsonl(p.baseline, record);
+}
+export function readBaseline(p: RouterPaths): BaselineRecord[] {
+  return readJsonl<BaselineRecord>(p.baseline);
 }
 
 // -- discovery --

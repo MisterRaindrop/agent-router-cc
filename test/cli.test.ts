@@ -127,6 +127,29 @@ test('list --state filters (regression #10: --state was ignored)', async () => {
   }
 });
 
+test('baseline add + stats savings (token-only, no prices)', async () => {
+  const dir = repoWithPolicy();
+  try {
+    // one verified run so verifiedRuns=1 (simulate by writing a metric directly)
+    const p = routerPaths(join(dir, '.router'));
+    const { appendMetric } = await import('../src/io/store.ts');
+    appendMetric(p, {
+      ts: 't', task_id: 't1', run_id: 'run-001', attempt_number: 1, model: 'codex',
+      exit_class: 'ok', verifier_result: 'PASSED', first_pass: true,
+      tokens_input: 50000, tokens_output: 1000, cost_usd: null, wall_seconds: 30, escalated: false, env_error: false,
+    });
+    const add = await cli(dir, ['baseline', 'add', '--tokens-in', '17000', '--tokens-out', '1729', '--json']);
+    assert.equal(JSON.parse(add.out).count, 1);
+    const s = JSON.parse((await cli(dir, ['stats', '--json'])).out);
+    assert.equal(s.tokensTotal, 51000);
+    assert.equal(s.verifiedRuns, 1);
+    assert.equal(s.offloadedTokens, 18729); // 17000 + 1729, 1 verified
+    assert.equal(s.savedUsd, null); // no prices anywhere
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 test('cancel moves a task to CANCELLED', async () => {
   const dir = repoWithPolicy();
   try {

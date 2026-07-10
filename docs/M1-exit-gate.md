@@ -19,7 +19,7 @@ escalation rate, wall-clock, and env-error rate. All are produced by
   router is in the right ballpark.
 - **Real USD (API-billed codex):** run codex with an API key and set
   `ROUTER_PRICE_INPUT_PER_MTOK` / `ROUTER_PRICE_OUTPUT_PER_MTOK` (dollars per
-  million tokens). `router stats` then reports real `costPerVerifiedTask`. This is
+  million tokens). `router stats` then reports real `spentUsdPerVerifiedTask`. This is
   the faithful form of the gate.
 
 ## Procedure
@@ -49,7 +49,7 @@ escalation rate, wall-clock, and env-error rate. All are produced by
    is the denominator. Keep the tasks identical so the comparison is fair.
 
 5. **Compare.** `router stats --json`. Gate passes only if
-   `costPerVerifiedTask` (or the token proxy) is meaningfully **below** the
+   `spentUsdPerVerifiedTask` (or the token proxy) is meaningfully **below** the
    Opus-direct baseline, at an acceptable first-pass/verifier rate.
 
 ## Go / no-go
