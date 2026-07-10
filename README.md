@@ -24,6 +24,8 @@ git add .router/policy.yaml && git commit -m "router policy"
 
 node .../router.js new fix-thing --title "Fix thing"
 # edit .router/tasks/fix-thing/{task.yaml,TASK_CONTRACT.md}: scope + goal
+# ...or let claude draft + router validate the contract for you:
+#   node .../router.js plan "fix thing in src/"   (add --execute to chain the run)
 node .../router.js validate fix-thing              # freeze base_sha + contract hash
 node .../router.js queue fix-thing
 node .../router.js run fix-thing                   # launches a detached worker
