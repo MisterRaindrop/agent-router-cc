@@ -1,9 +1,10 @@
 # router
 
-Wrap an AI coding agent (the `codex` or `claude` CLI) in a deterministic pipeline.
-The agent writes its diff in an isolated git worktree; nothing reaches your branch
-until mechanical checks -- **build, tests, scope, secret scan** -- all pass. You review
-and merge. The LLM only produces artifacts; the CLI owns every gate.
+A Claude Code plugin that wraps an AI coding agent (the `codex` or `claude` CLI) in a
+deterministic pipeline. The agent writes its diff in an isolated git worktree; nothing
+reaches your branch until mechanical checks -- **build, tests, scope, secret scan** --
+all pass. You review and merge. The LLM only produces artifacts; the plugin owns every
+gate.
 
 ## With router vs. without
 
@@ -11,72 +12,80 @@ and merge. The LLM only produces artifacts; the CLI owns every gate.
 | ---------------------- | --------------------------------------- | ------------------------------------------------------- |
 | **Change scope**       | bounded only by the prompt              | enforced on the diff: allowed globs + changed-line cap  |
 | **Correctness**        | you check by hand afterward             | build + tests + scope + secret scan must pass to PASS   |
-| **Where edits land**   | your working tree, immediately          | an isolated worktree; your tree changes only on `merge` |
+| **Where edits land**   | your working tree, immediately          | an isolated worktree; your tree changes only on merge   |
 | **A failed attempt**   | you retry manually                      | escalation ladder: retry -> stronger model -> hand back |
 | **Quota / rate limit** | the run stalls                          | automatic fallover to the next executor                 |
 | **A runaway run**      | burns until you notice                  | wall timeout + stall watchdog + budget caps             |
 | **Secrets in a diff**  | can slip into a commit                  | scanned; a hit fails verification                       |
-| **Cost visibility**    | none                                    | `router stats`: tokens, spend, and savings              |
+| **Cost visibility**    | none                                    | `/router:stats`: tokens, spend, and savings             |
 
 router **never auto-merges**. The mechanical gate decides PASS/FAIL; you decide merge.
 
 ## Requirements
 
-- **Node.js >= 18** (`node --version`)
-- **git**
+- **Claude Code**
+- **Node.js >= 18** and **git**
 - One executor CLI, logged in: [codex](https://github.com/openai/codex) **or** `claude`.
   A plan subscription is fine -- **no API key needed**.
 
-router itself has **no install step**: `dist/router.js` is a committed, dependency-
-free bundle. Clone and run.
+The plugin ships a committed, dependency-free bundle -- **no `npm install`**.
 
 ## Install
 
-```sh
-git clone https://github.com/MisterRaindrop/agent-router-cc
-# optional convenience alias (add to your shell profile):
-alias router='node "$(pwd)/agent-router-cc/dist/router.js"'
-router --help
-```
-
-### As a Claude Code plugin
-
-One-click install from inside Claude Code:
+From inside Claude Code:
 
 ```
 /plugin marketplace add MisterRaindrop/agent-router-cc
 /plugin install router@agent-router-cc
+/reload-plugins
 ```
 
-Or, for local development (no marketplace, picks up your edits):
+You now have the `/router:*` slash commands, the `reviewer` / `summarizer` subagents,
+and a hook that reconciles crashed runs on session start.
 
-```sh
-claude --plugin-dir /path/to/agent-router-cc
+## Quickstart
+
+In the repo you want to work in:
+
+```
+/router:init                         # scaffolds .router/
 ```
 
-This adds the `/router:*` slash commands (`/router:delegate`, `/router:status`,
-`/router:result`, `/router:stats`, ...), the `reviewer` / `summarizer` subagents, and
-a hook that reconciles crashed runs on session start. Run `/reload-plugins` to
-activate.
+Edit `.router/policy.yaml` -- set your project's real build + test commands and the
+scope limits (see below) -- and commit it. Then let the agent do a task:
 
-## Quickstart (about a minute)
-
-```sh
-cd your-repo
-router init                                    # scaffolds .router/policy.yaml
-# edit .router/policy.yaml: set your project's real build + test commands, and scope
-git add .router/policy.yaml && git commit -m "router policy"
-
-# let the agent draft + validate a task contract, then run it:
-router plan "implement X in src/" --execute    # omit --execute to review the plan first
-router status <id>                             # poll until PASSED or FAILED
-router result <id>                             # see the per-check verifier report
-router merge <id>                              # you merge the verified diff
+```
+/router:plan implement X in src/     # claude drafts a contract; router validates it -> DRAFT
+/router:run <id>                     # validate + queue + run in a supervised worker
+/router:status <id>                  # poll until PASSED or FAILED
+/router:result <id>                  # the per-check verifier report
+/router:merge <id>                   # you merge the verified diff (high-risk: /router:approve first)
 ```
 
-Prefer to write the task yourself? Use `router new <id>` instead of `router plan`.
-Full walkthrough (with what each gate guarantees): **[docs/quickstart.md](docs/quickstart.md)**.
-A complete, dependency-free runnable task: **[examples/minimal/](examples/minimal/)**.
+Prefer to write the contract yourself instead of having claude draft it? Use
+`/router:delegate <id> <description>`. Full walkthrough and the resilience/safety
+knobs are in **[docs/quickstart.md](docs/quickstart.md)**; a complete runnable task is
+in **[examples/minimal/](examples/minimal/)**.
+
+## `.router/policy.yaml`
+
+The per-repo rulebook, committed to git and read from the frozen `base_sha` (so a
+worker cannot loosen its own rules). Three parts:
+
+```yaml
+schema_version: 1
+worker: { kind: codex }              # or workers: [{kind: codex}, {kind: claude}] for fallback
+scope:
+  forbidden_globs: [".router/**", "**/*.lock"]
+  test_globs: ["test/**"]            # tests can't be deleted/emptied to fake a pass
+  max_changed_lines: 400
+verification:                        # the commands the gate runs (argv arrays, no shell)
+  build: [["npm", "run", "build"]]
+  test:  [["npm", "test"]]
+```
+
+A task references these by `build_ref` / `test_ref`. Optional blocks add resilience and
+safety: `escalation`, `budget_caps`, `secret_scan`, `routing` (see docs/quickstart.md).
 
 ## How the gates work
 
@@ -92,10 +101,6 @@ A complete, dependency-free runnable task: **[examples/minimal/](examples/minima
 - **Workers are supervised.** Each run is a detached process group with a wall
   timeout, stall watchdog, and SIGTERM->SIGKILL escalation; its output goes to a log,
   never the orchestrator's context.
-
-The full command list is in `router --help`; resilience and safety knobs (executor
-fallback, escalation, budget caps, approval gate, `router gc`) are documented in
-[docs/quickstart.md](docs/quickstart.md).
 
 ## Development
 
