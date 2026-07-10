@@ -36,6 +36,10 @@ node .../router.js merge fix-thing                 # approval gate: merge the ru
 crashed runs; `router selftest` runs three canaries (including a scope trap that
 must be caught) as a fast integrity check.
 
+For a step-by-step walkthrough (with what each gate guarantees) see
+[docs/quickstart.md](docs/quickstart.md), and a complete runnable task in
+[examples/minimal/](examples/minimal/).
+
 ## As a Claude Code plugin
 
 Install the plugin to get `/router:*` slash commands (`/router:delegate`,
