@@ -1,53 +1,67 @@
 # router
 
-A Claude Code plugin and deterministic CLI for orchestrating coding tasks. The
-LLM produces artifacts - a task contract, a plan, a patch, a summary - and the
-`router` CLI owns every gate: the task state machine, locks, git-worktree
-isolation, worker process supervision, diff-side scope enforcement, a mechanical
-verifier, and metrics. An executor model (codex) does the work in a sandboxed
-worktree; nothing merges until the deterministic checks pass.
+Wrap an AI coding agent (the `codex` or `claude` CLI) in a deterministic pipeline.
+The agent writes its diff in an isolated git worktree; nothing reaches your branch
+until mechanical checks -- **build, tests, scope, secret scan** -- all pass. You review
+and merge. The LLM only produces artifacts; the CLI owns every gate.
+
+## With router vs. without
+
+|                        | Prompting the agent directly            | With router                                             |
+| ---------------------- | --------------------------------------- | ------------------------------------------------------- |
+| **Change scope**       | bounded only by the prompt              | enforced on the diff: allowed globs + changed-line cap  |
+| **Correctness**        | you check by hand afterward             | build + tests + scope + secret scan must pass to PASS   |
+| **Where edits land**   | your working tree, immediately          | an isolated worktree; your tree changes only on `merge` |
+| **A failed attempt**   | you retry manually                      | escalation ladder: retry -> stronger model -> hand back |
+| **Quota / rate limit** | the run stalls                          | automatic fallover to the next executor                 |
+| **A runaway run**      | burns until you notice                  | wall timeout + stall watchdog + budget caps             |
+| **Secrets in a diff**  | can slip into a commit                  | scanned; a hit fails verification                       |
+| **Cost visibility**    | none                                    | `router stats`: tokens, spend, and savings              |
+
+router **never auto-merges**. The mechanical gate decides PASS/FAIL; you decide merge.
 
 ## Requirements
 
-- Node.js >= 18. **No install step** - `dist/router.js` is a committed, dependency-
-  inlined bundle. Clone and run.
-- `git` on PATH. For real execution, the [codex CLI](https://github.com/openai/codex)
-  logged in (or an API key).
+- **Node.js >= 18** (`node --version`)
+- **git**
+- One executor CLI, logged in: [codex](https://github.com/openai/codex) **or** `claude`.
+  A plan subscription is fine -- **no API key needed**.
 
-## Quickstart
+router itself has **no install step**: `dist/router.js` is a committed, dependency-
+free bundle. Clone and run.
+
+## Install
 
 ```sh
-# in your target git repo
-node /path/to/router/dist/router.js init          # scaffold .router/ (+ policy.yaml)
-# edit .router/policy.yaml: whitelist your real build/test commands, set scope
-git add .router/policy.yaml && git commit -m "router policy"
-
-node .../router.js new fix-thing --title "Fix thing"
-# edit .router/tasks/fix-thing/{task.yaml,TASK_CONTRACT.md}: scope + goal
-# ...or let claude draft + router validate the contract for you:
-#   node .../router.js plan "fix thing in src/"   (add --execute to chain the run)
-node .../router.js validate fix-thing              # freeze base_sha + contract hash
-node .../router.js queue fix-thing
-node .../router.js run fix-thing                   # launches a detached worker
-node .../router.js status fix-thing                # poll until PASSED / FAILED
-node .../router.js result fix-thing                # verifier checks + log tail
-node .../router.js merge fix-thing                 # approval gate: merge the run branch
+git clone https://github.com/MisterRaindrop/agent-router-cc
+# optional convenience alias (add to your shell profile):
+alias router='node "$(pwd)/agent-router-cc/dist/router.js"'
+router --help
 ```
 
-`router stats` reports cost per verified task; `router recover` reconciles
-crashed runs; `router selftest` runs three canaries (including a scope trap that
-must be caught) as a fast integrity check.
+**As a Claude Code plugin:** install it to get `/router:*` slash commands
+(`/router:delegate`, `/router:status`, `/router:result`, `/router:stats`, ...), the
+`reviewer` / `summarizer` subagents, and a hook that reconciles crashed runs on
+session start.
 
-For a step-by-step walkthrough (with what each gate guarantees) see
-[docs/quickstart.md](docs/quickstart.md), and a complete runnable task in
-[examples/minimal/](examples/minimal/).
+## Quickstart (about a minute)
 
-## As a Claude Code plugin
+```sh
+cd your-repo
+router init                                    # scaffolds .router/policy.yaml
+# edit .router/policy.yaml: set your project's real build + test commands, and scope
+git add .router/policy.yaml && git commit -m "router policy"
 
-Install the plugin to get `/router:*` slash commands (`/router:delegate`,
-`/router:status`, `/router:result`, `/router:stats`, `/router:selftest`, ...), the
-`reviewer`/`summarizer` subagents, and hooks that run `router recover` on session
-start and block direct edits to router-managed state under `.router/`.
+# let the agent draft + validate a task contract, then run it:
+router plan "implement X in src/" --execute    # omit --execute to review the plan first
+router status <id>                             # poll until PASSED or FAILED
+router result <id>                             # see the per-check verifier report
+router merge <id>                              # you merge the verified diff
+```
+
+Prefer to write the task yourself? Use `router new <id>` instead of `router plan`.
+Full walkthrough (with what each gate guarantees): **[docs/quickstart.md](docs/quickstart.md)**.
+A complete, dependency-free runnable task: **[examples/minimal/](examples/minimal/)**.
 
 ## How the gates work
 
@@ -55,14 +69,18 @@ start and block direct edits to router-managed state under `.router/`.
   primitive; `events.jsonl` is the source of truth and `state.json` / `registry.json`
   are rebuildable projections. A tampered log is rejected on fold.
 - **Scope is enforced on the diff, not the prompt.** `git diff` against the frozen
-  `base_sha` is checked against allowed/forbidden globs, a test-deletion guard, and
-  a line cap.
+  `base_sha` is checked against allowed/forbidden globs, a test-deletion guard, and a
+  changed-line cap.
 - **Commands are whitelisted.** Verification commands must match argv templates in
-  `policy.yaml`, which is read from the `base_sha` git object (not the worktree),
-  so a worker can't loosen the rules. Everything runs `shell:false`.
+  `policy.yaml`, read from the `base_sha` git object (not the worktree), so a worker
+  cannot loosen its own rules. Everything runs `shell:false`.
 - **Workers are supervised.** Each run is a detached process group with a wall
   timeout, stall watchdog, and SIGTERM->SIGKILL escalation; its output goes to a log,
   never the orchestrator's context.
+
+The full command list is in `router --help`; resilience and safety knobs (executor
+fallback, escalation, budget caps, approval gate, `router gc`) are documented in
+[docs/quickstart.md](docs/quickstart.md).
 
 ## Development
 
@@ -73,6 +91,10 @@ npm run build     # bundle src/ -> dist/router.js (commit the result)
 ```
 
 `src/` is layered `domain -> core -> io -> app -> cli`. `core/` is pure (no fs,
-child_process, process, clock, or randomness - enforced by `npm run check:deps`),
+child_process, process, clock, or randomness -- enforced by `npm run check:deps`),
 which is what makes the gate logic unit-testable and keeps the LLM out of state
 transitions. Tests run on `node:test` against synthetic git-repo fixtures.
+
+## License
+
+Apache-2.0.
