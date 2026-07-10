@@ -26,7 +26,7 @@ import { loadPolicyFromDisk, loadPolicyFromGit } from '../app/policyLoad.ts';
 import { makeLauncher } from '../app/codexLauncher.ts';
 import { planExecutorOrder } from '../app/routing.ts';
 import { runPlan } from '../app/plan.ts';
-import { CapExceededError, runWorkerBody, startRun, updateLease } from '../app/worker.ts';
+import { CapExceededError, DependencyError, runWorkerBody, startRun, updateLease } from '../app/worker.ts';
 import { loadTask } from '../app/taskLoad.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -237,6 +237,7 @@ const run: Handler = (ctx) => {
     // A budget/attempt cap is a deterministic refusal, not a crash - surface it
     // as a clean CLI error (json-aware) instead of a stack trace.
     if (e instanceof CapExceededError) throw new CliError(`refused: ${e.message}`, 1);
+    if (e instanceof DependencyError) throw new CliError(`blocked: ${e.message}`, 1);
     throw e;
   }
   // Hand off to a detached self-supervising _worker-run process (survives session end).
@@ -285,7 +286,13 @@ const workerRun: Handler = async (ctx) => {
     // Budget-aware routing reorders the fallback chain to start at the first executor
     // with window headroom (identity order when no budgets are configured).
     const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
-    launchers = ordered.map(makeLauncher);
+    // A tier-pinned task worker leads the chain; the policy chain stays as fallbacks.
+    const pinned = loadTask(paths, id).task.worker;
+    const chain =
+      pinned !== undefined
+        ? [pinned, ...ordered.filter((w) => !(w.kind === pinned.kind && w.model === pinned.model))]
+        : ordered;
+    launchers = chain.map(makeLauncher);
   }
   const [primary, ...rest] = launchers;
   // Pass the policy through (no second git load) + the (reordered) fallback chain.
@@ -654,6 +661,29 @@ const routing: Handler = (ctx) => {
   return 0;
 };
 
+const ready: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const queued = store.listTaskIds(paths).filter((t) => currentState(paths, t)?.state === 'QUEUED');
+  const items = queued.map((t) => {
+    let deps: string[] = [];
+    try {
+      deps = loadTask(paths, t).task.depends_on ?? [];
+    } catch {
+      // unreadable task.yaml -> treat as no deps; validate/run will surface the real error
+    }
+    const unmet = deps.filter((d) => currentState(paths, d)?.state !== 'MERGED');
+    return { id: t, unmet };
+  });
+  const runnable = items.filter((i) => i.unmet.length === 0).map((i) => i.id);
+  const blocked = items.filter((i) => i.unmet.length > 0);
+  emit(ctx.json, { ok: true, ready: runnable, blocked }, () => {
+    const lines = [runnable.length > 0 ? `ready: ${runnable.join(', ')}` : 'ready: (none)'];
+    for (const b of blocked) lines.push(`  blocked ${b.id}: waiting on ${b.unmet.join(', ')}`);
+    return lines.join('\n');
+  });
+  return 0;
+};
+
 const plan: Handler = async (ctx) => {
   const { deps } = depsFor(ctx);
   const goal = flagStr(ctx.args.flags, 'goal') ?? ctx.args.positionals[0];
@@ -723,6 +753,7 @@ export const HANDLERS: Record<string, Handler> = {
   stats,
   baseline,
   routing,
+  ready,
   cancel,
   gc,
   recover: recoverCmd,
@@ -739,7 +770,7 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge\n` +
-    `Ops:        list * stats * baseline * routing * cancel * gc * recover * reindex * selftest\n\n` +
+    `Ops:        list * ready * stats * baseline * routing * cancel * gc * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,\n` +
     `       --dry-run, --keep-metrics, --since, --execute\n`
   );

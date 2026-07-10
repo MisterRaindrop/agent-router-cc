@@ -331,3 +331,29 @@ test('max_concurrent_workers=1 rejects a second concurrent run', () => {
     fx.cleanup(repo);
   }
 });
+
+test('dependency gate: startRun refuses until depends_on tasks are MERGED', () => {
+  const { repo, deps, paths } = setup();
+  try {
+    const parentYaml = TASK_YAML.replace('id: t1', 'id: dep-parent');
+    const childYaml = TASK_YAML.replace('id: t1', 'id: dep-child') + 'depends_on: ["dep-parent"]\n';
+    validatedQueued(deps, repo, 'dep-parent', parentYaml);
+    validatedQueued(deps, repo, 'dep-child', childYaml);
+
+    assert.throws(
+      () => startRun(deps, 'dep-child'),
+      (e: Error) => e.name === 'DependencyError' && /dep-parent/.test(e.message),
+    );
+
+    // Walk dep-parent to MERGED; the gate then opens.
+    transition(deps, 'dep-parent', 'RUNNING', { actor: 't' });
+    transition(deps, 'dep-parent', 'VERIFYING', { actor: 't' });
+    transition(deps, 'dep-parent', 'PASSED', { actor: 't' });
+    transition(deps, 'dep-parent', 'MERGED', { actor: 't' });
+    const started = startRun(deps, 'dep-child');
+    assert.ok(started.runId);
+    assert.equal(currentState(paths, 'dep-child')!.state, 'RUNNING');
+  } finally {
+    fx.cleanup(repo);
+  }
+});
