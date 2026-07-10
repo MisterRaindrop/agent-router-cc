@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlannerPrompt } from '../src/core/planPrompt.ts';
-import { parseAndCheck } from '../src/core/planCheck.ts';
+import { parseAndCheck, parseAndCheckBatch } from '../src/core/planCheck.ts';
 import type { RepoDigest } from '../src/domain/types.ts';
 
 const digest: RepoDigest = {
@@ -82,4 +82,66 @@ test('parseAndCheck rejects a missing field', () => {
   const r = parseAndCheck(raw(missing), CTX);
   assert.equal(r.ok, false);
   if (!r.ok) assert.ok(r.errors.some((e) => e.includes('contract_md')));
+});
+
+const clearA = { ...good, id: 'task-a', clarity: 'clear', depends_on: [] };
+const clearB = { ...good, id: 'task-b', clarity: 'clear', depends_on: ['task-a'] };
+const unclearC = { id: 'task-c', title: 'Design the API', clarity: 'unclear', reason: 'shape unknown' };
+
+test('parseAndCheckBatch accepts a batch and splits clear vs handback', () => {
+  const r = parseAndCheckBatch(raw({ tasks: [clearA, clearB, unclearC] }), CTX);
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.deepEqual(r.tasks.map((t) => t.id), ['task-a', 'task-b']);
+    assert.deepEqual(r.tasks[1]!.depends_on, ['task-a']);
+    assert.deepEqual(r.handback.map((h) => h.id), ['task-c']);
+    assert.equal(r.handback[0]!.reason, 'shape unknown');
+  }
+});
+
+test('parseAndCheckBatch treats a bare single task object as one clear task', () => {
+  const r = parseAndCheckBatch(raw(good), CTX);
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal(r.tasks.length, 1);
+    assert.equal(r.tasks[0]!.clarity, 'clear');
+    assert.deepEqual(r.tasks[0]!.depends_on, []);
+  }
+});
+
+test('parseAndCheckBatch rejects duplicate ids', () => {
+  const r = parseAndCheckBatch(raw({ tasks: [clearA, { ...clearB, id: 'task-a' }] }), CTX);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes('duplicate')));
+});
+
+test('parseAndCheckBatch rejects a dep on an id not in the batch', () => {
+  const r = parseAndCheckBatch(raw({ tasks: [{ ...clearA, depends_on: ['ghost'] }] }), CTX);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes('ghost')));
+});
+
+test('parseAndCheckBatch rejects a dependency cycle', () => {
+  const a = { ...clearA, depends_on: ['task-b'] };
+  const r = parseAndCheckBatch(raw({ tasks: [a, clearB] }), CTX);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes('cycle')));
+});
+
+test('parseAndCheckBatch rejects a bad clarity literal', () => {
+  const r = parseAndCheckBatch(raw({ tasks: [{ ...clearA, clarity: 'maybe' }] }), CTX);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes('clarity')));
+});
+
+test('parseAndCheckBatch still applies full contract checks to clear tasks', () => {
+  const r = parseAndCheckBatch(raw({ tasks: [{ ...clearA, build_ref: 'nope' }] }), CTX);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes('build_ref')));
+});
+
+test('parseAndCheckBatch allows a clear task to depend on an unclear one', () => {
+  const b = { ...clearB, depends_on: ['task-c'] };
+  const r = parseAndCheckBatch(raw({ tasks: [b, unclearC] }), CTX);
+  assert.equal(r.ok, true); // the run gate simply stays unmet until task-c exists and merges
 });
