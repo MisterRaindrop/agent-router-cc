@@ -14,13 +14,15 @@ const digest: RepoDigest = {
   readmeHead: '# demo',
 };
 
-test('buildPlannerPrompt embeds the goal, the legal refs, and the file list', () => {
+test('buildPlannerPrompt asks for a task batch with clarity and depends_on', () => {
   const p = buildPlannerPrompt(digest, 'make a() faster');
   assert.match(p, /make a\(\) faster/);
   assert.match(p, /build, test/); // the legal verification refs
   assert.match(p, /src\/a\.ts/); // repo files
   assert.match(p, /bare "\*\*"/); // the scope constraint is stated
-  assert.match(p, /ONLY a single JSON object/i);
+  assert.match(p, /"tasks"/); // batch envelope
+  assert.match(p, /clarity/);
+  assert.match(p, /depends_on/);
 });
 
 const CTX = { policyRefs: ['build', 'test'], trackedFiles: ['src/a.ts', 'src/b.ts', 'test/a.test.ts'] };
