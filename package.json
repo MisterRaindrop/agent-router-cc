@@ -1,6 +1,6 @@
 {
   "name": "agent-router-cc",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Deterministic task-orchestration CLI + Claude Code plugin (router). LLM produces artifacts; the CLI owns every gate.",
   "type": "module",
   "bin": {

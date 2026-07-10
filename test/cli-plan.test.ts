@@ -43,7 +43,8 @@ test('router plan materializes a DRAFT task from a valid proposal', () => {
     const r = router(dir, ['plan', 'implement slugify', '--json'], { ROUTER_CLAUDE_BIN: FAKE_PLANNER, ROUTER_FAKE_PLAN: 'valid' });
     assert.equal(r.code, 0);
     const out = JSON.parse(r.out);
-    assert.equal(out.id, 'slugify');
+    assert.equal(out.created[0].id, 'slugify');
+    assert.deepEqual(out.handback, []);
     const st = JSON.parse(router(dir, ['status', 'slugify', '--json']).out);
     assert.equal(st.state, 'DRAFT');
   } finally {
@@ -59,6 +60,49 @@ test('router plan rejects a broad-scope proposal and creates no task', () => {
     assert.equal(r.code, 1);
     assert.match(r.out, /too broad/);
     assert.equal(existsSync(`${dir}/.router/tasks/slugify`), false);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('multi-task: plan --execute runs wave 1; dep gate + ready drive wave 2', async () => {
+  chmodSync(FAKE_PLANNER, 0o755);
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.write(
+    dir,
+    '.router/policy.yaml',
+    `schema_version: 1\nworker:\n  kind: codex\nscope:\n  test_globs: ["tests/**"]\n  max_changed_lines: 400\nverification:\n  build:\n    - [${JSON.stringify(NODE)}, "-e", "process.exit(0)"]\n  test:\n    - [${JSON.stringify(NODE)}, "-e", "process.exit(0)"]\n`,
+  );
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CLAUDE_BIN: FAKE_PLANNER, ROUTER_FAKE_PLAN: 'multi', ROUTER_CODEX_BIN: FAKE_CODEX };
+  try {
+    const r = router(dir, ['plan', 'big goal', '--execute', '--json'], env);
+    assert.equal(r.code, 0);
+    // task-b is dep-blocked while task-a is unmerged:
+    const blocked = router(dir, ['run', 'task-b'], env);
+    assert.equal(blocked.code, 1);
+    assert.match(blocked.out, /task-a/);
+    // wave 1 completes:
+    let state = 'RUNNING';
+    for (let i = 0; i < 60; i++) {
+      state = JSON.parse(router(dir, ['status', 'task-a', '--json']).out).state;
+      if (['PASSED', 'FAILED'].includes(state)) break;
+      await sleep(200);
+    }
+    assert.equal(state, 'PASSED', `wave1 expected PASSED, got ${state}`);
+    assert.equal(router(dir, ['merge', 'task-a']).code, 0);
+    // now ready exposes task-b:
+    const readyOut = JSON.parse(router(dir, ['ready', '--json']).out);
+    assert.deepEqual(readyOut.ready, ['task-b']);
+    assert.equal(router(dir, ['run', 'task-b'], env).code, 0);
+    for (let i = 0; i < 60; i++) {
+      state = JSON.parse(router(dir, ['status', 'task-b', '--json']).out).state;
+      if (['PASSED', 'FAILED'].includes(state)) break;
+      await sleep(200);
+    }
+    assert.equal(state, 'PASSED', `wave2 expected PASSED, got ${state}`);
   } finally {
     fx.cleanup(dir);
   }

@@ -44,6 +44,13 @@ export class CapExceededError extends Error {
     this.name = 'CapExceededError';
   }
 }
+/** Thrown by startRun when a task's depends_on are not all MERGED yet. */
+export class DependencyError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'DependencyError';
+  }
+}
 
 /** Extract the enforceable ceilings from a policy (both keys optional). PURE. */
 function capsFromPolicy(policy: Policy): CapsPolicy {
@@ -105,12 +112,19 @@ export function startRun(deps: TransitionDeps, id: string): StartedRun {
   const capVerdict = checkCaps(store.readMetrics(paths), id, caps);
   if (!capVerdict.allowed) throw new CapExceededError(capVerdict.reason ?? 'cap exceeded');
 
+  const { task: taskYaml } = loadTask(paths, id);
+  // Dependency gate: every depends_on must already be MERGED (deterministic).
+  const unmet = (taskYaml.depends_on ?? []).filter((d) => currentState(paths, d)?.state !== 'MERGED');
+  if (unmet.length > 0) {
+    throw new DependencyError(`unmet dependencies (must be MERGED first): ${unmet.join(', ')}`);
+  }
+
   const limit = safeMaxConcurrency(deps);
   const attemptNumber = st.attempt_number + 1;
   const run = fmtRunId(nextRunNumber(deps, id));
   const worktreeDir = paths.worktree(id, run);
   const branch = runBranch(id, run);
-  const maxWallMinutes = loadTask(paths, id).task.max_wall_minutes;
+  const maxWallMinutes = taskYaml.max_wall_minutes;
 
   // Pin to the frozen base_sha; a colliding branch means unclean recovery - fail fast.
   worktreeAdd(paths.repoRoot, worktreeDir, branch, st.base_sha);
