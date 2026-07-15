@@ -336,3 +336,11 @@ export interface HandbackItem {
 export type PlanBatchResult =
   | { ok: true; tasks: ProposedTask[]; handback: HandbackItem[] }
   | { ok: false; errors: string[] };
+
+/** Real remaining-quota snapshot for one executor, read from its local usage source. */
+export interface ExecutorQuota {
+  kind: WorkerKind;
+  used_percent: number; // 0..100 of the most-binding window (higher = less headroom)
+  resets_at: number | null; // unix seconds when the binding window resets, if known
+  available: boolean; // false when a hard limit was hit (reactive 429 / reached_type)
+}
