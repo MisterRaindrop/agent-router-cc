@@ -16,7 +16,7 @@ import { classifyRisk } from '../core/risk.ts';
 import { planMetricRetention, planRunGc, type TaskGcInput } from '../core/gc.ts';
 import { systemClock } from '../io/clock.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
-import { findRouterDir, routerPaths, runBranch, type RouterPaths } from '../io/paths.ts';
+import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import * as store from '../io/store.ts';
 import { createTask, currentState, transition, type TransitionDeps } from '../app/transition.ts';
@@ -26,6 +26,7 @@ import { loadPolicyFromDisk, loadPolicyFromGit } from '../app/policyLoad.ts';
 import { makeLauncher } from '../app/codexLauncher.ts';
 import { planExecutorOrder } from '../app/routing.ts';
 import { runPlan } from '../app/plan.ts';
+import { dispatchTask } from '../app/dispatch.ts';
 import { CapExceededError, DependencyError, runWorkerBody, startRun, updateLease } from '../app/worker.ts';
 import { loadTask } from '../app/taskLoad.ts';
 import { CliError, emit } from './output.ts';
@@ -727,6 +728,56 @@ const plan: Handler = async (ctx) => {
   return rc;
 };
 
+// Simplified synchronous path: dispatch runs one task in the foreground to a verified
+// diff (quota-picked executor); land merges a PASSED dispatch. No state machine.
+const dispatch: Handler = async (ctx) => {
+  const { deps } = depsFor(ctx);
+  const id = requireId(ctx);
+  const result = await dispatchTask(deps, id);
+  const v = result.verifier?.result ?? 'FAILED';
+  emit(
+    ctx.json,
+    {
+      ok: v === 'PASSED',
+      id,
+      executor: result.worker.kind,
+      model: result.worker.model ?? null,
+      verifier: v,
+      exit_class: result.exit_class,
+      tokens: result.tokens ?? null,
+      cost_usd: result.cost_usd ?? null,
+      executor_switches: result.executor_switches ?? 0,
+    },
+    () => {
+      const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
+      const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
+      const next = v === 'PASSED' ? `run \`router land ${id}\` to merge` : `see \`router result ${id}\``;
+      return `${id}: ${v} (executor ${who}${sw}); ${next}`;
+    },
+  );
+  return v === 'PASSED' ? 0 : 1;
+};
+
+const land: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const id = requireId(ctx);
+  const run = fmtRunId(1);
+  const result = store.readResult(paths, id, run);
+  if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)`, 1);
+  if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED`, 1);
+  const branch = runBranch(id, run);
+  try {
+    mergeNoFF(paths.repoRoot, branch);
+  } catch (e) {
+    mergeAbort(paths.repoRoot);
+    throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}`, 1);
+  }
+  worktreeRemove(paths.repoRoot, paths.worktree(id, run));
+  deleteBranch(paths.repoRoot, branch);
+  emit(ctx.json, { ok: true, id, merged: branch }, () => `${id} landed (${branch})`);
+  return 0;
+};
+
 const selftestCmd: Handler = async (ctx) => {
   const { selftest } = await import('../app/selftest.ts');
   const r = await selftest({ keep: flagBool(ctx.args.flags, 'keep') });
@@ -741,6 +792,8 @@ export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
   plan,
+  dispatch,
+  land,
   validate,
   queue,
   run,
@@ -769,6 +822,7 @@ export function helpText(): string {
   return (
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
+    `Simplified: init * plan * dispatch * land   (synchronous; quota-balanced executor)\n` +
     `Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge\n` +
     `Ops:        list * ready * stats * baseline * routing * cancel * gc * recover * reindex * selftest\n\n` +
     `Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,\n` +
