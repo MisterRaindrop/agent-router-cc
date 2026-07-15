@@ -17,7 +17,7 @@ gate.
 | **Correctness**        | you check by hand afterward             | build + tests + scope + secret scan must pass to PASS   |
 | **Where edits land**   | your working tree, immediately          | an isolated worktree; your tree changes only on merge   |
 | **A failed attempt**   | you retry manually                      | escalation ladder: retry -> stronger model -> hand back |
-| **Quota / rate limit** | the run stalls                          | automatic fallover to the next executor                 |
+| **Quota / rate limit** | the run stalls                          | balances codex vs sonnet by real remaining quota, falls over on a hit |
 | **A runaway run**      | burns until you notice                  | wall timeout + stall watchdog + budget caps             |
 | **Secrets in a diff**  | can slip into a commit                  | scanned; a hit fails verification                       |
 | **Cost visibility**    | none                                    | `/router:stats`: tokens, spend, and savings             |
@@ -55,21 +55,22 @@ In the repo you want to work in:
 ```
 
 Commit `.router/` (router reads the policy from git, not the working tree). It works
-out of the box; to make a PASS also mean "your build and tests pass", set your real
-commands under `verification` (see below). Then let the agent do a task:
+out of the box. Then:
 
 ```
-/router:plan implement X in src/     # claude decomposes the goal; router validates -> DRAFT tasks
-/router:ready                        # which tasks can run now (dependencies merged)
-/router:run <id>                     # validate + queue + run in a supervised worker
-/router:status <id>                  # poll until PASSED or FAILED
-/router:result <id>                  # the per-check verifier report
-/router:merge <id>                   # you merge the verified diff (high-risk: /router:approve first)
+/router:go implement X in src/
 ```
 
-A big goal may decompose into several tasks: clear ones are dispatched (optionally to
-a cheaper model via `tiers`), unclear ones come back for discussion, and dependent
-tasks unlock as their prerequisites merge.
+`/router:go` drives the whole loop and pauses at exactly **three points**: (1) confirm
+the decomposition plan, (2) handle any unclear tasks with you directly, (3) review all
+the verified diffs before merge. In between it runs the clear subtasks automatically on the
+**cheaper executor with more remaining quota** (codex vs sonnet), verifies each diff,
+and reports what it did and roughly what it saved. You only plan, decide, and merge.
+
+The primitives it uses are also available directly: `/router:dispatch <id>` (run one
+task synchronously on the quota-picked executor to a verified diff) and
+`/router:land <id>` (merge a PASSED dispatch). To make a PASS also mean "your build and
+tests pass", set your real commands under `verification` (see below).
 
 Prefer to write the contract yourself instead of having claude draft it? Use
 `/router:delegate <id> <description>`. Full walkthrough and the resilience/safety

@@ -2965,7 +2965,7 @@ var VERSION, ROUTER_DIR;
 var init_constants = __esm({
   "src/domain/constants.ts"() {
     "use strict";
-    VERSION = true ? "0.3.0" : "0.0.0-dev";
+    VERSION = true ? "0.4.0" : "0.0.0-dev";
     ROUTER_DIR = ".router";
   }
 });
@@ -10793,52 +10793,6 @@ var init_exitTaxonomy = __esm({
   }
 });
 
-// src/core/caps.ts
-function summarizeSpend(records, taskId) {
-  let attemptsUsed = 0;
-  let costUsd = 0;
-  let tokens = 0;
-  for (const r of records) {
-    if (r.task_id !== taskId) continue;
-    if (countsAsAttempt(r.exit_class)) attemptsUsed += 1;
-    if (r.cost_usd !== null) costUsd += r.cost_usd;
-    tokens += (r.tokens_input ?? 0) + (r.tokens_output ?? 0);
-  }
-  return { attemptsUsed, costUsd, tokens };
-}
-function checkCaps(records, taskId, caps) {
-  const usage = summarizeSpend(records, taskId);
-  const maxAttempts = caps.max_attempts;
-  if (maxAttempts !== void 0 && usage.attemptsUsed >= maxAttempts) {
-    return {
-      allowed: false,
-      reason: `attempt cap reached (${usage.attemptsUsed}/${maxAttempts} attempts consumed)`
-    };
-  }
-  const budget = caps.budget_caps;
-  if (budget !== void 0) {
-    if (budget.max_cost_usd !== void 0 && usage.costUsd >= budget.max_cost_usd) {
-      return {
-        allowed: false,
-        reason: `budget cap reached (cost $${usage.costUsd.toFixed(4)} >= $${budget.max_cost_usd.toFixed(4)})`
-      };
-    }
-    if (budget.max_tokens !== void 0 && usage.tokens >= budget.max_tokens) {
-      return {
-        allowed: false,
-        reason: `budget cap reached (${usage.tokens} tokens >= ${budget.max_tokens})`
-      };
-    }
-  }
-  return { allowed: true };
-}
-var init_caps = __esm({
-  "src/core/caps.ts"() {
-    "use strict";
-    init_exitTaxonomy();
-  }
-});
-
 // src/io/env.ts
 function buildWorkerEnv(source, extraKeys = []) {
   const out2 = {};
@@ -10858,17 +10812,17 @@ var init_env = __esm({
 
 // src/io/supervisor.ts
 import { spawn } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync5, writeFileSync as writeFileSync4 } from "node:fs";
-import { dirname as dirname5, join as join5 } from "node:path";
+import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { dirname as dirname5, join as join6 } from "node:path";
 function activitySignal(logPath, watchDir) {
   let sig = 0;
   try {
-    sig += statSync5(logPath).size;
+    sig += statSync6(logPath).size;
   } catch {
   }
-  for (const p of [watchDir, join5(watchDir, ".git")]) {
+  for (const p of [watchDir, join6(watchDir, ".git")]) {
     try {
-      sig += Math.floor(statSync5(p).mtimeMs);
+      sig += Math.floor(statSync6(p).mtimeMs);
     } catch {
     }
   }
@@ -10980,12 +10934,12 @@ var init_supervisor = __esm({
 });
 
 // src/app/taskLoad.ts
-import { readFileSync as readFileSync6 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 function loadTask(paths, id) {
-  const taskYamlText = readFileSync6(paths.taskYaml(id), "utf8");
+  const taskYamlText = readFileSync7(paths.taskYaml(id), "utf8");
   let contractMdText = "";
   try {
-    contractMdText = readFileSync6(paths.contractMd(id), "utf8");
+    contractMdText = readFileSync7(paths.contractMd(id), "utf8");
   } catch {
     contractMdText = "";
   }
@@ -11198,7 +11152,7 @@ var init_proc = __esm({
 // src/app/verifier.ts
 import { mkdtempSync, rmSync as rmSync3 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 function fail(id, detail, rc) {
   return rc !== void 0 ? { id, ok: false, detail, rc } : { id, ok: false, detail };
 }
@@ -11232,7 +11186,7 @@ function verify(req) {
     checks.push(fail("diff_applies", "diff is empty - worker produced no committed change"));
     return { result: "FAILED", checks };
   }
-  const tmpBase = mkdtempSync(join6(tmpdir(), "router-verify-base-"));
+  const tmpBase = mkdtempSync(join7(tmpdir(), "router-verify-base-"));
   let applies;
   try {
     worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
@@ -11290,9 +11244,55 @@ var init_verifier = __esm({
   }
 });
 
+// src/core/caps.ts
+function summarizeSpend(records, taskId) {
+  let attemptsUsed = 0;
+  let costUsd = 0;
+  let tokens = 0;
+  for (const r of records) {
+    if (r.task_id !== taskId) continue;
+    if (countsAsAttempt(r.exit_class)) attemptsUsed += 1;
+    if (r.cost_usd !== null) costUsd += r.cost_usd;
+    tokens += (r.tokens_input ?? 0) + (r.tokens_output ?? 0);
+  }
+  return { attemptsUsed, costUsd, tokens };
+}
+function checkCaps(records, taskId, caps) {
+  const usage = summarizeSpend(records, taskId);
+  const maxAttempts = caps.max_attempts;
+  if (maxAttempts !== void 0 && usage.attemptsUsed >= maxAttempts) {
+    return {
+      allowed: false,
+      reason: `attempt cap reached (${usage.attemptsUsed}/${maxAttempts} attempts consumed)`
+    };
+  }
+  const budget = caps.budget_caps;
+  if (budget !== void 0) {
+    if (budget.max_cost_usd !== void 0 && usage.costUsd >= budget.max_cost_usd) {
+      return {
+        allowed: false,
+        reason: `budget cap reached (cost $${usage.costUsd.toFixed(4)} >= $${budget.max_cost_usd.toFixed(4)})`
+      };
+    }
+    if (budget.max_tokens !== void 0 && usage.tokens >= budget.max_tokens) {
+      return {
+        allowed: false,
+        reason: `budget cap reached (${usage.tokens} tokens >= ${budget.max_tokens})`
+      };
+    }
+  }
+  return { allowed: true };
+}
+var init_caps = __esm({
+  "src/core/caps.ts"() {
+    "use strict";
+    init_exitTaxonomy();
+  }
+});
+
 // src/app/worker.ts
-import { createHash as createHash2 } from "node:crypto";
-import { readFileSync as readFileSync7, writeFileSync as writeFileSync5 } from "node:fs";
+import { createHash as createHash3 } from "node:crypto";
+import { readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
 import { hostname as hostname3 } from "node:os";
 function capsFromPolicy(policy) {
   return {
@@ -11394,7 +11394,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   let switches = 0;
   for (let i = 0; i < chain.length; i++) {
     used = chain[i];
-    if (i > 0) writeFileSync5(logPath, "");
+    if (i > 0) writeFileSync6(logPath, "");
     outcome = await superviseWorker({
       argv: used.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
       cwd: worktreeDir,
@@ -11406,7 +11406,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
       stallMs: (workersList[i]?.stall_minutes ?? policyGit.worker?.stall_minutes ?? 10) * 6e4,
       onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
     });
-    exitClass = reclassifyQuota(outcome.exitClass, safeRead(logPath), policyGit.quota_error_pattern);
+    exitClass = reclassifyQuota(outcome.exitClass, safeRead2(logPath), policyGit.quota_error_pattern);
     if (exitClass === "quota_exhausted") {
       appendRouting(paths, { ts: clock.nowIso(), kind: used.kind, task_id: id, run_id: runId2 });
     }
@@ -11418,7 +11418,7 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
     break;
   }
   if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
-  const parsed = (used.parseLog ?? parseCodexLog)(safeRead(logPath));
+  const parsed = (used.parseLog ?? parseCodexLog)(safeRead2(logPath));
   const usage = parsed.usage;
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? (usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null);
@@ -11443,8 +11443,8 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   if (exitClass === "ok") {
     transition(deps, id, "VERIFYING", { actor: "router:worker", runId: runId2 });
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync5(paths.diffPatch(id, runId2), patch);
-    result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
+    writeFileSync6(paths.diffPatch(id, runId2), patch);
+    result2.diff_sha = createHash3("sha256").update(patch).digest("hex");
     const report = verify({
       repoRoot: paths.repoRoot,
       worktreeDir,
@@ -11453,8 +11453,8 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
       policy: policyGit,
       task,
       frozenContractHash: contractHash,
-      taskYamlText: readFileSync7(paths.taskYaml(id), "utf8"),
-      contractMdText: safeRead(paths.contractMd(id)),
+      taskYamlText: readFileSync9(paths.taskYaml(id), "utf8"),
+      contractMdText: safeRead2(paths.contractMd(id)),
       env
     });
     result2.verifier = report;
@@ -11487,9 +11487,9 @@ async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = [])
   }
   return result2;
 }
-function safeRead(path) {
+function safeRead2(path) {
   try {
-    return readFileSync7(path, "utf8");
+    return readFileSync9(path, "utf8");
   } catch {
     return "";
   }
@@ -11566,9 +11566,9 @@ __export(selftest_exports, {
   selftest: () => selftest
 });
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync4, writeFileSync as writeFileSync7 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { join as join7 } from "node:path";
+import { join as join9 } from "node:path";
 function gitInit(dir) {
   const run2 = (args) => {
     execFileSync3("git", args, { cwd: dir, stdio: "ignore" });
@@ -11579,18 +11579,18 @@ function gitInit(dir) {
   run2(["config", "commit.gpgsign", "false"]);
 }
 function makeSandbox() {
-  const repo = mkdtempSync2(join7(tmpdir2(), "router-selftest-"));
+  const repo = mkdtempSync2(join9(tmpdir2(), "router-selftest-"));
   gitInit(repo);
-  mkdirSync5(join7(repo, "src"), { recursive: true });
-  writeFileSync6(join7(repo, "src", "a.ts"), "export const x = 1;\n");
-  mkdirSync5(join7(repo, "tests"), { recursive: true });
-  writeFileSync6(join7(repo, "tests", "t.test.ts"), "ok\n");
-  mkdirSync5(join7(repo, ".router"), { recursive: true });
-  writeFileSync6(join7(repo, ".router", "policy.yaml"), POLICY);
-  writeFileSync6(join7(repo, ".gitignore"), ".router/worktrees/\n");
+  mkdirSync5(join9(repo, "src"), { recursive: true });
+  writeFileSync7(join9(repo, "src", "a.ts"), "export const x = 1;\n");
+  mkdirSync5(join9(repo, "tests"), { recursive: true });
+  writeFileSync7(join9(repo, "tests", "t.test.ts"), "ok\n");
+  mkdirSync5(join9(repo, ".router"), { recursive: true });
+  writeFileSync7(join9(repo, ".router", "policy.yaml"), POLICY);
+  writeFileSync7(join9(repo, ".gitignore"), ".router/worktrees/\n");
   execFileSync3("git", ["add", "-A"], { cwd: repo, stdio: "ignore" });
   execFileSync3("git", ["commit", "-q", "-m", "base"], { cwd: repo, stdio: "ignore" });
-  const paths = routerPaths(join7(repo, ".router"));
+  const paths = routerPaths(join9(repo, ".router"));
   return { repo, deps: { paths, clock: systemClock }, paths };
 }
 function taskYaml(id, allowed) {
@@ -11607,8 +11607,8 @@ test_ref: test
 function validateQueue(deps, repo, id, yamlText) {
   const base = resolveCommit(repo, "HEAD");
   mkdirSync5(deps.paths.taskDir(id), { recursive: true });
-  writeFileSync6(deps.paths.taskYaml(id), yamlText);
-  writeFileSync6(deps.paths.contractMd(id), CONTRACT);
+  writeFileSync7(deps.paths.taskYaml(id), yamlText);
+  writeFileSync7(deps.paths.contractMd(id), CONTRACT);
   const hash = hashContract(yamlText, CONTRACT);
   createTask(deps, id, id);
   transition(deps, id, "VALIDATED", { actor: "selftest", meta: { base_sha: base, contract_hash: hash } });
@@ -11759,8 +11759,8 @@ init_js_yaml();
 init_constants();
 init_validate();
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync7, mkdirSync as mkdirSync6, readFileSync as readFileSync8, writeFileSync as writeFileSync7 } from "node:fs";
-import { join as join8 } from "node:path";
+import { existsSync as existsSync8, mkdirSync as mkdirSync6, readFileSync as readFileSync10, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join10 } from "node:path";
 
 // src/core/stats.ts
 function summarizeBaseline(records) {
@@ -12429,6 +12429,259 @@ function runPlan(deps, goal, opts = {}) {
   return { ok: true, created, handback: checked.handback, truncated: tracked.truncated };
 }
 
+// src/app/dispatch.ts
+import { createHash as createHash2 } from "node:crypto";
+import { readFileSync as readFileSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { homedir } from "node:os";
+import { join as join8 } from "node:path";
+
+// src/core/pickExecutor.ts
+function pickExecutor(quotas) {
+  const available = quotas.filter((q) => q.available);
+  if (available.length === 0) return null;
+  let best = available[0];
+  for (const q of available.slice(1)) {
+    if (q.used_percent < best.used_percent) best = q;
+    else if (q.used_percent === best.used_percent) {
+      const qr = q.resets_at ?? Infinity;
+      const br = best.resets_at ?? Infinity;
+      if (qr < br) best = q;
+    }
+  }
+  return best.kind;
+}
+
+// src/app/dispatch.ts
+init_exitTaxonomy();
+init_contractHash();
+init_git();
+init_env();
+init_paths();
+
+// src/io/quota.ts
+import { existsSync as existsSync6, readFileSync as readFileSync6, readdirSync as readdirSync2, statSync as statSync5 } from "node:fs";
+import { join as join5 } from "node:path";
+function walkJsonl(dir) {
+  let out2 = [];
+  let entries;
+  try {
+    entries = readdirSync2(dir);
+  } catch {
+    return out2;
+  }
+  for (const name of entries) {
+    const p = join5(dir, name);
+    let s;
+    try {
+      s = statSync5(p);
+    } catch {
+      continue;
+    }
+    if (s.isDirectory()) out2 = out2.concat(walkJsonl(p));
+    else if (name.endsWith(".jsonl")) out2.push(p);
+  }
+  return out2;
+}
+function findRateLimits(x) {
+  if (x === null || typeof x !== "object") return null;
+  const obj = x;
+  if (obj["rate_limits"] && typeof obj["rate_limits"] === "object") return obj["rate_limits"];
+  for (const k of Object.keys(obj)) {
+    const r = findRateLimits(obj[k]);
+    if (r) return r;
+  }
+  return null;
+}
+function readCodexQuota(sessionsDir) {
+  const files = walkJsonl(sessionsDir).sort();
+  const newest = files.at(-1);
+  if (newest === void 0) return null;
+  let lines;
+  try {
+    lines = readFileSync6(newest, "utf8").split("\n");
+  } catch {
+    return null;
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ln = lines[i];
+    if (!ln.includes("rate_limits")) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(ln);
+    } catch {
+      continue;
+    }
+    const rl = findRateLimits(parsed);
+    if (rl === null) continue;
+    const windows = [rl.primary, rl.secondary].filter((w) => w != null);
+    if (windows.length === 0) continue;
+    let binding = windows[0];
+    for (const w of windows.slice(1)) if ((w.used_percent ?? 0) > (binding.used_percent ?? 0)) binding = w;
+    const used = binding.used_percent ?? 0;
+    return {
+      kind: "codex",
+      used_percent: used,
+      resets_at: binding.resets_at ?? null,
+      available: (rl.rate_limit_reached_type ?? null) === null && used < 100
+    };
+  }
+  return null;
+}
+function readClaudeQuota(usageJsonPath) {
+  if (!existsSync6(usageJsonPath)) return null;
+  let o;
+  try {
+    o = JSON.parse(readFileSync6(usageJsonPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof o.used_percent !== "number") return null;
+  return {
+    kind: "claude",
+    used_percent: o.used_percent,
+    resets_at: typeof o.resets_at === "number" ? o.resets_at : null,
+    available: o.reached !== true && o.used_percent < 100
+  };
+}
+
+// src/app/dispatch.ts
+init_store();
+init_supervisor();
+init_policyLoad();
+init_taskLoad();
+init_usage();
+init_verifier();
+var RUN = runId(1);
+function quotaFor(paths, kind) {
+  if (kind === "codex") {
+    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join8(homedir(), ".codex", "sessions");
+    return readCodexQuota(dir);
+  }
+  return readClaudeQuota(join8(paths.root, "usage.json"));
+}
+function orderByQuota(paths, workers) {
+  const quotas = workers.map((w) => quotaFor(paths, w.kind)).filter((q) => q !== null);
+  const picked = quotas.length > 0 ? pickExecutor(quotas) : null;
+  if (picked === null) return { order: [...workers], quotas };
+  const order = [...workers].sort((a, b) => a.kind === picked ? -1 : b.kind === picked ? 1 : 0);
+  return { order, quotas };
+}
+async function dispatchTask(deps, id) {
+  const { paths, clock } = deps;
+  const baseSha = resolveCommit(paths.repoRoot, "HEAD");
+  const { task, contractMdText } = loadTask(paths, id);
+  const taskYamlText = readFileSync8(paths.taskYaml(id), "utf8");
+  const contractHash = hashContract(taskYamlText, contractMdText);
+  const policy = loadPolicyFromGit(paths, baseSha);
+  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
+  if (workers.length === 0) throw new Error(`task ${id}: policy defines no worker/workers`);
+  const worktreeDir = paths.worktree(id, RUN);
+  const branch = runBranch(id, RUN);
+  worktreeRemove(paths.repoRoot, worktreeDir);
+  deleteBranch(paths.repoRoot, branch);
+  worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
+  const apiKeyEnvs = [...new Set(workers.map((w) => w.api_key_env).filter((v) => Boolean(v)))];
+  const env = buildWorkerEnv(process.env, apiKeyEnvs);
+  const logPath = paths.workerLog(id, RUN);
+  const { order } = orderByQuota(paths, workers);
+  let used = order[0];
+  let exitClass = "task_failed";
+  let outcome = { rc: null, timedOut: false, stalled: false, startedAtMs: 0, endedAtMs: 0 };
+  let switches = 0;
+  for (let i = 0; i < order.length; i++) {
+    used = order[i];
+    if (i > 0) writeFileSync5(logPath, "");
+    const launcher2 = makeLauncher(used);
+    const o = await superviseWorker({
+      argv: launcher2.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
+      cwd: worktreeDir,
+      env,
+      logPath,
+      heartbeatPath: paths.heartbeat(id, RUN),
+      watchDir: worktreeDir,
+      maxWallMs: task.max_wall_minutes * 6e4,
+      stallMs: (used.stall_minutes ?? 10) * 6e4
+    });
+    outcome = o;
+    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath), policy.quota_error_pattern);
+    if (exitClass === "quota_exhausted" && i < order.length - 1) {
+      switches += 1;
+      resetHard(worktreeDir, baseSha);
+      continue;
+    }
+    break;
+  }
+  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${RUN}`);
+  const launcher = makeLauncher(used);
+  const parsed = (launcher.parseLog ?? parseCodexLog)(safeRead(logPath));
+  const model = parsed.model ?? used.model;
+  const costUsd = parsed.costUsd ?? (parsed.usage !== null ? estimateCostUsd(parsed.usage, resolvePrice(policy, model, process.env)) : null);
+  const result2 = {
+    run_id: RUN,
+    task_id: id,
+    attempt_number: 1,
+    exit_class: exitClass,
+    rc: outcome.rc,
+    timed_out: outcome.timedOut,
+    stalled: outcome.stalled,
+    env_error: exitClass === "env_error",
+    started_at: new Date(outcome.startedAtMs).toISOString(),
+    ended_at: new Date(outcome.endedAtMs).toISOString(),
+    wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
+    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    ...switches > 0 ? { executor_switches: switches } : {},
+    ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
+    ...costUsd !== null ? { cost_usd: costUsd } : {}
+  };
+  if (exitClass === "ok") {
+    const patch = rawDiff(worktreeDir, baseSha, "HEAD");
+    writeFileSync5(paths.diffPatch(id, RUN), patch);
+    result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
+    result2.verifier = verify({
+      repoRoot: paths.repoRoot,
+      worktreeDir,
+      baseSha,
+      head: "HEAD",
+      policy,
+      task,
+      frozenContractHash: contractHash,
+      taskYamlText,
+      contractMdText,
+      env
+    });
+  }
+  writeResult(paths, id, RUN, result2);
+  appendMetric2(deps, result2);
+  return result2;
+}
+function safeRead(path) {
+  try {
+    return readFileSync8(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+function appendMetric2(deps, result2) {
+  const metric = {
+    ts: deps.clock.nowIso(),
+    task_id: result2.task_id,
+    run_id: result2.run_id,
+    attempt_number: 1,
+    model: result2.worker.model ?? null,
+    executor: result2.worker.kind,
+    exit_class: result2.exit_class,
+    verifier_result: result2.verifier?.result ?? null,
+    first_pass: result2.verifier?.result === "PASSED",
+    tokens_input: result2.tokens?.input ?? null,
+    tokens_output: result2.tokens?.output ?? null,
+    cost_usd: result2.cost_usd ?? null,
+    wall_seconds: result2.wall_seconds,
+    escalated: false,
+    env_error: result2.env_error
+  };
+  appendMetric(deps.paths, metric);
+}
+
 // src/cli/commands.ts
 init_worker();
 init_taskLoad();
@@ -12459,7 +12712,7 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const rd = explicit ?? findRouterDir(ctx.cwd);
-  if (rd === void 0 || rd === null || !existsSync7(rd)) {
+  if (rd === void 0 || rd === null || !existsSync8(rd)) {
     throw new CliError("no .router found - run `router init` first", 3);
   }
   const paths = routerPaths(rd);
@@ -12550,22 +12803,22 @@ function taskTemplate(id, title) {
   );
 }
 var init = (ctx) => {
-  const root = join8(ctx.cwd, ROUTER_DIR);
+  const root = join10(ctx.cwd, ROUTER_DIR);
   const force = flagBool(ctx.args.flags, "force");
   const paths = routerPaths(root);
   const created = [];
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir, paths.contextDir]) {
-    if (!existsSync7(d)) {
+    if (!existsSync8(d)) {
       mkdirSync6(d, { recursive: true });
       created.push(d);
     }
   }
-  if (!existsSync7(paths.policy) || force) writeFileSync7(paths.policy, POLICY_TEMPLATE);
-  if (!existsSync7(paths.registry)) {
+  if (!existsSync8(paths.policy) || force) writeFileSync8(paths.policy, POLICY_TEMPLATE);
+  if (!existsSync8(paths.registry)) {
     writeRegistry(paths, { schema_version: 1, rebuilt_at: systemClock.nowIso(), tasks: {} });
   }
-  const gi = join8(paths.root, ".gitignore");
-  if (!existsSync7(gi)) writeFileSync7(gi, "worktrees/\n");
+  const gi = join10(paths.root, ".gitignore");
+  if (!existsSync8(gi)) writeFileSync8(gi, "worktrees/\n");
   emit(ctx.json, { ok: true, root: paths.root, created }, () => `initialized ${paths.root}`);
   return 0;
 };
@@ -12574,9 +12827,9 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   createTask(deps, id, title);
-  if (!existsSync7(paths.taskYaml(id))) writeFileSync7(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync7(paths.contractMd(id))) writeFileSync7(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
-  if (!existsSync7(paths.planMd(id))) writeFileSync7(paths.planMd(id), `# Plan: ${title}
+  if (!existsSync8(paths.taskYaml(id))) writeFileSync8(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync8(paths.contractMd(id))) writeFileSync8(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
+  if (!existsSync8(paths.planMd(id))) writeFileSync8(paths.planMd(id), `# Plan: ${title}
 `);
   emit(
     ctx.json,
@@ -12590,7 +12843,7 @@ var validate = (ctx) => {
   const id = requireId(ctx);
   const st = currentState(paths, id);
   if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  const yamlText0 = readFileSync8(paths.taskYaml(id), "utf8");
+  const yamlText0 = readFileSync10(paths.taskYaml(id), "utf8");
   const parsed = validateTaskYaml(load(yamlText0, { schema: JSON_SCHEMA }));
   if (!parsed.ok || parsed.value === null) {
     throw new CliError(`invalid task.yaml: ${parsed.errors.join("; ")}`, 1);
@@ -12599,8 +12852,8 @@ var validate = (ctx) => {
   const baseSha = resolveCommit(repoRoot, parsed.value.base_sha ?? "HEAD");
   const frozenTask = { ...parsed.value, base_sha: baseSha };
   const yamlText = dump(frozenTask, { lineWidth: 120 });
-  writeFileSync7(paths.taskYaml(id), yamlText);
-  const contractText = existsSync7(paths.contractMd(id)) ? readFileSync8(paths.contractMd(id), "utf8") : "";
+  writeFileSync8(paths.taskYaml(id), yamlText);
+  const contractText = existsSync8(paths.contractMd(id)) ? readFileSync10(paths.contractMd(id), "utf8") : "";
   const contractHash = hashContract(yamlText, contractText);
   const policy = loadPolicyFromGit(paths, baseSha);
   for (const ref of [frozenTask.build_ref, frozenTask.test_ref]) {
@@ -12782,7 +13035,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} ${run2}`, 3);
   let tail = "";
   try {
-    tail = readFileSync8(paths.workerLog(id, run2), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync10(paths.workerLog(id, run2), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -13075,6 +13328,52 @@ var plan = async (ctx) => {
   }
   return rc;
 };
+var dispatch = async (ctx) => {
+  const { deps } = depsFor(ctx);
+  const id = requireId(ctx);
+  const result2 = await dispatchTask(deps, id);
+  const v = result2.verifier?.result ?? "FAILED";
+  emit(
+    ctx.json,
+    {
+      ok: v === "PASSED",
+      id,
+      executor: result2.worker.kind,
+      model: result2.worker.model ?? null,
+      verifier: v,
+      exit_class: result2.exit_class,
+      tokens: result2.tokens ?? null,
+      cost_usd: result2.cost_usd ?? null,
+      executor_switches: result2.executor_switches ?? 0
+    },
+    () => {
+      const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
+      const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
+      const next = v === "PASSED" ? `run \`router land ${id}\` to merge` : `see \`router result ${id}\``;
+      return `${id}: ${v} (executor ${who}${sw}); ${next}`;
+    }
+  );
+  return v === "PASSED" ? 0 : 1;
+};
+var land = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const id = requireId(ctx);
+  const run2 = runId(1);
+  const result2 = readResult(paths, id, run2);
+  if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)`, 1);
+  if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED`, 1);
+  const branch = runBranch(id, run2);
+  try {
+    mergeNoFF(paths.repoRoot, branch);
+  } catch (e) {
+    mergeAbort(paths.repoRoot);
+    throw new CliError(`merge failed (aborted, tree restored): ${e.message}`, 1);
+  }
+  worktreeRemove(paths.repoRoot, paths.worktree(id, run2));
+  deleteBranch(paths.repoRoot, branch);
+  emit(ctx.json, { ok: true, id, merged: branch }, () => `${id} landed (${branch})`);
+  return 0;
+};
 var selftestCmd = async (ctx) => {
   const { selftest: selftest2 } = await Promise.resolve().then(() => (init_selftest(), selftest_exports));
   const r = await selftest2({ keep: flagBool(ctx.args.flags, "keep") });
@@ -13090,6 +13389,8 @@ var HANDLERS = {
   init,
   new: newTask,
   plan,
+  dispatch,
+  land,
   validate,
   queue,
   run,
@@ -13117,6 +13418,7 @@ function helpText() {
 
 Usage: router <command> [options]
 
+Simplified: init * plan * dispatch * land   (synchronous; quota-balanced executor)
 Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge
 Ops:        list * ready * stats * baseline * routing * cancel * gc * recover * reindex * selftest
 
