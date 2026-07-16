@@ -77,7 +77,9 @@ no secrets" -- give a real command to make PASS mean "your tests pass".
 ## Real-quota routing
 
 router routes each task to the executor with more remaining quota. codex usage is read
-from `~/.codex/sessions`; for claude, point your statusline at
-`statusline/router-usage.mjs` (it snapshots usage to `.router/usage.json` and chains
-your existing statusline via `ROUTER_INNER_STATUSLINE`). Without the statusline, routing
-uses codex quota + a reactive 429 fallover -- still correct.
+from `~/.codex/sessions`; for claude, run `/router:setup-statusline` once -- it wires
+`statusline/router-usage.mjs` into your `~/.claude/settings.json` (snapshotting usage to
+`.router/usage.json`) and chains any existing statusline via `ROUTER_INNER_STATUSLINE`,
+so your current HUD keeps rendering. This is the same mechanism claude-hud uses; restart
+Claude Code afterward. Without it, routing uses codex quota + a reactive 429 fallover --
+still correct, just less balanced on the claude side.

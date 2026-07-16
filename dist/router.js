@@ -2982,7 +2982,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3009,7 +3009,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3640,7 +3640,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -3898,7 +3898,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -6585,7 +6585,9 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "cost-usd",
   "wall",
   "model",
-  "keep-metrics"
+  "keep-metrics",
+  "settings",
+  "statusline"
 ]);
 function parseArgs(argv) {
   const verb = argv[0];
@@ -6630,7 +6632,9 @@ function flagBool(flags, key) {
 
 // src/cli/commands.ts
 import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join7 } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir as homedir2 } from "node:os";
+import { dirname as dirname5, join as join7, resolve as resolve2 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -9545,7 +9549,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.5.0" : "0.0.0-dev";
+var VERSION = true ? "0.6.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9553,6 +9557,53 @@ var systemClock = {
   nowIso: () => (/* @__PURE__ */ new Date()).toISOString(),
   monotonicMs: () => performance.now()
 };
+
+// src/io/atomicWrite.ts
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  unlinkSync,
+  writeSync
+} from "node:fs";
+import { dirname, join } from "node:path";
+var counter = 0;
+function tmpPath(target) {
+  counter += 1;
+  return join(dirname(target), `.tmp.${process.pid}.${counter}.${target.length}`);
+}
+function writeFileAtomic(target, data) {
+  mkdirSync(dirname(target), { recursive: true });
+  const tmp = tmpPath(target);
+  const fd = openSync(tmp, "wx");
+  try {
+    writeSync(fd, data);
+    fsyncSync(fd);
+  } catch (err2) {
+    closeSync(fd);
+    try {
+      unlinkSync(tmp);
+    } catch {
+    }
+    throw err2;
+  }
+  closeSync(fd);
+  try {
+    renameSync(tmp, target);
+  } catch (err2) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+    }
+    throw err2;
+  }
+}
+function writeJsonAtomic(target, value) {
+  writeFileAtomic(target, `${JSON.stringify(value, null, 2)}
+`);
+}
 
 // src/io/git.ts
 import { execFileSync } from "node:child_process";
@@ -9703,7 +9754,7 @@ function deleteBranch(cwd, branch) {
 
 // src/io/paths.ts
 import { existsSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname as dirname2, join as join2, resolve } from "node:path";
 function runId(n) {
   return `run-${String(n).padStart(3, "0")}`;
 }
@@ -9712,32 +9763,32 @@ function runBranch(id, run) {
 }
 function routerPaths(routerDir) {
   const root = resolve(routerDir);
-  const tasksDir = join(root, "tasks");
-  const taskDir = (id) => join(tasksDir, id);
-  const runDir = (id, run) => join(taskDir(id), "runs", run);
+  const tasksDir = join2(root, "tasks");
+  const taskDir = (id) => join2(tasksDir, id);
+  const runDir = (id, run) => join2(taskDir(id), "runs", run);
   return {
     root,
-    repoRoot: dirname(root),
-    metrics: join(root, "metrics.jsonl"),
+    repoRoot: dirname2(root),
+    metrics: join2(root, "metrics.jsonl"),
     tasksDir,
-    worktreesDir: join(root, "worktrees"),
+    worktreesDir: join2(root, "worktrees"),
     taskDir,
-    taskYaml: (id) => join(taskDir(id), "task.yaml"),
-    contractMd: (id) => join(taskDir(id), "TASK_CONTRACT.md"),
-    runsDir: (id) => join(taskDir(id), "runs"),
-    heartbeat: (id, run) => join(runDir(id, run), "heartbeat"),
-    resultJson: (id, run) => join(runDir(id, run), "result.json"),
-    diffPatch: (id, run) => join(runDir(id, run), "diff.patch"),
-    workerLog: (id, run) => join(runDir(id, run), "logs", "worker.log"),
-    worktree: (id, run) => join(root, "worktrees", id, run)
+    taskYaml: (id) => join2(taskDir(id), "task.yaml"),
+    contractMd: (id) => join2(taskDir(id), "TASK_CONTRACT.md"),
+    runsDir: (id) => join2(taskDir(id), "runs"),
+    heartbeat: (id, run) => join2(runDir(id, run), "heartbeat"),
+    resultJson: (id, run) => join2(runDir(id, run), "result.json"),
+    diffPatch: (id, run) => join2(runDir(id, run), "diff.patch"),
+    workerLog: (id, run) => join2(runDir(id, run), "logs", "worker.log"),
+    worktree: (id, run) => join2(root, "worktrees", id, run)
   };
 }
 function findRouterDir(startDir) {
   let dir = resolve(startDir);
   for (; ; ) {
-    const candidate = join(dir, ROUTER_DIR);
+    const candidate = join2(dir, ROUTER_DIR);
     if (existsSync(candidate) && statSync(candidate).isDirectory()) return candidate;
-    const parent = dirname(dir);
+    const parent = dirname2(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -9745,53 +9796,6 @@ function findRouterDir(startDir) {
 
 // src/io/store.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
-
-// src/io/atomicWrite.ts
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  renameSync,
-  unlinkSync,
-  writeSync
-} from "node:fs";
-import { dirname as dirname2, join as join2 } from "node:path";
-var counter = 0;
-function tmpPath(target) {
-  counter += 1;
-  return join2(dirname2(target), `.tmp.${process.pid}.${counter}.${target.length}`);
-}
-function writeFileAtomic(target, data) {
-  mkdirSync(dirname2(target), { recursive: true });
-  const tmp = tmpPath(target);
-  const fd = openSync(tmp, "wx");
-  try {
-    writeSync(fd, data);
-    fsyncSync(fd);
-  } catch (err2) {
-    closeSync(fd);
-    try {
-      unlinkSync(tmp);
-    } catch {
-    }
-    throw err2;
-  }
-  closeSync(fd);
-  try {
-    renameSync(tmp, target);
-  } catch (err2) {
-    try {
-      unlinkSync(tmp);
-    } catch {
-    }
-    throw err2;
-  }
-}
-function writeJsonAtomic(target, value) {
-  writeFileAtomic(target, `${JSON.stringify(value, null, 2)}
-`);
-}
 
 // src/io/jsonl.ts
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync } from "node:fs";
@@ -9993,7 +9997,7 @@ function superviseWorker(spec) {
   const heartbeatIntervalMs = spec.heartbeatIntervalMs ?? 2e4;
   const pollIntervalMs = spec.pollIntervalMs ?? 1e3;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 1e4;
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     mkdirSync3(dirname4(spec.logPath), { recursive: true });
     mkdirSync3(dirname4(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
@@ -10031,7 +10035,7 @@ function superviseWorker(spec) {
         exitCode: o.rc,
         signal: o.signal
       });
-      resolve2({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
+      resolve3({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
     };
     child.on("error", (err2) => {
       finish({ rc: null, signal: null, timedOut: false, stalled: false, spawnError: err2.message });
@@ -10682,6 +10686,27 @@ function appendMetric2(deps, result2) {
   appendMetric(deps.paths, metric);
 }
 
+// src/core/statuslineSetup.ts
+var MARKER = "router-usage.mjs";
+function shQuote(s) {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+function planStatusLine(existingCommand, statuslinePath) {
+  const wrapped = `node ${shQuote(statuslinePath)}`;
+  const current = existingCommand?.trim();
+  if (current === void 0 || current === "") {
+    return { command: wrapped, action: "created", inner: null };
+  }
+  if (current.includes(MARKER)) {
+    return { command: current, action: "already-configured", inner: null };
+  }
+  return {
+    command: `ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`,
+    action: "chained",
+    inner: current
+  };
+}
+
 // src/cli/output.ts
 function out(s) {
   process.stdout.write(`${s}
@@ -10839,12 +10864,59 @@ ${tail}`;
   });
   return 0;
 };
+var setupStatusline = (ctx) => {
+  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join7(homedir2(), ".claude", "settings.json");
+  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve2(dirname5(fileURLToPath(import.meta.url)), "..", "statusline", "router-usage.mjs");
+  const dryRun = flagBool(ctx.args.flags, "dry-run");
+  let settings = {};
+  if (existsSync6(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync6(settingsPath, "utf8"));
+    } catch (e) {
+      throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
+    }
+  }
+  const current = settings.statusLine;
+  const existingCmd = typeof current?.command === "string" ? current.command : void 0;
+  const plan = planStatusLine(existingCmd, statuslinePath);
+  const changed = plan.action !== "already-configured";
+  if (changed && !dryRun) {
+    settings.statusLine = { type: "command", command: plan.command };
+    writeJsonAtomic(settingsPath, settings);
+  }
+  const missing = !existsSync6(statuslinePath);
+  emit(
+    ctx.json,
+    {
+      ok: true,
+      action: plan.action,
+      settings: settingsPath,
+      statusline: statuslinePath,
+      command: plan.command,
+      chained: plan.inner,
+      dry_run: dryRun,
+      statusline_exists: !missing
+    },
+    () => {
+      const head = plan.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${plan.action} statusLine in ${settingsPath}` : `${plan.action} statusLine in ${settingsPath}`;
+      const chain = plan.inner ? `
+  chained your existing statusline: ${plan.inner}` : "";
+      const warn = missing ? `
+  WARNING: ${statuslinePath} not found (pass --statusline <path>)` : "";
+      const note = changed && !dryRun ? "\n  restart Claude Code (or reload) for it to take effect" : "";
+      return `${head}
+  command: ${plan.command}${chain}${warn}${note}`;
+    }
+  );
+  return 0;
+};
 var HANDLERS = {
   init,
   new: newTask,
   dispatch,
   land,
-  result
+  result,
+  "setup-statusline": setupStatusline
 };
 function versionText() {
   return VERSION;
@@ -10858,9 +10930,10 @@ Usage: router <command> [options]
   dispatch <id>          run the task on the quota-picked executor to a verified diff
   land <id>              merge a PASSED dispatch's diff
   result <id>            show the verifier report + log tail
+  setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --id, --title, --run, --router-dir
+Flags: --json, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 

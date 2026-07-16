@@ -20,6 +20,8 @@ const VALUE_FLAGS = new Set([
   'wall',
   'model',
   'keep-metrics',
+  'settings',
+  'statusline',
 ]);
 
 export interface ParsedArgs {
