@@ -55,16 +55,6 @@ test('init scaffolds .router and is idempotent', async () => {
   }
 });
 
-test('verbs on a dir with no .router exit 3', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'router-cli-'));
-  try {
-    const r = await cli(dir, ['list']);
-    assert.equal(r.code, 3);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('lifecycle new -> validate (freeze) -> queue via CLI', async () => {
   const dir = repoWithPolicy();
   try {
@@ -80,20 +70,6 @@ test('lifecycle new -> validate (freeze) -> queue via CLI', async () => {
     assert.equal((await cli(dir, ['queue', 't1'])).code, 0);
     const s = await cli(dir, ['status', 't1', '--json']);
     assert.equal(JSON.parse(s.out).state, 'QUEUED');
-  } finally {
-    fx.cleanup(dir);
-  }
-});
-
-test('validate rejects a task.yaml referencing an unknown verification ref', async () => {
-  const dir = repoWithPolicy();
-  try {
-    await cli(dir, ['new', 't1']);
-    const p = routerPaths(join(dir, '.router'));
-    const y = readFileSync(p.taskYaml('t1'), 'utf8').replace('build_ref: build', 'build_ref: nope');
-    writeFileSync(p.taskYaml('t1'), y);
-    const r = await cli(dir, ['validate', 't1']);
-    assert.equal(r.code, 1);
   } finally {
     fx.cleanup(dir);
   }

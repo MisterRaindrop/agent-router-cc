@@ -40,9 +40,9 @@ function pass(id: string, detail?: string): VerifierCheck {
 
 function runRef(
   req: VerifyRequest,
-  ref: string,
+  ref: string | undefined,
 ): { ok: boolean; detail: string; rc: number | null } {
-  const templates = req.policy.verification[ref];
+  const templates = ref !== undefined ? req.policy.verification[ref] : undefined;
   if (templates === undefined || templates.length === 0) {
     return { ok: false, detail: `no verification template for ref '${ref}'`, rc: null };
   }
@@ -128,4 +128,94 @@ export function verify(req: VerifyRequest): VerifierReport {
   checks.push(pass('contract_hash'));
 
   return { result: 'PASSED', checks, changed_lines: changedLines };
+}
+
+// -- Lean (policy-free) verifier: the task carries its own scope + verify command(s).
+// Checks: diff applies, scope (from the task), secret scan (always on), then each
+// `verify` argv run directly. No policy, no whitelist templates, no contract hash.
+const DEFAULT_TEST_GLOBS = ['test/**', 'tests/**', '**/*.test.*', '**/*_test.*'];
+const DEFAULT_MAX_CHANGED_LINES = 400;
+
+export interface TaskVerifyRequest {
+  repoRoot: string;
+  worktreeDir: string;
+  baseSha: string;
+  head: string;
+  allowedGlobs: string[];
+  forbiddenGlobs?: string[];
+  maxChangedLines?: number;
+  verify: string[][]; // argv list; [] = diff/scope/secret only
+  env: NodeJS.ProcessEnv;
+  secretExtraPatterns?: string[];
+  buildTimeoutMs?: number;
+}
+
+export function verifyTask(req: TaskVerifyRequest): VerifierReport {
+  const checks: VerifierCheck[] = [];
+
+  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
+  if (patch.trim() === '') {
+    checks.push(fail('diff_applies', 'diff is empty - executor produced no committed change'));
+    return { result: 'FAILED', checks };
+  }
+  const tmpBase = mkdtempSync(join(tmpdir(), 'router-verify-base-'));
+  let applies: boolean;
+  try {
+    worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
+    applies = applyCheck(tmpBase, patch);
+  } finally {
+    worktreeRemove(req.repoRoot, tmpBase);
+    rmSync(tmpBase, { recursive: true, force: true });
+  }
+  if (!applies) {
+    checks.push(fail('diff_applies', 'patch does not apply cleanly onto base_sha'));
+    return { result: 'FAILED', checks };
+  }
+  checks.push(pass('diff_applies'));
+
+  const scope = {
+    allowed_globs: req.allowedGlobs,
+    forbidden_globs: req.forbiddenGlobs ?? [],
+    test_globs: DEFAULT_TEST_GLOBS,
+    max_changed_lines: req.maxChangedLines ?? DEFAULT_MAX_CHANGED_LINES,
+  };
+  const verdict = evaluateScope(changes, scope);
+  if (!verdict.ok) {
+    checks.push(fail('scope', verdict.violations.map((v) => `${v.kind}:${v.path ?? ''}`).join(', ')));
+    return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass('scope', `${verdict.changedLines} lines`));
+
+  const findings = scanSecrets(patch, req.secretExtraPatterns ?? []);
+  if (findings.length > 0) {
+    checks.push(fail('secret_scan', `likely secret(s): ${findings.map((f) => `${f.rule}@L${f.line}`).join(', ')}`));
+    return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass('secret_scan'));
+
+  for (const [i, argv] of req.verify.entries()) {
+    if (argv.length === 0) continue;
+    const r = runCommand(argv, {
+      cwd: req.worktreeDir,
+      env: req.env,
+      ...(req.buildTimeoutMs !== undefined ? { timeoutMs: req.buildTimeoutMs } : {}),
+    });
+    const label = req.verify.length > 1 ? `verify[${i}]` : 'verify';
+    if (r.spawnError !== null) {
+      checks.push(fail(label, `spawn error: ${r.spawnError}`));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    if (r.timedOut) {
+      checks.push(fail(label, 'timed out'));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    if (r.rc !== 0) {
+      checks.push(fail(label, `${argv.join(' ')} (rc ${r.rc})`, r.rc ?? undefined));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    checks.push(pass(label, `${argv.join(' ')} (rc 0)`));
+  }
+
+  return { result: 'PASSED', checks, changed_lines: verdict.changedLines };
 }

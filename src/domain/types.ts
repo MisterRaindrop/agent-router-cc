@@ -122,12 +122,14 @@ export interface TaskYaml {
   allowed_globs: string[];
   forbidden_globs?: string[];
   max_changed_lines?: number;
-  build_ref: string;
-  test_ref: string;
+  /** Lean path: the mechanical verify command(s) run on the diff (argv arrays; [] = none). */
+  verify?: string[][];
+  build_ref?: string; // deprecated (policy path); optional in the lean model
+  test_ref?: string; // deprecated (policy path)
   verification_params?: Record<string, string>;
   /** Task ids that must be MERGED before this task may run (deterministic gate). */
   depends_on?: string[];
-  /** Executor pinned at plan time (tier mapping); head of the run's fallback chain. */
+  /** Executor pinned for this task (kind + optional model); else quota-balanced default. */
   worker?: WorkerPolicy;
 }
 

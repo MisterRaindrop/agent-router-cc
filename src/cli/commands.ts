@@ -42,11 +42,16 @@ type Handler = (ctx: Ctx) => number | Promise<number>;
 
 function depsFor(ctx: Ctx): { deps: TransitionDeps; paths: RouterPaths } {
   const explicit = flagStr(ctx.args.flags, 'router-dir');
-  const rd = explicit ?? findRouterDir(ctx.cwd);
-  if (rd === undefined || rd === null || !existsSync(rd)) {
-    throw new CliError('no .router found - run `router init` first', 3);
-  }
+  // Auto-scaffold: no `init` ceremony. If no .router is found up-tree, create one at
+  // the cwd. `.router/` is fully gitignored so router state never pollutes the repo.
+  const found = explicit ?? findRouterDir(ctx.cwd);
+  const rd = found ?? join(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
+  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
+    if (!existsSync(d)) mkdirSync(d, { recursive: true });
+  }
+  const gi = join(paths.root, '.gitignore');
+  if (!existsSync(gi)) writeFileSync(gi, '*\n');
   return { deps: { paths, clock: systemClock }, paths };
 }
 
@@ -115,14 +120,11 @@ function taskTemplate(id: string, title: string): string {
       schema_version: 1,
       id,
       title,
-      base_sha: null,
       max_wall_minutes: 30,
       allowed_globs: ['src/**'],
       forbidden_globs: [],
       max_changed_lines: 400,
-      build_ref: 'build',
-      test_ref: 'test',
-      verification_params: {},
+      verify: [] as string[][], // e.g. [["npm","test"]]; empty = diff/scope/secret only
     },
     { lineWidth: 120 },
   );
@@ -130,24 +132,24 @@ function taskTemplate(id: string, title: string): string {
 
 // -- verbs ------------------------------------------------------------------
 
+// `init` is now optional (the CLI auto-scaffolds on first use). It just pre-creates
+// the gitignored .router/ so you can see it. No policy file: the lean path carries
+// verify/scope on each task.
 const init: Handler = (ctx) => {
   const root = join(ctx.cwd, ROUTER_DIR);
-  const force = flagBool(ctx.args.flags, 'force');
   const paths = routerPaths(root);
   const created: string[] = [];
-  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir, paths.contextDir]) {
+  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
     if (!existsSync(d)) {
       mkdirSync(d, { recursive: true });
       created.push(d);
     }
   }
-  if (!existsSync(paths.policy) || force) writeFileSync(paths.policy, POLICY_TEMPLATE);
-  if (!existsSync(paths.registry)) {
-    store.writeRegistry(paths, { schema_version: 1, rebuilt_at: systemClock.nowIso(), tasks: {} });
-  }
   const gi = join(paths.root, '.gitignore');
-  if (!existsSync(gi)) writeFileSync(gi, 'worktrees/\n');
-  emit(ctx.json, { ok: true, root: paths.root, created }, () => `initialized ${paths.root}`);
+  if (!existsSync(gi)) writeFileSync(gi, '*\n'); // ignore all of .router/ (tool state)
+  emit(ctx.json, { ok: true, root: paths.root, created }, () =>
+    `ready at ${paths.root} (optional; router auto-creates this on first use)`,
+  );
   return 0;
 };
 
@@ -187,9 +189,10 @@ const validate: Handler = (ctx) => {
   const contractHash = hashContract(yamlText, contractText);
 
   // Gate: policy must exist at base_sha and define the referenced build/test refs.
+  // (Legacy policy path; the lean dispatch path carries verify on the task instead.)
   const policy = loadPolicyFromGit(paths, baseSha);
   for (const ref of [frozenTask.build_ref, frozenTask.test_ref]) {
-    if (policy.verification[ref] === undefined) {
+    if (ref !== undefined && policy.verification[ref] === undefined) {
       throw new CliError(`verification ref '${ref}' not in policy.yaml at base_sha`, 1);
     }
   }
