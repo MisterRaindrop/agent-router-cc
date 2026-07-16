@@ -1,31 +1,39 @@
 ---
-description: Route a goal -- decompose, run clear subtasks on cheaper models, review, merge
-argument-hint: <goal>
-allowed-tools: Bash(node:*), Read
+description: Execute the plan we just discussed -- dispatch clear subtasks to cheaper models, verify, review, merge
+allowed-tools: Bash(node:*), Read, Edit, Write
 ---
-Drive the full routing loop for the user's goal, pausing at EXACTLY three points and
-doing everything else automatically. The cheap models do the work; you only plan,
-review, and merge -- that is how this saves the user's Opus tokens.
+The user has finished planning WITH YOU in this conversation and now wants router to
+execute. Do NOT re-plan from scratch or shell a separate planner -- YOU decompose the
+plan you both just agreed on, using the full context you already have.
 
-1. **Decompose:**
-   !`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" plan "$ARGUMENTS" --json`
+1. **Decompose** the agreed plan into the smallest well-defined subtasks. For each,
+   decide **clear** (an average cheaper model could finish it from the contract alone)
+   vs **unclear** (needs judgment/design). Author each CLEAR task:
 
-   **Touchpoint 1 -- confirm the plan.** Show the user each clear task (id, scope) and
-   which unclear tasks you will handle yourself. Wait for their go-ahead.
+   !`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" new <id> --title "<title>"`
 
-2. **Run clear tasks** in dependency order. For each task whose dependencies are already
-   landed:
+   then edit `.router/tasks/<id>/task.yaml`: set `allowed_globs` (smallest scope),
+   `verify` (the real command that proves it, e.g. `[["npm","test"]]`, or `[]` if none),
+   and `depends_on` if it needs another task landed first.
+
+   **Touchpoint 1:** show the user the task list (each clear task with its scope, each
+   unclear task) and wait for their go-ahead.
+
+2. **Run** the clear tasks in dependency order:
    `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" dispatch <id> --json`
-   This picks the executor with more real remaining quota (codex vs sonnet), runs it
-   synchronously, and mechanically verifies the diff. Report progress as you go (which
-   model, pass/fail). Re-dispatch a FAILED task at most once; if it still fails, stop
-   and tell the user.
+   router picks the cheaper executor with more real remaining quota, runs it in an
+   isolated worktree, and mechanically verifies (the task's `verify` cmd + scope +
+   secret scan). **Then YOU read the diff and review it yourself** -- a cheap model can
+   pass the tests while being lazy or wrong (hardcoding, skipped cases, misread intent).
+   If unsatisfied, re-dispatch once with a sharper contract; if still bad, take it over
+   yourself. This double check (mechanical + your review) is the point.
 
-3. **Touchpoint 2 -- handle the unclear (handback) tasks yourself**, interactively:
-   clarify with the user, then either implement directly or re-plan that piece as its
-   own goal. Do not dispatch them to a cheap model.
+3. **Touchpoint 2:** handle the unclear tasks directly with the user (clarify, then
+   implement yourself). Do NOT dispatch them to a cheap model.
 
-4. **Touchpoint 3 -- review + merge.** When all clear tasks are PASSED, show the user the
-   combined diffs (`router result <id>` per task) and the token savings, and ask whether
-   to merge. On approval only: `router land <id>` each. Never land a task the user has
-   not reviewed.
+4. **Touchpoint 3:** once every clear task passes BOTH mechanical verify AND your
+   review, show the user the combined diffs and roughly the tokens saved, and land on
+   their approval only: `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" land <id>` each.
+
+You planned, decomposed, reviewed, and merged; the cheap models did the execution --
+that is the token saving. Never land what the user has not approved.
