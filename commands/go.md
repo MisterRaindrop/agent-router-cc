@@ -8,9 +8,11 @@ plan you both just agreed on, using the full context you already have.
 
 1. **Decompose** the agreed plan into the smallest well-defined subtasks. For each,
    decide **clear** (an average cheaper model could finish it from the contract alone)
-   vs **unclear** (needs judgment/design). Author each CLEAR task:
+   vs **unclear** (needs judgment/design). Author each CLEAR task by running this with a
+   real id and title substituted in (do NOT run it verbatim -- `<id>`/`<title>` are
+   placeholders):
 
-   !`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" new <id> --title "<title>"`
+   `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" new <the-task-id> --title "<the title>"`
 
    then edit `.router/tasks/<id>/task.yaml`: set `allowed_globs` (smallest scope) and
    `verify` (the real command that proves it, e.g. `[["npm","test"]]`, or `[]` if none).
