@@ -55,12 +55,10 @@ test('every agent declares name + model', () => {
   }
 });
 
-test('hooks.json wires SessionStart+PreToolUse and the guard script exists', () => {
+test('hooks.json wires the PreToolUse guard and the guard script exists', () => {
   const h = JSON.parse(read('../hooks/hooks.json'));
-  assert.ok(h.hooks.SessionStart && h.hooks.PreToolUse);
-  const cmds = JSON.stringify(h);
-  assert.match(cmds, /router\.js/); // SessionStart calls the CLI
-  assert.match(cmds, /guard-router-state\.mjs/);
+  assert.ok(h.hooks.PreToolUse);
+  assert.match(JSON.stringify(h), /guard-router-state\.mjs/);
   assert.ok(existsSync(fileURLToPath(new URL('../hooks/guard-router-state.mjs', import.meta.url))));
   void root;
 });

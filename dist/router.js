@@ -7,24 +7,12 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res, err2) => function __init() {
-  if (err2) throw err2[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err2 = [e], e;
-  }
-};
 var __commonJS = (cb, mod) => function __require() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   } catch (e) {
     throw mod = 0, e;
   }
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -42,2933 +30,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-
-// node_modules/js-yaml/dist/js-yaml.mjs
-function defineScalarTag(tagName, options) {
-  return {
-    tagName,
-    nodeKind: "scalar",
-    implicit: options.implicit ?? false,
-    matchByTagPrefix: options.matchByTagPrefix ?? false,
-    implicitFirstChars: options.implicitFirstChars ?? null,
-    resolve: options.resolve,
-    identify: options.identify ?? null,
-    represent: options.represent ?? ((data) => String(data)),
-    representTagName: options.representTagName ?? null
-  };
-}
-function defineSequenceTag(tagName, options) {
-  const carrierIsResult = options.finalize === void 0;
-  return {
-    tagName,
-    nodeKind: "sequence",
-    implicit: false,
-    matchByTagPrefix: options.matchByTagPrefix ?? false,
-    create: options.create,
-    addItem: options.addItem,
-    finalize: options.finalize ?? ((carrier) => carrier),
-    carrierIsResult,
-    identify: options.identify ?? null,
-    represent: options.represent ?? ((data) => data),
-    representTagName: options.representTagName ?? null
-  };
-}
-function defineMappingTag(tagName, options) {
-  const carrierIsResult = options.finalize === void 0;
-  return {
-    tagName,
-    nodeKind: "mapping",
-    implicit: false,
-    matchByTagPrefix: options.matchByTagPrefix ?? false,
-    create: options.create,
-    addPair: options.addPair,
-    has: options.has,
-    keys: options.keys,
-    get: options.get,
-    finalize: options.finalize ?? ((carrier) => carrier),
-    carrierIsResult,
-    identify: options.identify ?? null,
-    represent: options.represent ?? ((data) => data),
-    representTagName: options.representTagName ?? null
-  };
-}
-function parseYamlInteger$2(source) {
-  let value = source;
-  let sign = 1;
-  if (value[0] === "-" || value[0] === "+") {
-    if (value[0] === "-") sign = -1;
-    value = value.slice(1);
-  }
-  if (value.startsWith("0b")) return sign * parseInt(value.slice(2), 2);
-  if (value.startsWith("0o")) return sign * parseInt(value.slice(2), 8);
-  if (value.startsWith("0x")) return sign * parseInt(value.slice(2), 16);
-  return sign * parseInt(value, 10);
-}
-function resolveYamlInteger$2(source, isExplicit) {
-  if (isExplicit) {
-    if (!YAML_INTEGER_EXPLICIT_PATTERN$1.test(source)) return NOT_RESOLVED;
-  } else if (!YAML_INTEGER_IMPLICIT_PATTERN$1.test(source)) return NOT_RESOLVED;
-  const result2 = parseYamlInteger$2(source);
-  return Number.isFinite(result2) ? result2 : NOT_RESOLVED;
-}
-function parseYamlInteger$1(source) {
-  let value = source;
-  let sign = 1;
-  if (value[0] === "-" || value[0] === "+") {
-    if (value[0] === "-") sign = -1;
-    value = value.slice(1);
-  }
-  if (value.startsWith("0b")) return sign * parseInt(value.slice(2), 2);
-  if (value.startsWith("0o")) return sign * parseInt(value.slice(2), 8);
-  if (value.startsWith("0x")) return sign * parseInt(value.slice(2), 16);
-  return sign * parseInt(value, 10);
-}
-function resolveYamlInteger$1(source, isExplicit) {
-  if (isExplicit) {
-    if (!YAML_INTEGER_EXPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
-  } else if (!YAML_INTEGER_IMPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
-  const result2 = parseYamlInteger$1(source);
-  return Number.isFinite(result2) ? result2 : NOT_RESOLVED;
-}
-function parseYamlInteger(source) {
-  let value = source.replace(/_/g, "");
-  let sign = 1;
-  if (value[0] === "-" || value[0] === "+") {
-    if (value[0] === "-") sign = -1;
-    value = value.slice(1);
-  }
-  if (value.startsWith("0b")) return sign * parseInt(value.slice(2), 2);
-  if (value.startsWith("0x")) return sign * parseInt(value.slice(2), 16);
-  if (value.includes(":")) {
-    let result2 = 0;
-    for (const part of value.split(":")) result2 = result2 * 60 + Number(part);
-    return sign * result2;
-  }
-  if (value !== "0" && value[0] === "0") return sign * parseInt(value, 8);
-  return sign * parseInt(value, 10);
-}
-function resolveYamlInteger(source) {
-  if (!YAML_INTEGER_PATTERN.test(source)) return NOT_RESOLVED;
-  const result2 = parseYamlInteger(source);
-  return Number.isFinite(result2) ? result2 : NOT_RESOLVED;
-}
-function resolveYamlFloat$2(source) {
-  if (!YAML_FLOAT_PATTERN$1.test(source)) return NOT_RESOLVED;
-  let value = source.toLowerCase();
-  const sign = value[0] === "-" ? -1 : 1;
-  if ("+-".includes(value[0])) value = value.slice(1);
-  if (value === ".inf") return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
-  if (value === ".nan") return NaN;
-  const result2 = sign * parseFloat(value);
-  if (Number.isFinite(result2) || YAML_FLOAT_SPECIAL_PATTERN$1.test(source)) return result2;
-  return NOT_RESOLVED;
-}
-function representYamlFloat$2(object) {
-  if (isNaN(object)) return ".nan";
-  if (object === Number.POSITIVE_INFINITY) return ".inf";
-  if (object === Number.NEGATIVE_INFINITY) return "-.inf";
-  if (Object.is(object, -0)) return "-0.0";
-  const result2 = object.toString(10);
-  return /^[-+]?[0-9]+e/.test(result2) ? result2.replace("e", ".e") : result2;
-}
-function resolveYamlFloat$1(source, isExplicit) {
-  if (isExplicit) {
-    if (!YAML_FLOAT_EXPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
-    let value = source.toLowerCase();
-    const sign = value[0] === "-" ? -1 : 1;
-    if ("+-".includes(value[0])) value = value.slice(1);
-    if (value === ".inf") return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
-    if (value === ".nan") return NaN;
-    const result3 = sign * parseFloat(value);
-    return Number.isFinite(result3) ? result3 : NOT_RESOLVED;
-  }
-  if (!YAML_FLOAT_IMPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
-  const result2 = Number(source);
-  if (Number.isFinite(result2)) return result2;
-  return NOT_RESOLVED;
-}
-function representYamlFloat$1(object) {
-  if (isNaN(object)) return ".nan";
-  if (object === Number.POSITIVE_INFINITY) return ".inf";
-  if (object === Number.NEGATIVE_INFINITY) return "-.inf";
-  if (Object.is(object, -0)) return "-0.0";
-  const result2 = object.toString(10);
-  return /^[-+]?[0-9]+e/.test(result2) ? result2.replace("e", ".e") : result2;
-}
-function resolveYamlFloat(source) {
-  if (!YAML_FLOAT_PATTERN.test(source)) return NOT_RESOLVED;
-  let value = source.toLowerCase().replace(/_/g, "");
-  const sign = value[0] === "-" ? -1 : 1;
-  if ("+-".includes(value[0])) value = value.slice(1);
-  if (value === ".inf") return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
-  if (value === ".nan") return NaN;
-  let result2 = 0;
-  if (value.includes(":")) {
-    for (const part of value.split(":")) result2 = result2 * 60 + Number(part);
-    result2 *= sign;
-  } else result2 = sign * parseFloat(value);
-  if (Number.isFinite(result2) || YAML_FLOAT_SPECIAL_PATTERN.test(source)) return result2;
-  return NOT_RESOLVED;
-}
-function representYamlFloat(object) {
-  if (isNaN(object)) return ".nan";
-  if (object === Number.POSITIVE_INFINITY) return ".inf";
-  if (object === Number.NEGATIVE_INFINITY) return "-.inf";
-  if (Object.is(object, -0)) return "-0.0";
-  const result2 = object.toString(10);
-  return /^[-+]?[0-9]+e/.test(result2) ? result2.replace("e", ".e") : result2;
-}
-function resolveYamlBinary(source) {
-  const input = source.replace(/\s/g, "");
-  if (input.length % 4 !== 0 || !BASE64_PATTERN.test(input)) return NOT_RESOLVED;
-  const binary = atob(input);
-  const result2 = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) result2[index] = binary.charCodeAt(index);
-  return result2;
-}
-function representYamlBinary(object) {
-  let binary = "";
-  for (let index = 0; index < object.length; index++) binary += String.fromCharCode(object[index]);
-  return btoa(binary);
-}
-function resolveYamlTimestamp(source) {
-  let match = YAML_DATE_REGEXP.exec(source);
-  if (match === null) match = YAML_TIMESTAMP_REGEXP.exec(source);
-  if (match === null) return NOT_RESOLVED;
-  const year = +match[1];
-  const month = +match[2] - 1;
-  const day = +match[3];
-  if (!match[4]) {
-    const date2 = new Date(Date.UTC(year, month, day));
-    if (date2.getUTCFullYear() !== year || date2.getUTCMonth() !== month || date2.getUTCDate() !== day) return NOT_RESOLVED;
-    return date2;
-  }
-  const hour = +match[4];
-  const minute = +match[5];
-  const second = +match[6];
-  let fraction = 0;
-  if (hour > 23 || minute > 59 || second > 59) return NOT_RESOLVED;
-  if (match[7]) {
-    let value = match[7].slice(0, 3);
-    while (value.length < 3) value += "0";
-    fraction = +value;
-  }
-  const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return NOT_RESOLVED;
-  if (match[9]) {
-    const offsetHour = +match[10];
-    const offsetMinute = +(match[11] || 0);
-    if (offsetHour > 23 || offsetMinute > 59) return NOT_RESOLVED;
-    const offset = (offsetHour * 60 + offsetMinute) * 6e4;
-    date.setTime(date.getTime() - (match[9] === "-" ? -offset : offset));
-  }
-  return date;
-}
-function isPlainObject(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
-  const prototype = Object.getPrototypeOf(data);
-  return prototype === null || prototype === Object.prototype;
-}
-function pick(object, keys) {
-  const result2 = {};
-  for (const key of keys) if (object[key] !== void 0) result2[key] = object[key];
-  return result2;
-}
-function createTagDefinitionMap() {
-  return {
-    scalar: {},
-    sequence: {},
-    mapping: {}
-  };
-}
-function createTagDefinitionListMap() {
-  return {
-    scalar: [],
-    sequence: [],
-    mapping: []
-  };
-}
-function compileTags(tags) {
-  const result2 = [];
-  for (const tag of tags) {
-    let index = result2.length;
-    for (let previousIndex = 0; previousIndex < result2.length; previousIndex++) {
-      const previous = result2[previousIndex];
-      if (previous.nodeKind === tag.nodeKind && previous.tagName === tag.tagName && previous.matchByTagPrefix === tag.matchByTagPrefix) {
-        index = previousIndex;
-        break;
-      }
-    }
-    result2[index] = tag;
-  }
-  return result2;
-}
-function normalizeKey(key) {
-  if (Array.isArray(key)) {
-    const array = Array.prototype.slice.call(key);
-    for (let index = 0; index < array.length; index++) {
-      if (Array.isArray(array[index])) return null;
-      if (typeof array[index] === "object" && Object.prototype.toString.call(array[index]) === "[object Object]") array[index] = "[object Object]";
-    }
-    return String(array);
-  }
-  if (typeof key === "object" && Object.prototype.toString.call(key) === "[object Object]") return "[object Object]";
-  return String(key);
-}
-function getLine(buffer, lineStart, lineEnd, position, maxLineLength) {
-  let head = "";
-  let tail = "";
-  const maxHalfLength = Math.floor(maxLineLength / 2) - 1;
-  if (position - lineStart > maxHalfLength) {
-    head = " ... ";
-    lineStart = position - maxHalfLength + head.length;
-  }
-  if (lineEnd - position > maxHalfLength) {
-    tail = " ...";
-    lineEnd = position + maxHalfLength - tail.length;
-  }
-  return {
-    str: head + buffer.slice(lineStart, lineEnd).replace(/\t/g, "\u2192") + tail,
-    pos: position - lineStart + head.length
-  };
-}
-function padStart(string, max) {
-  return " ".repeat(Math.max(max - string.length, 0)) + string;
-}
-function makeSnippet(mark, options) {
-  if (!mark.buffer) return null;
-  const opts = {
-    ...DEFAULT_SNIPPET_OPTIONS,
-    ...options
-  };
-  const re = /\r?\n|\r|\0/g;
-  const lineStarts = [0];
-  const lineEnds = [];
-  let match;
-  let foundLineNo = -1;
-  while (match = re.exec(mark.buffer)) {
-    lineEnds.push(match.index);
-    lineStarts.push(match.index + match[0].length);
-    if (mark.position <= match.index && foundLineNo < 0) foundLineNo = lineStarts.length - 2;
-  }
-  if (foundLineNo < 0) foundLineNo = lineStarts.length - 1;
-  let result2 = "";
-  const lineNoLength = Math.min(mark.line + opts.linesAfter, lineEnds.length).toString().length;
-  const maxLineLength = opts.maxLength - (opts.indent + lineNoLength + 3);
-  for (let i = 1; i <= opts.linesBefore; i++) {
-    if (foundLineNo - i < 0) break;
-    const line2 = getLine(mark.buffer, lineStarts[foundLineNo - i], lineEnds[foundLineNo - i], mark.position - (lineStarts[foundLineNo] - lineStarts[foundLineNo - i]), maxLineLength);
-    result2 = `${" ".repeat(opts.indent)}${padStart((mark.line - i + 1).toString(), lineNoLength)} | ${line2.str}
-${result2}`;
-  }
-  const line = getLine(mark.buffer, lineStarts[foundLineNo], lineEnds[foundLineNo], mark.position, maxLineLength);
-  result2 += `${" ".repeat(opts.indent)}${padStart((mark.line + 1).toString(), lineNoLength)} | ${line.str}
-`;
-  result2 += `${"-".repeat(opts.indent + lineNoLength + 3 + line.pos)}^
-`;
-  for (let i = 1; i <= opts.linesAfter; i++) {
-    if (foundLineNo + i >= lineEnds.length) break;
-    const line2 = getLine(mark.buffer, lineStarts[foundLineNo + i], lineEnds[foundLineNo + i], mark.position - (lineStarts[foundLineNo] - lineStarts[foundLineNo + i]), maxLineLength);
-    result2 += `${" ".repeat(opts.indent)}${padStart((mark.line + i + 1).toString(), lineNoLength)} | ${line2.str}
-`;
-  }
-  return result2.replace(/\n$/, "");
-}
-function formatError(exception, compact) {
-  let where = "";
-  if (!exception.mark) return exception.reason;
-  if (exception.mark.name) where += `in "${exception.mark.name}" `;
-  where += `(${exception.mark.line + 1}:${exception.mark.column + 1})`;
-  if (!compact && exception.mark.snippet) where += `
-
-${exception.mark.snippet}`;
-  return `${exception.reason} ${where}`;
-}
-function throwErrorAt(source, position, message, filename = "") {
-  let line = 0;
-  let lineStart = 0;
-  for (let index = 0; index < position; index++) {
-    const ch = source.charCodeAt(index);
-    if (ch === 10) {
-      line++;
-      lineStart = index + 1;
-    } else if (ch === 13) {
-      line++;
-      if (source.charCodeAt(index + 1) === 10) index++;
-      lineStart = index + 1;
-    }
-  }
-  const mark = {
-    name: filename,
-    buffer: source,
-    position,
-    line,
-    column: position - lineStart
-  };
-  mark.snippet = makeSnippet(mark);
-  throw new YAMLException(message, mark);
-}
-function simpleEscapeSequence(c) {
-  switch (c) {
-    case 48:
-      return "\0";
-    case 97:
-      return "\x07";
-    case 98:
-      return "\b";
-    case 116:
-      return "	";
-    case 9:
-      return "	";
-    case 110:
-      return "\n";
-    case 118:
-      return "\v";
-    case 102:
-      return "\f";
-    case 114:
-      return "\r";
-    case 101:
-      return "\x1B";
-    case 32:
-      return " ";
-    case 34:
-      return '"';
-    case 47:
-      return "/";
-    case 92:
-      return "\\";
-    case 78:
-      return "\x85";
-    case 95:
-      return "\xA0";
-    case 76:
-      return "\u2028";
-    case 80:
-      return "\u2029";
-    default:
-      return "";
-  }
-}
-function charFromCodepoint(c) {
-  if (c <= 65535) return String.fromCharCode(c);
-  return String.fromCharCode((c - 65536 >> 10) + 55296, (c - 65536 & 1023) + 56320);
-}
-function fromHexCode$1(c) {
-  if (c >= 48 && c <= 57) return c - 48;
-  return (c | 32) - 97 + 10;
-}
-function escapedHexLen$1(c) {
-  if (c === 120) return 2;
-  if (c === 117) return 4;
-  return 8;
-}
-function skipFoldedBreaks(input, position, end) {
-  let breaks = 0;
-  while (position < end) {
-    const ch = input.charCodeAt(position);
-    if (ch === 10) {
-      breaks++;
-      position++;
-    } else if (ch === 13) {
-      breaks++;
-      position++;
-      if (input.charCodeAt(position) === 10) position++;
-    } else if (ch === 32 || ch === 9) position++;
-    else break;
-  }
-  return {
-    position,
-    breaks
-  };
-}
-function foldedBreaks(count) {
-  if (count === 1) return " ";
-  return "\n".repeat(count - 1);
-}
-function getPlainValue(input, start, end) {
-  let result2 = "";
-  let position = start;
-  let captureStart = start;
-  let captureEnd = start;
-  while (position < end) {
-    const ch = input.charCodeAt(position);
-    if (ch === 10 || ch === 13) {
-      result2 += input.slice(captureStart, captureEnd);
-      const fold = skipFoldedBreaks(input, position, end);
-      result2 += foldedBreaks(fold.breaks);
-      position = captureStart = captureEnd = fold.position;
-    } else {
-      position++;
-      if (ch !== 32 && ch !== 9) captureEnd = position;
-    }
-  }
-  return result2 + input.slice(captureStart, captureEnd);
-}
-function getSingleQuotedValue(input, start, end) {
-  let result2 = "";
-  let position = start;
-  let captureStart = start;
-  let captureEnd = start;
-  while (position < end) {
-    const ch = input.charCodeAt(position);
-    if (ch === 39) {
-      result2 += input.slice(captureStart, position) + "'";
-      position += 2;
-      captureStart = captureEnd = position;
-    } else if (ch === 10 || ch === 13) {
-      result2 += input.slice(captureStart, captureEnd);
-      const fold = skipFoldedBreaks(input, position, end);
-      result2 += foldedBreaks(fold.breaks);
-      position = captureStart = captureEnd = fold.position;
-    } else {
-      position++;
-      if (ch !== 32 && ch !== 9) captureEnd = position;
-    }
-  }
-  return result2 + input.slice(captureStart, end);
-}
-function getDoubleQuotedValue(input, start, end) {
-  let result2 = "";
-  let position = start;
-  let captureStart = start;
-  let captureEnd = start;
-  while (position < end) {
-    const ch = input.charCodeAt(position);
-    if (ch === 92) {
-      result2 += input.slice(captureStart, position);
-      position++;
-      const escaped = input.charCodeAt(position);
-      if (escaped === 10 || escaped === 13) position = skipFoldedBreaks(input, position, end).position;
-      else if (escaped < 256 && simpleEscapeCheck[escaped]) {
-        result2 += simpleEscapeMap[escaped];
-        position++;
-      } else {
-        let hexLength = escapedHexLen$1(escaped);
-        let hexResult = 0;
-        for (; hexLength > 0; hexLength--) {
-          position++;
-          const digit = fromHexCode$1(input.charCodeAt(position));
-          hexResult = (hexResult << 4) + digit;
-        }
-        result2 += charFromCodepoint(hexResult);
-        position++;
-      }
-      captureStart = captureEnd = position;
-    } else if (ch === 10 || ch === 13) {
-      result2 += input.slice(captureStart, captureEnd);
-      const fold = skipFoldedBreaks(input, position, end);
-      result2 += foldedBreaks(fold.breaks);
-      position = captureStart = captureEnd = fold.position;
-    } else {
-      position++;
-      if (ch !== 32 && ch !== 9) captureEnd = position;
-    }
-  }
-  return result2 + input.slice(captureStart, end);
-}
-function getBlockValue(input, start, end, indent, chomping, folded) {
-  const textIndent = indent < 0 ? 0 : indent;
-  const region = input.slice(start, end).replace(/\r\n?/g, "\n");
-  const lines = region === "" ? [] : (region.endsWith("\n") ? region.slice(0, -1) : region).split("\n");
-  let result2 = "";
-  let didReadContent = false;
-  let emptyLines = 0;
-  let atMoreIndented = false;
-  for (const line of lines) {
-    let column = 0;
-    while (column < textIndent && line.charCodeAt(column) === 32) column++;
-    if (indent < 0 || column >= line.length) {
-      emptyLines++;
-      continue;
-    }
-    const content = line.slice(textIndent);
-    const first = content.charCodeAt(0);
-    if (folded) if (first === 32 || first === 9) {
-      atMoreIndented = true;
-      result2 += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
-    } else if (atMoreIndented) {
-      atMoreIndented = false;
-      result2 += "\n".repeat(emptyLines + 1);
-    } else if (emptyLines === 0) {
-      if (didReadContent) result2 += " ";
-    } else result2 += "\n".repeat(emptyLines);
-    else result2 += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
-    result2 += content;
-    didReadContent = true;
-    emptyLines = 0;
-  }
-  if (chomping === 3) result2 += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
-  else if (chomping !== 2) {
-    if (didReadContent) result2 += "\n";
-  }
-  return result2;
-}
-function getScalarValue(input, scalar) {
-  if (scalar.valueStart === NO_RANGE$3) return "";
-  const { valueStart, valueEnd } = scalar;
-  if (scalar.fast) return input.slice(valueStart, valueEnd);
-  switch (scalar.style) {
-    case 2:
-      return getSingleQuotedValue(input, valueStart, valueEnd);
-    case 3:
-      return getDoubleQuotedValue(input, valueStart, valueEnd);
-    case 4:
-      return getBlockValue(input, valueStart, valueEnd, scalar.indent, scalar.chomping, false);
-    case 5:
-      return getBlockValue(input, valueStart, valueEnd, scalar.indent, scalar.chomping, true);
-    default:
-      return getPlainValue(input, valueStart, valueEnd);
-  }
-}
-function tagPercentEncode(source) {
-  return encodeURI(source).replace(/!/g, "%21");
-}
-function tagNameFull(rawTag, tagHandlers) {
-  if (rawTag.startsWith("!<") && rawTag.endsWith(">")) return decodeURIComponent(rawTag.slice(2, -1));
-  const handleEnd = rawTag.indexOf("!", 1);
-  const handle = handleEnd === -1 ? "!" : rawTag.slice(0, handleEnd + 1);
-  const prefix = tagHandlers?.[handle] ?? DEFAULT_TAG_HANDLERS[handle] ?? handle;
-  return decodeURIComponent(prefix) + decodeURIComponent(rawTag.slice(handle.length));
-}
-function tagNameShort(fullTag) {
-  let tag = fullTag;
-  if (tag.charCodeAt(0) === 33) {
-    tag = tag.slice(1);
-    return `!${tagPercentEncode(tag)}`;
-  }
-  if (tag.slice(0, 18) === "tag:yaml.org,2002:") return `!!${tagPercentEncode(tag.slice(18))}`;
-  return `!<${tagPercentEncode(tag)}>`;
-}
-function eventPosition$1(event) {
-  if ("tagStart" in event && event.tagStart !== NO_RANGE$2) return event.tagStart;
-  if ("anchorStart" in event && event.anchorStart !== NO_RANGE$2) return event.anchorStart;
-  if ("valueStart" in event && event.valueStart !== NO_RANGE$2) return event.valueStart;
-  if ("start" in event) return event.start;
-  return 0;
-}
-function throwError$1(state, message) {
-  throwErrorAt(state.source, state.position, message, state.filename);
-}
-function finalizeCollection(state, position, tag, carrier) {
-  try {
-    return tag.finalize(carrier);
-  } catch (error) {
-    if (error instanceof YAMLException) throw error;
-    throwErrorAt(state.source, position, error instanceof Error ? error.message : String(error), state.filename);
-  }
-}
-function lookupTag(exact, prefix, tagName) {
-  const exactTag = exact[tagName];
-  if (exactTag) return exactTag;
-  for (const tag of prefix) if (tagName.startsWith(tag.tagName)) return tag;
-}
-function findExplicitTag(state, exact, prefix, tagName, nodeKind) {
-  const tag = lookupTag(exact, prefix, tagName);
-  if (tag) return tag;
-  throwError$1(state, `unknown ${nodeKind} tag !<${tagName}>`);
-}
-function constructScalar(state, event) {
-  const source = getScalarValue(state.source, event);
-  const rawTag = event.tagStart === NO_RANGE$2 ? "" : state.source.slice(event.tagStart, event.tagEnd);
-  const strTag2 = state.schema.defaultScalarTag;
-  if (rawTag !== "") {
-    if (rawTag === "!") return {
-      value: source,
-      tag: strTag2
-    };
-    const tagName = tagNameFull(rawTag, state.tagHandlers);
-    const scalarTag = lookupTag(state.schema.exact.scalar, state.schema.prefix.scalar, tagName);
-    if (scalarTag) {
-      const result2 = scalarTag.resolve(source, true, tagName);
-      if (result2 === NOT_RESOLVED) throwError$1(state, `cannot resolve a node with !<${tagName}> explicit tag`);
-      return {
-        value: result2,
-        tag: scalarTag
-      };
-    }
-    const collectionTagDef = lookupTag(state.schema.exact.mapping, state.schema.prefix.mapping, tagName) ?? lookupTag(state.schema.exact.sequence, state.schema.prefix.sequence, tagName);
-    if (collectionTagDef) {
-      if (source !== "") throwError$1(state, `cannot resolve a node with !<${tagName}> explicit tag`);
-      const carrier = collectionTagDef.create(tagName);
-      return {
-        value: collectionTagDef.carrierIsResult ? carrier : finalizeCollection(state, state.position, collectionTagDef, carrier),
-        tag: collectionTagDef
-      };
-    }
-    throwError$1(state, `unknown scalar tag !<${tagName}>`);
-  }
-  if (event.style === 1) {
-    const candidates = state.schema.implicitScalarByFirstChar.get(source.charAt(0)) ?? state.schema.implicitScalarAnyFirstChar;
-    for (const tag of candidates) {
-      const result2 = tag.resolve(source, false, tag.tagName);
-      if (result2 !== NOT_RESOLVED) return {
-        value: result2,
-        tag
-      };
-    }
-  }
-  return {
-    value: strTag2.resolve(source, false, strTag2.tagName),
-    tag: strTag2
-  };
-}
-function collectionTag(state, event, exact, prefix, defaultTagName, nodeKind) {
-  const rawTag = event.tagStart === NO_RANGE$2 ? "" : state.source.slice(event.tagStart, event.tagEnd);
-  const tagName = rawTag === "" || rawTag === "!" ? defaultTagName : tagNameFull(rawTag, state.tagHandlers);
-  return {
-    tagName,
-    tag: findExplicitTag(state, exact, prefix, tagName, nodeKind)
-  };
-}
-function isMappingTag(tag) {
-  return tag.nodeKind === "mapping";
-}
-function mergeKeys(state, frame, source, sourceTag) {
-  for (const sourceKey of sourceTag.keys(source)) {
-    if (state.maxTotalMergeKeys !== -1 && ++state.totalMergeKeys > state.maxTotalMergeKeys) throwError$1(state, `merge keys exceeded maxTotalMergeKeys (${state.maxTotalMergeKeys})`);
-    if (frame.tag.has(frame.value, sourceKey)) continue;
-    const err2 = frame.tag.addPair(frame.value, sourceKey, sourceTag.get(source, sourceKey));
-    if (err2) throwError$1(state, err2);
-    (frame.overridable ??= /* @__PURE__ */ new Set()).add(sourceKey);
-  }
-}
-function mergeSource(state, frame, source, sourceTag) {
-  state.position = frame.keyPosition;
-  if (isMappingTag(sourceTag)) mergeKeys(state, frame, source, sourceTag);
-  else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) for (const element of source) mergeKeys(state, frame, element, frame.tag);
-  else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
-}
-function addMappingValue(state, frame, key, value, tag) {
-  state.position = frame.keyPosition;
-  if (key === MERGE_KEY) {
-    mergeSource(state, frame, value, tag);
-    return;
-  }
-  if (!state.json && frame.tag.has(frame.value, key) && !frame.overridable?.has(key)) throwError$1(state, "duplicated mapping key");
-  const err2 = frame.tag.addPair(frame.value, key, value);
-  if (err2) throwError$1(state, err2);
-  frame.overridable?.delete(key);
-}
-function addValue(state, value, tag) {
-  const frame = state.frames[state.frames.length - 1];
-  if (frame.kind === "document") {
-    frame.value = value;
-    frame.hasValue = true;
-  } else if (frame.kind === "sequence") {
-    if (frame.merge) {
-      if (!isMappingTag(tag)) throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
-    }
-    const err2 = frame.tag.addItem(frame.value, value, frame.index++);
-    if (err2) throwError$1(state, err2);
-  } else if (frame.hasKey) {
-    const key = frame.key;
-    frame.key = void 0;
-    frame.hasKey = false;
-    addMappingValue(state, frame, key, value, tag);
-  } else {
-    frame.key = value;
-    frame.keyPosition = state.position;
-    frame.hasKey = true;
-  }
-}
-function storeAnchor(state, event, value, tag, isValueFinal) {
-  if (event.anchorStart !== NO_RANGE$2) {
-    const anchor = {
-      value,
-      tag,
-      isValueFinal
-    };
-    state.anchors.set(state.source.slice(event.anchorStart, event.anchorEnd), anchor);
-    return anchor;
-  }
-  return null;
-}
-function constructFromEvents(events, options) {
-  const state = {
-    ...DEFAULT_CONSTRUCTOR_OPTIONS,
-    ...options,
-    events,
-    documents: [],
-    eventIndex: 0,
-    position: 0,
-    frames: [],
-    anchors: /* @__PURE__ */ new Map(),
-    tagHandlers: /* @__PURE__ */ Object.create(null),
-    totalMergeKeys: 0,
-    aliasCount: 0
-  };
-  while (state.eventIndex < state.events.length) {
-    const event = state.events[state.eventIndex++];
-    state.position = eventPosition$1(event);
-    switch (event.type) {
-      case 1:
-        state.anchors = /* @__PURE__ */ new Map();
-        state.aliasCount = 0;
-        state.tagHandlers = /* @__PURE__ */ Object.create(null);
-        for (const directive of event.directives) if (directive.kind === "tag") state.tagHandlers[directive.handle] = directive.prefix;
-        state.frames.push({
-          kind: "document",
-          position: state.position,
-          value: void 0,
-          hasValue: false
-        });
-        break;
-      case 4: {
-        const { value, tag } = constructScalar(state, event);
-        storeAnchor(state, event, value, tag, true);
-        addValue(state, value, tag);
-        break;
-      }
-      case 2: {
-        const definition = collectionTag(state, event, state.schema.exact.sequence, state.schema.prefix.sequence, "tag:yaml.org,2002:seq", "sequence");
-        const value = definition.tag.create(definition.tagName);
-        const anchor = storeAnchor(state, event, value, definition.tag, definition.tag.carrierIsResult);
-        const parent = state.frames[state.frames.length - 1];
-        const merge2 = parent !== void 0 && parent.kind === "mapping" && parent.hasKey && parent.key === MERGE_KEY;
-        state.frames.push({
-          kind: "sequence",
-          position: state.position,
-          value,
-          tag: definition.tag,
-          anchor,
-          index: 0,
-          merge: merge2
-        });
-        break;
-      }
-      case 3: {
-        const definition = collectionTag(state, event, state.schema.exact.mapping, state.schema.prefix.mapping, "tag:yaml.org,2002:map", "mapping");
-        const value = definition.tag.create(definition.tagName);
-        const anchor = storeAnchor(state, event, value, definition.tag, definition.tag.carrierIsResult);
-        state.frames.push({
-          kind: "mapping",
-          position: state.position,
-          value,
-          tag: definition.tag,
-          anchor,
-          key: void 0,
-          keyPosition: state.position,
-          hasKey: false,
-          overridable: null
-        });
-        break;
-      }
-      case 5: {
-        if (state.maxAliases !== -1 && ++state.aliasCount > state.maxAliases) throwError$1(state, `aliases exceeded maxAliases (${state.maxAliases})`);
-        const name = state.source.slice(event.anchorStart, event.anchorEnd);
-        const anchor = state.anchors.get(name);
-        if (!anchor) throwError$1(state, `unidentified alias "${name}"`);
-        if (!anchor.isValueFinal) throwError$1(state, `recursive alias "${name}" is not supported for tag ${anchor.tag.tagName} because it uses finalize()`);
-        addValue(state, anchor.value, anchor.tag);
-        break;
-      }
-      case 6: {
-        const frame = state.frames.pop();
-        if (frame.kind === "document") state.documents.push(frame.value);
-        else {
-          const value = frame.tag.carrierIsResult ? frame.value : finalizeCollection(state, frame.position, frame.tag, frame.value);
-          if (frame.anchor) {
-            frame.anchor.value = value;
-            frame.anchor.isValueFinal = true;
-          }
-          addValue(state, value, frame.tag);
-        }
-        break;
-      }
-    }
-  }
-  return state.documents;
-}
-function addDocumentEvent(state, explicitStart, explicitEnd) {
-  state.events.push({
-    type: 1,
-    explicitStart,
-    explicitEnd,
-    directives: state.directives
-  });
-}
-function addSequenceEvent(state, start, anchorStart, anchorEnd, tagStart, tagEnd, style) {
-  state.events.push({
-    type: 2,
-    start,
-    anchorStart,
-    anchorEnd,
-    tagStart,
-    tagEnd,
-    style
-  });
-}
-function addMappingEvent(state, start, anchorStart, anchorEnd, tagStart, tagEnd, style) {
-  state.events.push({
-    type: 3,
-    start,
-    anchorStart,
-    anchorEnd,
-    tagStart,
-    tagEnd,
-    style
-  });
-}
-function addScalarEvent(state, valueStart, valueEnd, anchorStart, anchorEnd, tagStart, tagEnd, style, chomping = 1, indent = -1, fast = false) {
-  state.events.push({
-    type: 4,
-    valueStart,
-    valueEnd,
-    anchorStart,
-    anchorEnd,
-    tagStart,
-    tagEnd,
-    style,
-    chomping,
-    indent,
-    fast
-  });
-}
-function addAliasEvent(state, anchorStart, anchorEnd) {
-  state.events.push({
-    type: 5,
-    anchorStart,
-    anchorEnd
-  });
-}
-function addPopEvent(state) {
-  state.events.push({ type: 6 });
-}
-function addEmptyScalarEvent(state) {
-  addScalarEvent(state, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 1);
-}
-function emptyProperties() {
-  return {
-    anchorStart: NO_RANGE$1,
-    anchorEnd: NO_RANGE$1,
-    tagStart: NO_RANGE$1,
-    tagEnd: NO_RANGE$1
-  };
-}
-function snapshotState(state) {
-  return {
-    position: state.position,
-    line: state.line,
-    lineStart: state.lineStart,
-    lineIndent: state.lineIndent,
-    firstTabInLine: state.firstTabInLine,
-    eventsLength: state.events.length
-  };
-}
-function restoreState(state, snapshot) {
-  state.position = snapshot.position;
-  state.line = snapshot.line;
-  state.lineStart = snapshot.lineStart;
-  state.lineIndent = snapshot.lineIndent;
-  state.firstTabInLine = snapshot.firstTabInLine;
-  state.events.length = snapshot.eventsLength;
-}
-function throwError(state, message) {
-  throwErrorAt(state.input.slice(0, state.length), state.position, message, state.filename);
-}
-function isEol(c) {
-  return c === 10 || c === 13;
-}
-function isWhiteSpace(c) {
-  return c === 9 || c === 32;
-}
-function isWsOrEol(c) {
-  return isWhiteSpace(c) || isEol(c);
-}
-function isWsOrEolOrEnd(c) {
-  return c === 0 || isWsOrEol(c);
-}
-function isFlowIndicator(c) {
-  return c === 44 || c === 91 || c === 93 || c === 123 || c === 125;
-}
-function fromDecimalCode(c) {
-  return c >= 48 && c <= 57 ? c - 48 : -1;
-}
-function fromHexCode(c) {
-  if (c >= 48 && c <= 57) return c - 48;
-  const lc = c | 32;
-  if (lc >= 97 && lc <= 102) return lc - 97 + 10;
-  return -1;
-}
-function escapedHexLen(c) {
-  if (c === 120) return 2;
-  if (c === 117) return 4;
-  if (c === 85) return 8;
-  return 0;
-}
-function isSimpleEscape(c) {
-  return c === 48 || c === 97 || c === 98 || c === 116 || c === 9 || c === 110 || c === 118 || c === 102 || c === 114 || c === 101 || c === 32 || c === 34 || c === 47 || c === 92 || c === 78 || c === 95 || c === 76 || c === 80;
-}
-function consumeLineBreak(state) {
-  if (state.input.charCodeAt(state.position) === 10) state.position++;
-  else {
-    state.position++;
-    if (state.input.charCodeAt(state.position) === 10) state.position++;
-  }
-  state.line++;
-  state.lineStart = state.position;
-  state.lineIndent = 0;
-  state.firstTabInLine = -1;
-}
-function skipSeparationSpace(state, allowComments) {
-  let lineBreaks = 0;
-  let ch = state.input.charCodeAt(state.position);
-  let hasSeparation = state.position === state.lineStart || isWsOrEol(state.input.charCodeAt(state.position - 1));
-  while (ch !== 0) {
-    while (isWhiteSpace(ch)) {
-      hasSeparation = true;
-      if (ch === 9 && state.firstTabInLine === -1) state.firstTabInLine = state.position;
-      ch = state.input.charCodeAt(++state.position);
-    }
-    if (allowComments && hasSeparation && ch === 35) do
-      ch = state.input.charCodeAt(++state.position);
-    while (!isEol(ch) && ch !== 0);
-    if (!isEol(ch)) break;
-    consumeLineBreak(state);
-    lineBreaks++;
-    hasSeparation = true;
-    ch = state.input.charCodeAt(state.position);
-    while (ch === 32) {
-      state.lineIndent++;
-      ch = state.input.charCodeAt(++state.position);
-    }
-  }
-  return lineBreaks;
-}
-function testDocumentSeparator(state, position = state.position) {
-  const ch = state.input.charCodeAt(position);
-  if ((ch === 45 || ch === 46) && ch === state.input.charCodeAt(position + 1) && ch === state.input.charCodeAt(position + 2)) {
-    const following = state.input.charCodeAt(position + 3);
-    return following === 0 || isWsOrEol(following);
-  }
-  return false;
-}
-function skipUntilLineEnd(state) {
-  let ch = state.input.charCodeAt(state.position);
-  while (ch !== 0 && !isEol(ch)) ch = state.input.charCodeAt(++state.position);
-}
-function checkPrintable(state, start, end) {
-  if (PATTERN_NON_PRINTABLE.test(state.input.slice(start, end))) throwError(state, "the stream contains non-printable characters");
-}
-function readTagProperty(state, props, inFlow) {
-  if (state.input.charCodeAt(state.position) !== 33) return false;
-  if (props.tagStart !== NO_RANGE$1) throwError(state, "duplication of a tag property");
-  const start = state.position;
-  let isVerbatim = false;
-  let isNamed = false;
-  let tagHandle = "!";
-  let ch = state.input.charCodeAt(++state.position);
-  if (ch === 60) {
-    isVerbatim = true;
-    ch = state.input.charCodeAt(++state.position);
-  } else if (ch === 33) {
-    isNamed = true;
-    tagHandle = "!!";
-    ch = state.input.charCodeAt(++state.position);
-  }
-  let suffixStart = state.position;
-  let tagName;
-  if (isVerbatim) {
-    while (ch !== 0 && ch !== 62) ch = state.input.charCodeAt(++state.position);
-    if (ch !== 62) throwError(state, "unexpected end of the stream within a verbatim tag");
-    tagName = state.input.slice(suffixStart, state.position);
-    state.position++;
-  } else {
-    while (ch !== 0 && !isWsOrEol(ch) && !(inFlow && isFlowIndicator(ch))) {
-      if (ch === 33) if (!isNamed) {
-        tagHandle = state.input.slice(suffixStart - 1, state.position + 1);
-        if (!PATTERN_TAG_HANDLE.test(tagHandle)) throwError(state, "named tag handle cannot contain such characters");
-        isNamed = true;
-        suffixStart = state.position + 1;
-      } else throwError(state, "tag suffix cannot contain exclamation marks");
-      ch = state.input.charCodeAt(++state.position);
-    }
-    tagName = state.input.slice(suffixStart, state.position);
-    if (PATTERN_FLOW_INDICATORS.test(tagName)) throwError(state, "tag suffix cannot contain flow indicator characters");
-  }
-  if (tagName && !(isVerbatim ? PATTERN_TAG_URI.test(tagName) : PATTERN_TAG_SUFFIX.test(tagName))) throwError(state, `tag name cannot contain such characters: ${tagName}`);
-  if (!isVerbatim && tagHandle !== "!" && tagHandle !== "!!" && !HAS_OWN.call(state.tagHandlers, tagHandle)) throwError(state, `undeclared tag handle "${tagHandle}"`);
-  props.tagStart = start;
-  props.tagEnd = state.position;
-  return true;
-}
-function readAnchorProperty(state, props) {
-  if (state.input.charCodeAt(state.position) !== 38) return false;
-  if (props.anchorStart !== NO_RANGE$1) throwError(state, "duplication of an anchor property");
-  state.position++;
-  const start = state.position;
-  while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position)) && !isFlowIndicator(state.input.charCodeAt(state.position))) state.position++;
-  if (state.position === start) throwError(state, "name of an anchor node must contain at least one character");
-  props.anchorStart = start;
-  props.anchorEnd = state.position;
-  return true;
-}
-function readAlias(state, props) {
-  if (state.input.charCodeAt(state.position) !== 42) return false;
-  if (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1) throwError(state, "alias node should not have any properties");
-  state.position++;
-  const start = state.position;
-  while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position)) && !isFlowIndicator(state.input.charCodeAt(state.position))) state.position++;
-  if (state.position === start) throwError(state, "name of an alias node must contain at least one character");
-  addAliasEvent(state, start, state.position);
-  return true;
-}
-function readFlowScalarBreak(state, nodeIndent) {
-  skipSeparationSpace(state, false);
-  if (state.lineIndent < nodeIndent) throwError(state, "deficient indentation");
-}
-function readSingleQuotedScalar(state, nodeIndent, props) {
-  if (state.input.charCodeAt(state.position) !== 39) return false;
-  state.position++;
-  const start = state.position;
-  let simple = true;
-  while (state.input.charCodeAt(state.position) !== 0) {
-    const ch = state.input.charCodeAt(state.position);
-    if (ch === 39) {
-      if (state.input.charCodeAt(state.position + 1) === 39) {
-        simple = false;
-        state.position += 2;
-        continue;
-      }
-      const end = state.position;
-      state.position++;
-      addScalarEvent(state, start, end, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 2, 1, -1, simple);
-      return true;
-    }
-    if (isEol(ch)) {
-      simple = false;
-      readFlowScalarBreak(state, nodeIndent);
-    } else if (state.position === state.lineStart && testDocumentSeparator(state)) throwError(state, "unexpected end of the document within a single quoted scalar");
-    else if (ch !== 9 && ch < 32) throwError(state, "expected valid JSON character");
-    else state.position++;
-  }
-  throwError(state, "unexpected end of the stream within a single quoted scalar");
-}
-function readDoubleQuotedScalar(state, nodeIndent, props) {
-  if (state.input.charCodeAt(state.position) !== 34) return false;
-  state.position++;
-  const start = state.position;
-  let simple = true;
-  while (state.input.charCodeAt(state.position) !== 0) {
-    const ch = state.input.charCodeAt(state.position);
-    if (ch === 34) {
-      const end = state.position;
-      state.position++;
-      addScalarEvent(state, start, end, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 3, 1, -1, simple);
-      return true;
-    }
-    if (ch === 92) {
-      simple = false;
-      const escaped = state.input.charCodeAt(++state.position);
-      if (isEol(escaped)) readFlowScalarBreak(state, nodeIndent);
-      else if (isSimpleEscape(escaped)) state.position++;
-      else {
-        let hexLength = escapedHexLen(escaped);
-        if (hexLength === 0) throwError(state, "unknown escape sequence");
-        while (hexLength-- > 0) {
-          state.position++;
-          if (fromHexCode(state.input.charCodeAt(state.position)) < 0) throwError(state, "expected hexadecimal character");
-        }
-        state.position++;
-      }
-    } else if (isEol(ch)) {
-      simple = false;
-      readFlowScalarBreak(state, nodeIndent);
-    } else if (state.position === state.lineStart && testDocumentSeparator(state)) throwError(state, "unexpected end of the document within a double quoted scalar");
-    else if (ch !== 9 && ch < 32) throwError(state, "expected valid JSON character");
-    else state.position++;
-  }
-  throwError(state, "unexpected end of the stream within a double quoted scalar");
-}
-function readBlockScalar(state, parentIndent, props) {
-  const ch = state.input.charCodeAt(state.position);
-  let chomping = 1;
-  let indent = -1;
-  let detectedIndent = false;
-  if (ch !== 124 && ch !== 62) return false;
-  const style = ch === 124 ? 4 : 5;
-  state.position++;
-  while (state.input.charCodeAt(state.position) !== 0) {
-    const current = state.input.charCodeAt(state.position);
-    const digit = fromDecimalCode(current);
-    if (current === 43 || current === 45) {
-      if (chomping !== 1) throwError(state, "repeat of a chomping mode identifier");
-      chomping = current === 43 ? 3 : 2;
-      state.position++;
-    } else if (digit >= 0) {
-      if (digit === 0) throwError(state, "bad explicit indentation width of a block scalar; it cannot be less than one");
-      if (detectedIndent) throwError(state, "repeat of an indentation width identifier");
-      indent = parentIndent + digit - 1;
-      detectedIndent = true;
-      state.position++;
-    } else break;
-  }
-  let hadWhitespace = false;
-  while (isWhiteSpace(state.input.charCodeAt(state.position))) {
-    hadWhitespace = true;
-    state.position++;
-  }
-  if (hadWhitespace && state.input.charCodeAt(state.position) === 35) skipUntilLineEnd(state);
-  if (isEol(state.input.charCodeAt(state.position))) consumeLineBreak(state);
-  else if (state.input.charCodeAt(state.position) !== 0) throwError(state, "a line break is expected");
-  let contentIndent = detectedIndent ? indent : -1;
-  let maxLeadingIndent = 0;
-  const valueStart = state.position;
-  let valueEnd = state.position;
-  while (state.input.charCodeAt(state.position) !== 0) {
-    const linePosition = state.position;
-    let column = 0;
-    while (state.input.charCodeAt(linePosition + column) === 32) column++;
-    const first = state.input.charCodeAt(linePosition + column);
-    if (first === 0) {
-      if (contentIndent >= 0) {
-        if (column > contentIndent) valueEnd = linePosition + column;
-      } else if (column > 0) valueEnd = linePosition + column;
-      break;
-    }
-    if (linePosition === state.lineStart && testDocumentSeparator(state, linePosition)) break;
-    if (!detectedIndent && contentIndent === -1 && isEol(first)) maxLeadingIndent = Math.max(maxLeadingIndent, column);
-    if (!detectedIndent && contentIndent === -1 && !isEol(first)) {
-      if (first === 9 && column < parentIndent) {
-        state.position = linePosition + column;
-        throwError(state, "tab characters must not be used in indentation");
-      }
-      if (column < maxLeadingIndent) {
-        state.position = linePosition + column;
-        throwError(state, "bad indentation of a mapping entry");
-      }
-    }
-    if (contentIndent === -1 && first !== 0 && !isEol(first) && column < parentIndent) {
-      state.lineIndent = column;
-      state.position = linePosition + column;
-      break;
-    }
-    if (!detectedIndent && first !== 0 && !isEol(first) && contentIndent === -1) contentIndent = column;
-    const requiredIndent = contentIndent === -1 ? parentIndent + 1 : contentIndent;
-    if (first !== 0 && !isEol(first) && column < requiredIndent) {
-      state.lineIndent = column;
-      state.position = linePosition + column;
-      break;
-    }
-    skipUntilLineEnd(state);
-    valueEnd = state.position;
-    if (isEol(state.input.charCodeAt(state.position))) {
-      consumeLineBreak(state);
-      valueEnd = state.position;
-    }
-  }
-  checkPrintable(state, valueStart, valueEnd);
-  addScalarEvent(state, valueStart, valueEnd, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, style, chomping, contentIndent);
-  return true;
-}
-function canStartPlainScalar(state, nodeContext) {
-  const ch = state.input.charCodeAt(state.position);
-  const inFlow = nodeContext === CONTEXT_FLOW_IN;
-  if (ch === 0 || isWsOrEol(ch) || ch === 35 || ch === 38 || ch === 42 || ch === 33 || ch === 124 || ch === 62 || ch === 39 || ch === 34 || ch === 37 || ch === 64 || ch === 96 || inFlow && isFlowIndicator(ch)) return false;
-  if (ch === 63 || ch === 45) {
-    const following = state.input.charCodeAt(state.position + 1);
-    if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) return false;
-  }
-  return true;
-}
-function readPlainScalar(state, nodeIndent, nodeContext, props) {
-  if (!canStartPlainScalar(state, nodeContext)) return false;
-  const start = state.position;
-  let end = state.position;
-  let ch = state.input.charCodeAt(state.position);
-  const inFlow = nodeContext === CONTEXT_FLOW_IN;
-  let multiline = false;
-  while (ch !== 0) {
-    if (state.position === state.lineStart && testDocumentSeparator(state)) break;
-    if (ch === 58) {
-      const following = state.input.charCodeAt(state.position + 1);
-      if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) break;
-    } else if (ch === 35) {
-      if (isWsOrEol(state.input.charCodeAt(state.position - 1))) break;
-    } else if (inFlow && isFlowIndicator(ch)) break;
-    else if (isEol(ch)) {
-      const savedPosition = state.position;
-      const savedLine = state.line;
-      const savedLineStart = state.lineStart;
-      const savedLineIndent = state.lineIndent;
-      skipSeparationSpace(state, false);
-      if (state.lineIndent >= nodeIndent) {
-        multiline = true;
-        ch = state.input.charCodeAt(state.position);
-        continue;
-      }
-      state.position = savedPosition;
-      state.line = savedLine;
-      state.lineStart = savedLineStart;
-      state.lineIndent = savedLineIndent;
-      break;
-    }
-    if (!isWhiteSpace(ch)) end = state.position + 1;
-    ch = state.input.charCodeAt(++state.position);
-  }
-  if (end === start) return false;
-  checkPrintable(state, start, end);
-  addScalarEvent(state, start, end, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1, 1, -1, !multiline);
-  return true;
-}
-function skipFlowSeparationSpace(state, nodeIndent) {
-  const startLine = state.line;
-  skipSeparationSpace(state, true);
-  if (state.line > startLine && state.lineIndent < nodeIndent || state.firstTabInLine !== -1 && state.lineIndent < nodeIndent) throwError(state, "deficient indentation");
-}
-function readFlowCollection(state, nodeIndent, props) {
-  const ch = state.input.charCodeAt(state.position);
-  const isMapping = ch === 123;
-  const start = state.position;
-  let readNext = true;
-  if (ch !== 91 && ch !== 123) return false;
-  const terminator = isMapping ? 125 : 93;
-  if (isMapping) addMappingEvent(state, start, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 2);
-  else addSequenceEvent(state, start, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 2);
-  state.position++;
-  while (state.input.charCodeAt(state.position) !== 0) {
-    skipFlowSeparationSpace(state, nodeIndent);
-    let ch2 = state.input.charCodeAt(state.position);
-    if (ch2 === terminator) {
-      state.position++;
-      addPopEvent(state);
-      return true;
-    } else if (!readNext) throwError(state, "missed comma between flow collection entries");
-    else if (ch2 === 44) throwError(state, "expected the node content, but found ','");
-    let isPair = false;
-    let isExplicitPair = false;
-    if (ch2 === 63 && isWsOrEol(state.input.charCodeAt(state.position + 1))) {
-      isPair = isExplicitPair = true;
-      state.position += 1;
-      skipFlowSeparationSpace(state, nodeIndent);
-    }
-    const entryLine = state.line;
-    const entryStart = snapshotState(state);
-    const keyWasRead = parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
-    skipFlowSeparationSpace(state, nodeIndent);
-    ch2 = state.input.charCodeAt(state.position);
-    if ((isMapping || isExplicitPair || state.line === entryLine) && ch2 === 58) {
-      isPair = true;
-      state.position++;
-      skipFlowSeparationSpace(state, nodeIndent);
-      if (!isMapping) {
-        restoreState(state, entryStart);
-        addMappingEvent(state, entryStart.position, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 2);
-        if (!parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)) addEmptyScalarEvent(state);
-        skipFlowSeparationSpace(state, nodeIndent);
-        state.position++;
-        skipFlowSeparationSpace(state, nodeIndent);
-      } else if (!keyWasRead) addEmptyScalarEvent(state);
-      if (!parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)) addEmptyScalarEvent(state);
-      skipFlowSeparationSpace(state, nodeIndent);
-      if (!isMapping) addPopEvent(state);
-    } else if (isMapping && isPair) {
-      if (!keyWasRead) addEmptyScalarEvent(state);
-      addEmptyScalarEvent(state);
-    } else if (isMapping) addEmptyScalarEvent(state);
-    else if (isPair) {
-      restoreState(state, entryStart);
-      addMappingEvent(state, entryStart.position, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 2);
-      parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
-      addEmptyScalarEvent(state);
-      addPopEvent(state);
-    }
-    ch2 = state.input.charCodeAt(state.position);
-    if (ch2 === 44) {
-      readNext = true;
-      state.position++;
-    } else readNext = false;
-  }
-  throwError(state, "unexpected end of the stream within a flow collection");
-}
-function readBlockSequence(state, nodeIndent, props) {
-  if (state.firstTabInLine !== -1 || state.input.charCodeAt(state.position) !== 45 || !isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) return false;
-  addSequenceEvent(state, state.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
-  while (state.input.charCodeAt(state.position) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) {
-    if (state.firstTabInLine !== -1) {
-      state.position = state.firstTabInLine;
-      throwError(state, "tab characters must not be used in indentation");
-    }
-    const entryLine = state.line;
-    state.position++;
-    const hadBreak = skipSeparationSpace(state, true) > 0;
-    if (state.firstTabInLine !== -1 && state.input.charCodeAt(state.position) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) throwError(state, "bad indentation of a sequence entry");
-    if (hadBreak && state.lineIndent <= nodeIndent) addEmptyScalarEvent(state);
-    else parseNode(state, nodeIndent, CONTEXT_BLOCK_IN, false, true);
-    skipSeparationSpace(state, true);
-    if (state.lineIndent < nodeIndent || state.position >= state.length) break;
-    if (state.lineIndent > nodeIndent) throwError(state, "bad indentation of a sequence entry");
-    if (state.line === entryLine && state.input.charCodeAt(state.position) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) throwError(state, "bad indentation of a sequence entry");
-  }
-  addPopEvent(state);
-  return true;
-}
-function readBlockMapping(state, nodeIndent, flowIndent, props) {
-  let atExplicitKey = false;
-  let detected = false;
-  let mappingOpened = false;
-  let pendingExplicitKey = false;
-  if (state.firstTabInLine !== -1) return false;
-  let ch = state.input.charCodeAt(state.position);
-  while (ch !== 0) {
-    if (!atExplicitKey && state.firstTabInLine !== -1) {
-      state.position = state.firstTabInLine;
-      throwError(state, "tab characters must not be used in indentation");
-    }
-    const following = state.input.charCodeAt(state.position + 1);
-    const entryLine = state.line;
-    if ((ch === 63 || ch === 58) && isWsOrEolOrEnd(following)) {
-      if (!mappingOpened) {
-        addMappingEvent(state, state.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
-        mappingOpened = true;
-      }
-      if (ch === 63) {
-        if (atExplicitKey) addEmptyScalarEvent(state);
-        detected = true;
-        atExplicitKey = true;
-      } else if (atExplicitKey) atExplicitKey = false;
-      else {
-        addEmptyScalarEvent(state);
-        detected = true;
-        atExplicitKey = false;
-      }
-      state.position += 1;
-      pendingExplicitKey = true;
-    } else {
-      if (atExplicitKey) {
-        addEmptyScalarEvent(state);
-        atExplicitKey = false;
-      }
-      const beforeKey = snapshotState(state);
-      if (!parseNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true)) break;
-      if (state.line === entryLine) {
-        ch = state.input.charCodeAt(state.position);
-        while (isWhiteSpace(ch)) ch = state.input.charCodeAt(++state.position);
-        if (ch === 58) {
-          ch = state.input.charCodeAt(++state.position);
-          if (!isWsOrEolOrEnd(ch)) throwError(state, "a whitespace character is expected after the key-value separator within a block mapping");
-          if (!mappingOpened) {
-            restoreState(state, beforeKey);
-            addMappingEvent(state, beforeKey.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
-            mappingOpened = true;
-            parseNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true);
-            ch = state.input.charCodeAt(state.position);
-            while (isWhiteSpace(ch)) ch = state.input.charCodeAt(++state.position);
-            state.position++;
-          }
-          detected = true;
-          atExplicitKey = false;
-          pendingExplicitKey = false;
-        } else if (detected) throwError(state, "expected ':' after a mapping key");
-        else {
-          if (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1) {
-            restoreState(state, beforeKey);
-            return false;
-          }
-          return true;
-        }
-      } else if (detected) throwError(state, "can not read a block mapping entry; a multiline key may not be an implicit key");
-      else {
-        if (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1) {
-          restoreState(state, beforeKey);
-          return false;
-        }
-        return true;
-      }
-    }
-    if (parseNode(state, nodeIndent, CONTEXT_BLOCK_OUT, true, pendingExplicitKey)) pendingExplicitKey = false;
-    if (!atExplicitKey) {
-      if (pendingExplicitKey) {
-        addEmptyScalarEvent(state);
-        pendingExplicitKey = false;
-      }
-    }
-    skipSeparationSpace(state, true);
-    ch = state.input.charCodeAt(state.position);
-    if ((state.line === entryLine || state.lineIndent > nodeIndent) && ch !== 0) throwError(state, "bad indentation of a mapping entry");
-    else if (state.lineIndent < nodeIndent) break;
-  }
-  if (!detected) return false;
-  if (atExplicitKey) addEmptyScalarEvent(state);
-  if (mappingOpened) addPopEvent(state);
-  return true;
-}
-function parseNode(state, parentIndent, nodeContext, allowToSeek, allowCompact, allowPropertyMapping = true) {
-  if (state.depth >= state.maxDepth) throwError(state, `nesting exceeded maxDepth (${state.maxDepth})`);
-  state.depth++;
-  let indentStatus = 1;
-  let atNewLine = false;
-  let hasContent = false;
-  let propertyStart = null;
-  const props = emptyProperties();
-  let allowBlockScalars = nodeContext === CONTEXT_BLOCK_OUT || nodeContext === CONTEXT_BLOCK_IN;
-  let allowBlockCollections = allowBlockScalars;
-  const allowBlockStyles = allowBlockScalars;
-  if (allowToSeek && skipSeparationSpace(state, true)) {
-    atNewLine = true;
-    if (state.lineIndent > parentIndent) indentStatus = 1;
-    else if (state.lineIndent === parentIndent) indentStatus = 0;
-    else indentStatus = -1;
-  }
-  if (state.position === state.lineStart && testDocumentSeparator(state)) {
-    state.depth--;
-    return false;
-  }
-  if (indentStatus === 1) while (true) {
-    const ch = state.input.charCodeAt(state.position);
-    const propertyState = snapshotState(state);
-    if (atNewLine && indentStatus !== 1 && (ch === 33 || ch === 38)) break;
-    if (atNewLine && allowBlockStyles && (props.tagStart !== NO_RANGE$1 || props.anchorStart !== NO_RANGE$1) && (ch === 33 || ch === 38)) {
-      const fallbackState = snapshotState(state);
-      const flowIndent = parentIndent + 1;
-      if (readBlockMapping(state, state.position - state.lineStart, flowIndent, props) && state.events[fallbackState.eventsLength]?.type === 3) {
-        state.depth--;
-        return true;
-      }
-      restoreState(state, fallbackState);
-    }
-    if (atNewLine && (ch === 33 && props.tagStart !== NO_RANGE$1 || ch === 38 && props.anchorStart !== NO_RANGE$1)) break;
-    if (!readTagProperty(state, props, nodeContext === CONTEXT_FLOW_IN) && !readAnchorProperty(state, props)) break;
-    if (propertyStart === null) propertyStart = propertyState;
-    if (skipSeparationSpace(state, true)) {
-      atNewLine = true;
-      allowBlockCollections = allowBlockStyles;
-      if (state.lineIndent > parentIndent) indentStatus = 1;
-      else if (state.lineIndent === parentIndent) indentStatus = 0;
-      else indentStatus = -1;
-    } else allowBlockCollections = false;
-  }
-  if (allowBlockCollections) allowBlockCollections = atNewLine || allowCompact;
-  if (indentStatus === 1 || nodeContext === CONTEXT_BLOCK_OUT) {
-    const flowIndent = nodeContext === CONTEXT_FLOW_IN || nodeContext === CONTEXT_FLOW_OUT ? parentIndent : parentIndent + 1;
-    const blockIndent = state.position - state.lineStart;
-    if (indentStatus === 1) if (allowBlockCollections && (readBlockSequence(state, blockIndent, props) || readBlockMapping(state, blockIndent, flowIndent, props)) || readFlowCollection(state, flowIndent, props)) hasContent = true;
-    else {
-      const ch = state.input.charCodeAt(state.position);
-      if (propertyStart !== null && allowPropertyMapping && allowBlockStyles && !allowBlockCollections && ch !== 124 && ch !== 62) {
-        const fallbackState = snapshotState(state);
-        const propertyIndent = propertyStart.position - propertyStart.lineStart;
-        restoreState(state, propertyStart);
-        if (readBlockMapping(state, propertyIndent, flowIndent, emptyProperties()) && state.events[fallbackState.eventsLength]?.type === 3) hasContent = true;
-        else restoreState(state, fallbackState);
-      }
-      if (!hasContent && (allowBlockScalars && readBlockScalar(state, flowIndent, props) || readSingleQuotedScalar(state, flowIndent, props) || readDoubleQuotedScalar(state, flowIndent, props) || readAlias(state, props) || readPlainScalar(state, flowIndent, nodeContext, props))) hasContent = true;
-    }
-    else if (indentStatus === 0) hasContent = allowBlockCollections && readBlockSequence(state, blockIndent, props);
-  }
-  allowBlockScalars = allowBlockScalars && !hasContent;
-  if (!hasContent && (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1 || allowBlockScalars)) {
-    addScalarEvent(state, NO_RANGE$1, NO_RANGE$1, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
-    hasContent = true;
-  }
-  state.depth--;
-  return hasContent || props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1;
-}
-function readDirective(state) {
-  if (state.lineIndent > 0 || state.input.charCodeAt(state.position) !== 37) return false;
-  state.position++;
-  const nameStart = state.position;
-  while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position))) state.position++;
-  const name = state.input.slice(nameStart, state.position);
-  const args = [];
-  if (name.length === 0) throwError(state, "directive name must not be less than one character in length");
-  while (state.input.charCodeAt(state.position) !== 0 && !isEol(state.input.charCodeAt(state.position))) {
-    while (isWhiteSpace(state.input.charCodeAt(state.position))) state.position++;
-    if (state.input.charCodeAt(state.position) === 35 || isEol(state.input.charCodeAt(state.position)) || state.input.charCodeAt(state.position) === 0) break;
-    const start = state.position;
-    while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position))) state.position++;
-    args.push(state.input.slice(start, state.position));
-  }
-  if (isEol(state.input.charCodeAt(state.position))) consumeLineBreak(state);
-  if (name === "YAML") {
-    if (state.directives.some((directive) => directive.kind === "yaml")) throwError(state, "duplication of %YAML directive");
-    if (args.length !== 1) throwError(state, "YAML directive accepts exactly one argument");
-    const match = /^([0-9]+)\.([0-9]+)$/.exec(args[0]);
-    if (match === null) throwError(state, "ill-formed argument of the YAML directive");
-    if (parseInt(match[1], 10) !== 1) throwError(state, "unacceptable YAML version of the document");
-    state.directives.push({
-      kind: "yaml",
-      version: args[0]
-    });
-  } else if (name === "TAG") {
-    if (args.length !== 2) throwError(state, "TAG directive accepts exactly two arguments");
-    const [handle, prefix] = args;
-    if (!PATTERN_TAG_HANDLE.test(handle)) throwError(state, "ill-formed tag handle (first argument) of the TAG directive");
-    if (HAS_OWN.call(state.tagHandlers, handle)) throwError(state, `there is a previously declared suffix for "${handle}" tag handle`);
-    if (!PATTERN_TAG_PREFIX.test(prefix)) throwError(state, "ill-formed tag prefix (second argument) of the TAG directive");
-    state.tagHandlers[handle] = prefix;
-    state.directives.push({
-      kind: "tag",
-      handle,
-      prefix
-    });
-  }
-  return true;
-}
-function readDocument(state) {
-  state.directives = [];
-  state.tagHandlers = /* @__PURE__ */ Object.create(null);
-  let hasDirectives = false;
-  skipSeparationSpace(state, true);
-  while (readDirective(state)) {
-    hasDirectives = true;
-    skipSeparationSpace(state, true);
-  }
-  let explicitStart = false;
-  let explicitEnd = false;
-  let allowCompact = true;
-  if (state.lineIndent === 0 && state.input.charCodeAt(state.position) === 45 && state.input.charCodeAt(state.position + 1) === 45 && state.input.charCodeAt(state.position + 2) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 3))) {
-    explicitStart = true;
-    const markerLine = state.line;
-    state.position += 3;
-    skipSeparationSpace(state, true);
-    allowCompact = state.line > markerLine;
-  } else if (hasDirectives) throwError(state, "directives end mark is expected");
-  const documentEventIndex = state.events.length;
-  if (!explicitStart && state.position === state.lineStart && state.input.charCodeAt(state.position) === 46 && testDocumentSeparator(state)) {
-    state.position += 3;
-    skipSeparationSpace(state, true);
-    return;
-  }
-  addDocumentEvent(state, explicitStart, false);
-  if (!parseNode(state, state.lineIndent - 1, CONTEXT_BLOCK_OUT, false, allowCompact, allowCompact)) addEmptyScalarEvent(state);
-  skipSeparationSpace(state, true);
-  if (state.position === state.lineStart && testDocumentSeparator(state)) {
-    explicitEnd = state.input.charCodeAt(state.position) === 46;
-    if (explicitEnd) {
-      const markerLine = state.line;
-      state.position += 3;
-      skipSeparationSpace(state, true);
-      if (state.line === markerLine && state.position < state.length) throwError(state, "end of the stream or a document separator is expected");
-    }
-  }
-  const documentEvent = state.events[documentEventIndex];
-  if (documentEvent?.type === 1) documentEvent.explicitEnd = explicitEnd;
-  addPopEvent(state);
-  if (!explicitEnd && state.position < state.length && !(state.position === state.lineStart && testDocumentSeparator(state))) throwError(state, "end of the stream or a document separator is expected");
-}
-function parseEvents(input, options) {
-  const length = input.length;
-  const state = {
-    ...DEFAULT_PARSER_OPTIONS,
-    ...options,
-    input: `${input}\0`,
-    length,
-    position: 0,
-    line: 0,
-    lineStart: 0,
-    lineIndent: 0,
-    firstTabInLine: -1,
-    depth: 0,
-    directives: [],
-    tagHandlers: /* @__PURE__ */ Object.create(null),
-    events: []
-  };
-  const nullpos = input.indexOf("\0");
-  if (nullpos !== -1) throwErrorAt(input, nullpos, "null byte is not allowed in input", state.filename);
-  if (state.input.charCodeAt(state.position) === 65279) state.position++;
-  while (state.position < state.length) {
-    skipSeparationSpace(state, true);
-    if (state.position >= state.length) break;
-    const documentStart = state.position;
-    readDocument(state);
-    if (state.position === documentStart)
-      throwError(state, "can not read a document");
-  }
-  return state.events;
-}
-function loadDocuments(input, options = {}) {
-  const opts = {
-    ...DEFAULT_LOAD_OPTIONS,
-    ...options
-  };
-  const source = String(input);
-  const PARSER_OPT_KEYS = Object.keys(DEFAULT_PARSER_OPTIONS);
-  const CONSTRUCTOR_OPT_KEYS = Object.keys(DEFAULT_CONSTRUCTOR_OPTIONS);
-  return constructFromEvents(parseEvents(source, pick(opts, PARSER_OPT_KEYS)), {
-    ...pick(opts, CONSTRUCTOR_OPT_KEYS),
-    source
-  });
-}
-function load(input, options) {
-  const documents = loadDocuments(input, options);
-  if (documents.length === 0) throw new YAMLException("expected a document, but the input is empty");
-  if (documents.length === 1) return documents[0];
-  throw new YAMLException("expected a single document in the stream, but found more");
-}
-function buildRepresentTypes(schema) {
-  const defaultTags = new Set([
-    schema.defaultScalarTag,
-    schema.defaultSequenceTag,
-    schema.defaultMappingTag
-  ].filter((t) => t !== void 0));
-  const implicitScalars = schema.implicitScalarTags;
-  const explicitTags = schema.tags.filter((t) => !(t.nodeKind === "scalar" && t.implicit) && !defaultTags.has(t));
-  const defaultTagsLast = schema.tags.filter((t) => defaultTags.has(t));
-  return [
-    ...implicitScalars.map((tag) => ({
-      tag,
-      implicitTag: true
-    })),
-    ...explicitTags.map((tag) => ({
-      tag,
-      implicitTag: false
-    })),
-    ...defaultTagsLast.map((tag) => ({
-      tag,
-      implicitTag: true
-    }))
-  ];
-}
-function matchTag(state, object) {
-  for (let index = 0, length = state.representTypes.length; index < length; index += 1) {
-    const { tag, implicitTag } = state.representTypes[index];
-    if (tag.identify && tag.identify(object)) {
-      let tagName;
-      if (tag.matchByTagPrefix && tag.representTagName) tagName = tag.representTagName(object);
-      else tagName = tag.tagName;
-      return {
-        tag,
-        tagName,
-        implicitTag
-      };
-    }
-  }
-  return null;
-}
-function build(state, object) {
-  if (!state.noRefs && object !== null && typeof object === "object") {
-    const existing = state.refs.get(object);
-    if (existing) {
-      if (existing.anchor === void 0) existing.anchor = `ref_${state.refCounter++}`;
-      return {
-        kind: "alias",
-        tag: "",
-        style: new Style(),
-        anchor: existing.anchor
-      };
-    }
-  }
-  const matched = matchTag(state, object);
-  if (!matched) {
-    if (object === void 0) return INVALID;
-    if (state.skipInvalid) return INVALID;
-    throw new YAMLException(`unacceptable kind of an object to dump ${Object.prototype.toString.call(object)}`);
-  }
-  const { tag, tagName, implicitTag } = matched;
-  const nodeTagName = implicitTag ? tagName : tagNameShort(tagName);
-  if (tag.nodeKind === "scalar") {
-    const style2 = new Style();
-    style2.tagged = !implicitTag;
-    return {
-      kind: "scalar",
-      tag: nodeTagName,
-      style: style2,
-      value: tag.represent(object)
-    };
-  }
-  if (tag.nodeKind === "sequence") {
-    const container = tag.represent(object);
-    const style2 = new Style();
-    style2.tagged = !implicitTag;
-    const node2 = {
-      kind: "sequence",
-      tag: nodeTagName,
-      style: style2,
-      items: []
-    };
-    if (!state.noRefs) state.refs.set(object, node2);
-    for (let index = 0, length = container.length; index < length; index += 1) {
-      let item = build(state, container[index]);
-      if (item === INVALID && container[index] === void 0) item = build(state, null);
-      if (item === INVALID) continue;
-      node2.items.push(item);
-    }
-    return node2;
-  }
-  const map = tag.represent(object);
-  const style = new Style();
-  style.tagged = !implicitTag;
-  const node = {
-    kind: "mapping",
-    tag: nodeTagName,
-    style,
-    items: []
-  };
-  if (!state.noRefs) state.refs.set(object, node);
-  for (const [objectKey, objectValue] of map) {
-    const key = build(state, objectKey);
-    if (key === INVALID) continue;
-    const value = build(state, objectValue);
-    if (value === INVALID) continue;
-    node.items.push({
-      key,
-      value
-    });
-  }
-  return node;
-}
-function jsToAst(input, schema, options = {}) {
-  const root = build({
-    representTypes: buildRepresentTypes(schema),
-    noRefs: options.noRefs ?? false,
-    skipInvalid: options.skipInvalid ?? false,
-    refs: /* @__PURE__ */ new Map(),
-    refCounter: 0
-  }, input);
-  return [{
-    contents: root === INVALID ? null : root,
-    directives: []
-  }];
-}
-function visitNode(node, visitor, ctx) {
-  const control = visitor(node, ctx);
-  if (control === VISIT_BREAK) return true;
-  if (control === VISIT_SKIP) return false;
-  const depth = ctx.depth + 1;
-  switch (node.kind) {
-    case "sequence":
-      for (const item of node.items) if (visitNode(item, visitor, {
-        depth,
-        parent: node,
-        isKey: false
-      })) return true;
-      break;
-    case "mapping":
-      for (const { key, value } of node.items) {
-        if (visitNode(key, visitor, {
-          depth,
-          parent: node,
-          isKey: true
-        })) return true;
-        if (visitNode(value, visitor, {
-          depth,
-          parent: node,
-          isKey: false
-        })) return true;
-      }
-      break;
-  }
-  return false;
-}
-function visit(documents, visitor) {
-  for (const doc of documents) if (doc.contents && visitNode(doc.contents, visitor, {
-    depth: 0,
-    parent: null,
-    isKey: false
-  })) return;
-}
-function nodeTagShort(node) {
-  return node.style.tagged ? node.tag : tagNameShort(node.tag);
-}
-function createPresenterState(options) {
-  const opts = {
-    ...DEFAULT_PRESENTER_OPTIONS,
-    ...options
-  };
-  return {
-    ...opts,
-    defaultScalarTagName: opts.schema.defaultScalarTag.tagName,
-    implicitResolvers: opts.schema.implicitScalarTags
-  };
-}
-function encodeNonPrintable(character) {
-  const string = character.toString(16).toUpperCase();
-  const handle = character <= 255 ? "x" : "u";
-  const length = character <= 255 ? 2 : 4;
-  return `\\${handle}${"0".repeat(length - string.length)}${string}`;
-}
-function indentString(string, spaces) {
-  const ind = " ".repeat(spaces);
-  let position = 0;
-  let result2 = "";
-  const length = string.length;
-  while (position < length) {
-    let line;
-    const next = string.indexOf("\n", position);
-    if (next === -1) {
-      line = string.slice(position);
-      position = length;
-    } else {
-      line = string.slice(position, next + 1);
-      position = next + 1;
-    }
-    if (line.length && line !== "\n") result2 += ind;
-    result2 += line;
-  }
-  return result2;
-}
-function generateNextLine(state, level) {
-  return `
-${" ".repeat(state.indent * level)}`;
-}
-function scalarLayout(state, level) {
-  const indent = state.indent * Math.max(1, level);
-  return {
-    indent,
-    blockIndent: level === 0 ? state.indent + 1 : state.indent,
-    lineWidth: state.lineWidth === -1 ? -1 : Math.max(Math.min(state.lineWidth, 40), state.lineWidth - indent)
-  };
-}
-function resolveImplicitTag(state, str) {
-  for (let index = 0, length = state.implicitResolvers.length; index < length; index += 1) {
-    const tagDefinition = state.implicitResolvers[index];
-    if (tagDefinition.resolve(str, false, tagDefinition.tagName) !== NOT_RESOLVED) return tagDefinition.tagName;
-  }
-  return state.defaultScalarTagName;
-}
-function isWhitespace(c) {
-  return c === CHAR_SPACE || c === CHAR_TAB;
-}
-function startsWithDocumentSeparator(string) {
-  const marker = string.charCodeAt(0);
-  if (marker !== CHAR_MINUS && marker !== 46 || string.charCodeAt(1) !== marker || string.charCodeAt(2) !== marker) return false;
-  if (string.length === 3) return true;
-  const following = string.charCodeAt(3);
-  return isWhitespace(following) || following === CHAR_CARRIAGE_RETURN || following === CHAR_LINE_FEED;
-}
-function isPrintable(c) {
-  return c >= 32 && c <= 126 || c >= 161 && c <= 55295 && c !== 8232 && c !== 8233 || c >= 57344 && c <= 65533 && c !== CHAR_BOM || c >= 65536 && c <= 1114111;
-}
-function isNsCharOrWhitespace(c) {
-  return isPrintable(c) && c !== CHAR_BOM && c !== CHAR_CARRIAGE_RETURN && c !== CHAR_LINE_FEED;
-}
-function isPlainSafe(c, prev, inblock) {
-  const cIsNsCharOrWhitespace = isNsCharOrWhitespace(c);
-  const cIsNsChar = cIsNsCharOrWhitespace && !isWhitespace(c);
-  return (inblock ? cIsNsCharOrWhitespace : cIsNsCharOrWhitespace && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET) && c !== CHAR_SHARP && !(prev === CHAR_COLON && !cIsNsChar) || isNsCharOrWhitespace(prev) && !isWhitespace(prev) && c === CHAR_SHARP || prev === CHAR_COLON && cIsNsChar;
-}
-function isPlainSafeFirst(c) {
-  return isPrintable(c) && c !== CHAR_BOM && !isWhitespace(c) && c !== CHAR_MINUS && c !== CHAR_QUESTION && c !== CHAR_COLON && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET && c !== CHAR_SHARP && c !== CHAR_AMPERSAND && c !== CHAR_ASTERISK && c !== CHAR_EXCLAMATION && c !== CHAR_VERTICAL_LINE && c !== CHAR_EQUALS && c !== CHAR_GREATER_THAN && c !== CHAR_SINGLE_QUOTE && c !== CHAR_DOUBLE_QUOTE && c !== CHAR_PERCENT && c !== CHAR_COMMERCIAL_AT && c !== CHAR_GRAVE_ACCENT;
-}
-function isPlainSafeAtStart(string, inblock) {
-  const first = codePointAt(string, 0);
-  if (isPlainSafeFirst(first)) return true;
-  if (string.length > 1 && (first === CHAR_MINUS || first === CHAR_QUESTION || first === CHAR_COLON)) {
-    const second = codePointAt(string, 1);
-    return !isWhitespace(second) && isPlainSafe(second, first, inblock);
-  }
-  return false;
-}
-function isPlainSafeLast(c) {
-  return !isWhitespace(c) && c !== CHAR_COLON;
-}
-function codePointAt(string, pos) {
-  const first = string.charCodeAt(pos);
-  let second;
-  if (first >= 55296 && first <= 56319 && pos + 1 < string.length) {
-    second = string.charCodeAt(pos + 1);
-    if (second >= 56320 && second <= 57343) return (first - 55296) * 1024 + second - 56320 + 65536;
-  }
-  return first;
-}
-function needIndentIndicator(string) {
-  return /^\n* /.test(string);
-}
-function chooseScalarStyle(state, string, layout, singleLineOnly, forceQuote, inblock) {
-  const { blockIndent, lineWidth } = layout;
-  let i;
-  let char = 0;
-  let prevChar = -1;
-  let hasLineBreak = false;
-  let hasFoldableLine = false;
-  const shouldTrackWidth = lineWidth !== -1;
-  let previousLineBreak = -1;
-  let plain = !startsWithDocumentSeparator(string) && isPlainSafeAtStart(string, inblock) && isPlainSafeLast(codePointAt(string, string.length - 1));
-  if (singleLineOnly || forceQuote) for (i = 0; i < string.length; char >= 65536 ? i += 2 : i++) {
-    char = codePointAt(string, i);
-    if (!isPrintable(char)) return STYLE_DOUBLE;
-    plain = plain && isPlainSafe(char, prevChar, inblock);
-    prevChar = char;
-  }
-  else {
-    for (i = 0; i < string.length; char >= 65536 ? i += 2 : i++) {
-      char = codePointAt(string, i);
-      if (char === CHAR_LINE_FEED) {
-        hasLineBreak = true;
-        if (shouldTrackWidth) {
-          hasFoldableLine = hasFoldableLine || i - previousLineBreak - 1 > lineWidth && string[previousLineBreak + 1] !== " ";
-          previousLineBreak = i;
-        }
-      } else if (!isPrintable(char)) return STYLE_DOUBLE;
-      plain = plain && isPlainSafe(char, prevChar, inblock);
-      prevChar = char;
-    }
-    hasFoldableLine = hasFoldableLine || shouldTrackWidth && i - previousLineBreak - 1 > lineWidth && string[previousLineBreak + 1] !== " ";
-  }
-  if (!hasLineBreak && !hasFoldableLine) {
-    if (plain && !forceQuote) return STYLE_PLAIN;
-    return state.quoteStyle === "double" ? STYLE_DOUBLE : STYLE_SINGLE;
-  }
-  if (blockIndent > 9 && needIndentIndicator(string)) return STYLE_DOUBLE;
-  return hasFoldableLine ? STYLE_FOLDED : STYLE_LITERAL;
-}
-function renderScalarStyle(string, style, layout) {
-  const { indent, blockIndent, lineWidth } = layout;
-  switch (style) {
-    case STYLE_PLAIN:
-      return encodeFlowBreaks(string, indent);
-    case STYLE_SINGLE:
-      return `'${encodeFlowBreaks(string, indent).replace(/'/g, "''")}'`;
-    case STYLE_LITERAL:
-      return "|" + blockHeader(string, blockIndent) + dropEndingNewline(indentString(string, indent));
-    case STYLE_FOLDED:
-      return ">" + blockHeader(string, blockIndent) + dropEndingNewline(indentString(foldBlockScalar(string, lineWidth), indent));
-    case STYLE_DOUBLE:
-      return `"${escapeString(string)}"`;
-  }
-}
-function resolveScalarStyle(state, node, layout, iskey, inblock) {
-  const singleLineOnly = iskey || !inblock;
-  if (node.style.singleQuoted) return STYLE_SINGLE;
-  if (node.style.doubleQuoted) return STYLE_DOUBLE;
-  if (!singleLineOnly) {
-    if (node.style.literal) return STYLE_LITERAL;
-    if (node.style.folded) return STYLE_FOLDED;
-  }
-  const string = node.value;
-  if (string.length === 0) {
-    if (node.style.tagged || resolveImplicitTag(state, string) === node.tag) return STYLE_PLAIN;
-    return state.quoteStyle === "double" ? STYLE_DOUBLE : STYLE_SINGLE;
-  }
-  const style = chooseScalarStyle(state, string, layout, singleLineOnly, state.forceQuotes && !iskey, inblock);
-  if (style === STYLE_PLAIN && !node.style.tagged && resolveImplicitTag(state, string) !== node.tag) return state.quoteStyle === "double" ? STYLE_DOUBLE : STYLE_SINGLE;
-  return style;
-}
-function blockHeader(string, indentPerLevel) {
-  const indentIndicator = needIndentIndicator(string) ? String(indentPerLevel) : "";
-  const clip = string[string.length - 1] === "\n";
-  return `${indentIndicator}${clip && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip ? "" : "-"}
-`;
-}
-function encodeFlowBreaks(string, indent) {
-  let nextLF = string.indexOf("\n");
-  if (nextLF === -1) return string;
-  const pad = " ".repeat(indent);
-  let result2 = string.slice(0, nextLF);
-  const lineRe = /(\n+)([^\n]*)/g;
-  lineRe.lastIndex = nextLF;
-  let match;
-  while (match = lineRe.exec(string)) {
-    const breaks = match[1].length;
-    const line = match[2];
-    result2 += "\n".repeat(breaks + 1) + pad + line;
-  }
-  return result2;
-}
-function dropEndingNewline(string) {
-  return string[string.length - 1] === "\n" ? string.slice(0, -1) : string;
-}
-function foldBlockScalar(string, width) {
-  const lineRe = /(\n+)([^\n]*)/g;
-  let nextLF = string.indexOf("\n");
-  if (nextLF === -1) nextLF = string.length;
-  lineRe.lastIndex = nextLF;
-  let result2 = foldLine(string.slice(0, nextLF), width);
-  let prevMoreIndented = string[0] === "\n" || string[0] === " ";
-  let moreIndented;
-  let match;
-  while (match = lineRe.exec(string)) {
-    const prefix = match[1];
-    const line = match[2];
-    moreIndented = line[0] === " ";
-    result2 += prefix + (!prevMoreIndented && !moreIndented && line !== "" ? "\n" : "") + foldLine(line, width);
-    prevMoreIndented = moreIndented;
-  }
-  return result2;
-}
-function foldLine(line, width) {
-  if (line === "" || line[0] === " ") return line;
-  const breakRe = / [^ ]/g;
-  let match;
-  let start = 0;
-  let end;
-  let curr = 0;
-  let next = 0;
-  let result2 = "";
-  while (match = breakRe.exec(line)) {
-    next = match.index;
-    if (next - start > width) {
-      end = curr > start ? curr : next;
-      result2 += `
-${line.slice(start, end)}`;
-      start = end + 1;
-    }
-    curr = next;
-  }
-  result2 += "\n";
-  if (line.length - start > width && curr > start) result2 += `${line.slice(start, curr)}
-${line.slice(curr + 1)}`;
-  else result2 += line.slice(start);
-  return result2.slice(1);
-}
-function escapeString(string) {
-  let result2 = "";
-  let char = 0;
-  for (let i = 0; i < string.length; char >= 65536 ? i += 2 : i++) {
-    char = codePointAt(string, i);
-    const escapeSeq = ESCAPE_SEQUENCES[char];
-    if (escapeSeq) {
-      result2 += escapeSeq;
-      continue;
-    }
-    if (isPrintable(char)) {
-      result2 += string[i];
-      if (char >= 65536) result2 += string[i + 1];
-      continue;
-    }
-    result2 += encodeNonPrintable(char);
-  }
-  return result2;
-}
-function writeFlowSequence(state, level, node) {
-  let result2 = "";
-  for (let index = 0, length = node.items.length; index < length; index += 1) {
-    const item = writeNode(state, level, node.items[index], {});
-    if (result2 !== "") result2 += `,${!state.flowSkipCommaSpace ? " " : ""}`;
-    result2 += item;
-  }
-  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
-  return `[${pad}${result2}${pad}]`;
-}
-function writeBlockSequence(state, level, node, compact) {
-  let result2 = "";
-  for (let index = 0, length = node.items.length; index < length; index += 1) {
-    const item = writeNode(state, level + 1, node.items[index], {
-      block: true,
-      compact: state.seqInlineFirst,
-      isblockseq: true
-    });
-    if (!compact || result2 !== "") result2 += generateNextLine(state, level);
-    if (item === "" || CHAR_LINE_FEED === item.charCodeAt(0)) result2 += "-";
-    else result2 += "- ";
-    result2 += item;
-  }
-  return result2;
-}
-function writeFlowMapping(state, level, node) {
-  let result2 = "";
-  const items = sortMappingItems(state, node.items);
-  for (const { key, value } of items) {
-    let pairBuffer = "";
-    if (result2 !== "") pairBuffer += `,${!state.flowSkipCommaSpace ? " " : ""}`;
-    const keyText = writeNode(state, level, key, { iskey: true });
-    const explicitPair = keyText.length > 1024;
-    if (explicitPair) pairBuffer += "? ";
-    else if (state.quoteFlowKeys) pairBuffer += '"';
-    const valueText = writeNode(state, level, value, {});
-    const sep = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep}${valueText}`;
-    result2 += pairBuffer;
-  }
-  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
-  return `{${pad}${result2}${pad}}`;
-}
-function sortKeyValue(key) {
-  return key.kind === "scalar" ? key.value : key;
-}
-function sortMappingItems(state, items) {
-  if (!state.sortKeys) return items;
-  const copy = items.slice();
-  if (state.sortKeys === true) copy.sort((a, b) => {
-    const x = sortKeyValue(a.key);
-    const y = sortKeyValue(b.key);
-    if (x < y) return -1;
-    if (x > y) return 1;
-    return 0;
-  });
-  else {
-    const fn = state.sortKeys;
-    copy.sort((a, b) => fn(sortKeyValue(a.key), sortKeyValue(b.key)));
-  }
-  return copy;
-}
-function writeBlockMapping(state, level, node, compact) {
-  let result2 = "";
-  const items = sortMappingItems(state, node.items);
-  for (let index = 0, length = items.length; index < length; index += 1) {
-    let pairBuffer = "";
-    if (!compact || result2 !== "") pairBuffer += generateNextLine(state, level);
-    const { key, value } = items[index];
-    const keyIsBlock = (key.kind === "mapping" || key.kind === "sequence") && !key.style.flow && key.items.length !== 0 || key.kind === "scalar" && (key.style.literal || key.style.folded);
-    const keyText = keyIsBlock ? writeNode(state, level + 1, key, {
-      block: true,
-      compact: true,
-      isblockseq: !cannotBeCompact(state, key, level + 1)
-    }) : writeNode(state, level + 1, key, {
-      block: true,
-      compact: true,
-      iskey: true
-    });
-    const keyHasLineBreak = key.kind === "scalar" && key.value.indexOf("\n") !== -1;
-    const explicitPair = keyIsBlock || keyHasLineBreak || keyText.length > 1024;
-    if (explicitPair) if (keyText && CHAR_LINE_FEED === keyText.charCodeAt(0)) pairBuffer += "?";
-    else pairBuffer += "? ";
-    pairBuffer += keyText;
-    if (explicitPair) pairBuffer += generateNextLine(state, level);
-    const valueText = writeNode(state, level + 1, value, {
-      block: true,
-      compact: explicitPair,
-      isblockseq: explicitPair && !cannotBeCompact(state, value, level + 1)
-    });
-    const keyIsBareProps = key.kind === "scalar" && key.value === "" && keyText !== "" && keyText.charCodeAt(keyText.length - 1) !== CHAR_SINGLE_QUOTE && keyText.charCodeAt(keyText.length - 1) !== CHAR_DOUBLE_QUOTE;
-    const keyColonSep = !explicitPair && (key.kind === "alias" || keyIsBareProps) ? " " : "";
-    if (valueText === "" || CHAR_LINE_FEED === valueText.charCodeAt(0)) pairBuffer += `${keyColonSep}:`;
-    else pairBuffer += `${keyColonSep}: `;
-    pairBuffer += valueText;
-    result2 += pairBuffer;
-  }
-  return result2;
-}
-function cannotBeCompact(state, node, level) {
-  return node.style.tagged || node.anchor !== void 0 || state.indent < 2 && level > 0;
-}
-function writeNode(state, level, node, ctx) {
-  if (node.kind === "alias") return `*${node.anchor}`;
-  const { block = false, iskey = false, isblockseq = false } = ctx;
-  let compact = ctx.compact ?? false;
-  const hasAnchor = node.anchor !== void 0;
-  if (cannotBeCompact(state, node, level)) compact = false;
-  let body;
-  let shouldPrintTag = node.style.tagged;
-  const useBlockCollection = block && (node.kind === "mapping" || node.kind === "sequence") && !node.style.flow && node.items.length !== 0;
-  if (node.kind === "mapping") if (useBlockCollection) body = writeBlockMapping(state, level, node, compact);
-  else body = writeFlowMapping(state, level, node);
-  else if (node.kind === "sequence") if (useBlockCollection) if (state.seqNoIndent && !isblockseq && level > 0) body = writeBlockSequence(state, level - 1, node, compact);
-  else body = writeBlockSequence(state, level, node, compact);
-  else body = writeFlowSequence(state, level, node);
-  else {
-    const layout = scalarLayout(state, level);
-    const style = resolveScalarStyle(state, node, layout, iskey, block);
-    body = renderScalarStyle(node.value, style, layout);
-    shouldPrintTag = node.style.tagged || style !== STYLE_PLAIN && node.tag !== state.defaultScalarTagName;
-  }
-  if (useBlockCollection && compact && level > 0 && state.indent > 2) body = `${" ".repeat(state.indent - 2)}${body}`;
-  if (shouldPrintTag || hasAnchor) {
-    const props = [];
-    const tag = shouldPrintTag ? nodeTagShort(node) : null;
-    const anchor = hasAnchor ? `&${node.anchor}` : null;
-    if (state.tagBeforeAnchor) {
-      if (tag !== null) props.push(tag);
-      if (anchor !== null) props.push(anchor);
-    } else {
-      if (anchor !== null) props.push(anchor);
-      if (tag !== null) props.push(tag);
-    }
-    const sep = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    body = `${props.join(" ")}${sep}${body}`;
-  }
-  return body;
-}
-function rootStartsOwnLine(node) {
-  return (node.kind === "sequence" || node.kind === "mapping") && !node.style.flow && node.items.length !== 0 && !node.style.tagged && node.anchor === void 0;
-}
-function isOpenEnded(node) {
-  let leaf = node;
-  while ((leaf.kind === "sequence" || leaf.kind === "mapping") && !leaf.style.flow && leaf.items.length !== 0) leaf = leaf.kind === "sequence" ? leaf.items[leaf.items.length - 1] : leaf.items[leaf.items.length - 1].value;
-  if (leaf.kind !== "scalar" || !(leaf.style.literal || leaf.style.folded)) return false;
-  const { value } = leaf;
-  return value.endsWith("\n\n") || value === "\n";
-}
-function writeDocumentDirectives(doc) {
-  let result2 = "";
-  for (const directive of doc.directives) {
-    if (directive.kind === "yaml") {
-      result2 += `%YAML ${directive.version}
-`;
-      continue;
-    }
-    const { handle, prefix } = directive;
-    result2 += `%TAG ${handle} ${prefix}
-`;
-  }
-  return result2;
-}
-function present(documents, options) {
-  const state = createPresenterState(options);
-  let result2 = "";
-  let previousEnded = false;
-  for (let index = 0; index < documents.length; index += 1) {
-    const doc = documents[index];
-    const directives = writeDocumentDirectives(doc);
-    const hasDirectives = directives !== "";
-    const marker = doc.explicitStart || hasDirectives || index > 0 && !previousEnded;
-    result2 += directives;
-    if (doc.contents === null) {
-      if (marker) result2 += "---\n";
-    } else if (marker) {
-      const body = writeNode(state, 0, doc.contents, {
-        block: true,
-        compact: true
-      });
-      const sep = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result2 += `---${sep}${body}
-`;
-    } else result2 += writeNode(state, 0, doc.contents, {
-      block: true,
-      compact: true
-    }) + "\n";
-    previousEnded = doc.explicitEnd || doc.contents !== null && isOpenEnded(doc.contents);
-    if (previousEnded) result2 += "...\n";
-  }
-  return result2;
-}
-function dump(input, options = {}) {
-  const opts = {
-    ...DEFAULT_DUMP_OPTIONS,
-    ...options
-  };
-  const documents = jsToAst(input, opts.schema, {
-    noRefs: opts.noRefs,
-    skipInvalid: opts.skipInvalid
-  });
-  if (opts.flowLevel >= 0) visit(documents, (node, ctx) => {
-    if (ctx.depth < opts.flowLevel) return;
-    node.style.flow = true;
-    return VISIT_SKIP;
-  });
-  opts.transform(documents);
-  return present(documents, {
-    ...pick(opts, Object.keys(DEFAULT_PRESENTER_OPTIONS)),
-    schema: opts.schema
-  });
-}
-var NOT_RESOLVED, MERGE_KEY, strTag, NULL_VALUES$1, nullCoreTag, nullJsonTag, NULL_VALUES, nullYaml11Tag, TRUE_VALUES$2, FALSE_VALUES$2, boolCoreTag, TRUE_VALUES$1, FALSE_VALUES$1, boolJsonTag, TRUE_VALUES, FALSE_VALUES, boolYaml11Tag, YAML_INTEGER_IMPLICIT_PATTERN$1, YAML_INTEGER_EXPLICIT_PATTERN$1, intCoreTag, YAML_INTEGER_IMPLICIT_PATTERN, YAML_INTEGER_EXPLICIT_PATTERN, intJsonTag, YAML_INTEGER_PATTERN, intYaml11Tag, YAML_FLOAT_PATTERN$1, YAML_FLOAT_SPECIAL_PATTERN$1, floatCoreTag, YAML_FLOAT_IMPLICIT_PATTERN, YAML_FLOAT_EXPLICIT_PATTERN, floatJsonTag, YAML_FLOAT_PATTERN, YAML_FLOAT_SPECIAL_PATTERN, floatYaml11Tag, mergeTag, BASE64_PATTERN, binaryTag, YAML_DATE_REGEXP, YAML_TIMESTAMP_REGEXP, timestampTag, seqTag, omapTag, pairsTag, mapTag, setTag, Schema, FAILSAFE_SCHEMA, JSON_SCHEMA, CORE_SCHEMA, YAML11_SCHEMA, realMapTag, legacyMapTag, DEFAULT_SNIPPET_OPTIONS, YAMLException, NO_RANGE$3, simpleEscapeCheck, simpleEscapeMap, DEFAULT_TAG_HANDLERS, NO_RANGE$2, DEFAULT_CONSTRUCTOR_OPTIONS, NO_RANGE$1, HAS_OWN, CONTEXT_FLOW_IN, CONTEXT_FLOW_OUT, CONTEXT_BLOCK_IN, CONTEXT_BLOCK_OUT, PATTERN_NON_PRINTABLE, PATTERN_FLOW_INDICATORS, PATTERN_TAG_HANDLE, NS_URI_CHAR, NS_TAG_CHAR, PATTERN_TAG_URI, PATTERN_TAG_SUFFIX, PATTERN_TAG_PREFIX, DEFAULT_PARSER_OPTIONS, DEFAULT_LOAD_OPTIONS, Style, INVALID, VISIT_BREAK, VISIT_SKIP, CHAR_BOM, CHAR_TAB, CHAR_LINE_FEED, CHAR_CARRIAGE_RETURN, CHAR_SPACE, CHAR_EXCLAMATION, CHAR_DOUBLE_QUOTE, CHAR_SHARP, CHAR_PERCENT, CHAR_AMPERSAND, CHAR_SINGLE_QUOTE, CHAR_ASTERISK, CHAR_COMMA, CHAR_MINUS, CHAR_COLON, CHAR_EQUALS, CHAR_GREATER_THAN, CHAR_QUESTION, CHAR_COMMERCIAL_AT, CHAR_LEFT_SQUARE_BRACKET, CHAR_RIGHT_SQUARE_BRACKET, CHAR_GRAVE_ACCENT, CHAR_LEFT_CURLY_BRACKET, CHAR_VERTICAL_LINE, CHAR_RIGHT_CURLY_BRACKET, ESCAPE_SEQUENCES, DEFAULT_PRESENTER_OPTIONS, STYLE_PLAIN, STYLE_SINGLE, STYLE_LITERAL, STYLE_FOLDED, STYLE_DOUBLE, DEFAULT_DUMP_SCHEMA, DEFAULT_DUMP_OPTIONS;
-var init_js_yaml = __esm({
-  "node_modules/js-yaml/dist/js-yaml.mjs"() {
-    NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
-    MERGE_KEY = /* @__PURE__ */ Symbol("MERGE_KEY");
-    strTag = defineScalarTag("tag:yaml.org,2002:str", {
-      resolve: (source) => source,
-      identify: (data) => typeof data === "string"
-    });
-    NULL_VALUES$1 = [
-      "",
-      "~",
-      "null",
-      "Null",
-      "NULL"
-    ];
-    nullCoreTag = defineScalarTag("tag:yaml.org,2002:null", {
-      implicit: true,
-      implicitFirstChars: [
-        "",
-        "~",
-        "n",
-        "N"
-      ],
-      resolve: (source) => {
-        if (NULL_VALUES$1.indexOf(source) !== -1) return null;
-        return NOT_RESOLVED;
-      },
-      identify: (object) => object === null,
-      represent: () => "null"
-    });
-    nullJsonTag = defineScalarTag("tag:yaml.org,2002:null", {
-      implicit: true,
-      implicitFirstChars: ["n"],
-      resolve: (source, isExplicit) => {
-        if (source === "null" || isExplicit && source === "") return null;
-        return NOT_RESOLVED;
-      },
-      identify: (object) => object === null,
-      represent: () => "null"
-    });
-    NULL_VALUES = [
-      "",
-      "~",
-      "null",
-      "Null",
-      "NULL"
-    ];
-    nullYaml11Tag = defineScalarTag("tag:yaml.org,2002:null", {
-      implicit: true,
-      implicitFirstChars: [
-        "",
-        "~",
-        "n",
-        "N"
-      ],
-      resolve: (source) => {
-        if (NULL_VALUES.indexOf(source) !== -1) return null;
-        return NOT_RESOLVED;
-      },
-      identify: (object) => object === null,
-      represent: () => "null"
-    });
-    TRUE_VALUES$2 = [
-      "true",
-      "True",
-      "TRUE"
-    ];
-    FALSE_VALUES$2 = [
-      "false",
-      "False",
-      "FALSE"
-    ];
-    boolCoreTag = defineScalarTag("tag:yaml.org,2002:bool", {
-      implicit: true,
-      implicitFirstChars: [
-        "t",
-        "T",
-        "f",
-        "F"
-      ],
-      resolve: (source) => {
-        if (TRUE_VALUES$2.indexOf(source) !== -1) return true;
-        if (FALSE_VALUES$2.indexOf(source) !== -1) return false;
-        return NOT_RESOLVED;
-      },
-      identify: (object) => Object.prototype.toString.call(object) === "[object Boolean]",
-      represent: (object) => object ? "true" : "false"
-    });
-    TRUE_VALUES$1 = ["true"];
-    FALSE_VALUES$1 = ["false"];
-    boolJsonTag = defineScalarTag("tag:yaml.org,2002:bool", {
-      implicit: true,
-      implicitFirstChars: ["t", "f"],
-      resolve: (source) => {
-        if (TRUE_VALUES$1.indexOf(source) !== -1) return true;
-        if (FALSE_VALUES$1.indexOf(source) !== -1) return false;
-        return NOT_RESOLVED;
-      },
-      identify: (object) => Object.prototype.toString.call(object) === "[object Boolean]",
-      represent: (object) => object ? "true" : "false"
-    });
-    TRUE_VALUES = [
-      "true",
-      "True",
-      "TRUE",
-      "y",
-      "Y",
-      "yes",
-      "Yes",
-      "YES",
-      "on",
-      "On",
-      "ON"
-    ];
-    FALSE_VALUES = [
-      "false",
-      "False",
-      "FALSE",
-      "n",
-      "N",
-      "no",
-      "No",
-      "NO",
-      "off",
-      "Off",
-      "OFF"
-    ];
-    boolYaml11Tag = defineScalarTag("tag:yaml.org,2002:bool", {
-      implicit: true,
-      implicitFirstChars: [
-        "y",
-        "Y",
-        "n",
-        "N",
-        "t",
-        "T",
-        "f",
-        "F",
-        "o",
-        "O"
-      ],
-      resolve: (source) => {
-        if (TRUE_VALUES.indexOf(source) !== -1) return true;
-        if (FALSE_VALUES.indexOf(source) !== -1) return false;
-        return NOT_RESOLVED;
-      },
-      identify: (object) => Object.prototype.toString.call(object) === "[object Boolean]",
-      represent: (object) => object ? "true" : "false"
-    });
-    YAML_INTEGER_IMPLICIT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:0o[0-7]+|0x[0-9a-fA-F]+|[-+]?[0-9]+)$");
-    YAML_INTEGER_EXPLICIT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1]+|[-+]?0o[0-7]+|[-+]?0x[0-9a-fA-F]+|[-+]?[0-9]+)$");
-    intCoreTag = defineScalarTag("tag:yaml.org,2002:int", {
-      implicit: true,
-      implicitFirstChars: [
-        "-",
-        "+",
-        ..."0123456789"
-      ],
-      resolve: resolveYamlInteger$2,
-      identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
-      represent: (object) => object.toString(10)
-    });
-    YAML_INTEGER_IMPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^-?(?:0|[1-9][0-9]*)$");
-    YAML_INTEGER_EXPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1]+|[-+]?0o[0-7]+|[-+]?0x[0-9a-fA-F]+|[-+]?[0-9]+)$");
-    intJsonTag = defineScalarTag("tag:yaml.org,2002:int", {
-      implicit: true,
-      implicitFirstChars: ["-", ..."0123456789"],
-      resolve: resolveYamlInteger$1,
-      identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
-      represent: (object) => object.toString(10)
-    });
-    YAML_INTEGER_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?0x[0-9a-fA-F_]+|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+|[-+]?(?:0|[1-9][0-9_]*))$");
-    intYaml11Tag = defineScalarTag("tag:yaml.org,2002:int", {
-      implicit: true,
-      implicitFirstChars: [
-        "-",
-        "+",
-        ..."0123456789"
-      ],
-      resolve: resolveYamlInteger,
-      identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
-      represent: (object) => object.toString(10)
-    });
-    YAML_FLOAT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?[0-9]+(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|[-+]?\\.[0-9]+(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
-    YAML_FLOAT_SPECIAL_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
-    floatCoreTag = defineScalarTag("tag:yaml.org,2002:float", {
-      implicit: true,
-      implicitFirstChars: [
-        "-",
-        "+",
-        ".",
-        ..."0123456789"
-      ],
-      resolve: resolveYamlFloat$2,
-      identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
-      represent: representYamlFloat$2
-    });
-    YAML_FLOAT_IMPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$");
-    YAML_FLOAT_EXPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?[0-9]+(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|[-+]?\\.[0-9]+(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
-    floatJsonTag = defineScalarTag("tag:yaml.org,2002:float", {
-      implicit: true,
-      implicitFirstChars: ["-", ..."0123456789"],
-      resolve: resolveYamlFloat$1,
-      identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
-      represent: representYamlFloat$1
-    });
-    YAML_FLOAT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?(?:(?:[0-9][0-9_]*)?\\.[0-9_]*)(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
-    YAML_FLOAT_SPECIAL_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
-    floatYaml11Tag = defineScalarTag("tag:yaml.org,2002:float", {
-      implicit: true,
-      implicitFirstChars: [
-        "-",
-        "+",
-        ".",
-        ..."0123456789"
-      ],
-      resolve: resolveYamlFloat,
-      identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
-      represent: representYamlFloat
-    });
-    mergeTag = defineScalarTag("tag:yaml.org,2002:merge", {
-      implicit: true,
-      implicitFirstChars: ["<"],
-      resolve: (source, isExplicit) => {
-        if (source === "<<" || isExplicit && source === "") return MERGE_KEY;
-        return NOT_RESOLVED;
-      }
-    });
-    BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
-    binaryTag = defineScalarTag("tag:yaml.org,2002:binary", {
-      resolve: resolveYamlBinary,
-      identify: (object) => Object.prototype.toString.call(object) === "[object Uint8Array]",
-      represent: representYamlBinary
-    });
-    YAML_DATE_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])$");
-    YAML_TIMESTAMP_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9]?)-([0-9][0-9]?)(?:[Tt]|[ \\t]+)([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])(?:\\.([0-9]*))?(?:[ \\t]*(Z|([-+])([0-9][0-9]?)(?::([0-9][0-9]))?))?$");
-    timestampTag = defineScalarTag("tag:yaml.org,2002:timestamp", {
-      implicit: true,
-      implicitFirstChars: [..."0123456789"],
-      resolve: resolveYamlTimestamp,
-      identify: (object) => object instanceof Date,
-      represent: (object) => object.toISOString()
-    });
-    seqTag = defineSequenceTag("tag:yaml.org,2002:seq", {
-      create: () => [],
-      addItem: (container, item) => {
-        container.push(item);
-      },
-      identify: Array.isArray
-    });
-    omapTag = defineSequenceTag("tag:yaml.org,2002:omap", {
-      create: () => ({
-        list: [],
-        seen: /* @__PURE__ */ new Set()
-      }),
-      addItem: (carrier, item) => {
-        let key;
-        if (item instanceof Map) {
-          if (item.size !== 1) return "cannot resolve an ordered map item";
-          key = item.keys().next().value;
-        } else if (isPlainObject(item)) {
-          const itemKeys = Object.keys(item);
-          if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
-          key = itemKeys[0];
-        } else return "cannot resolve an ordered map item";
-        if (carrier.seen.has(key)) return "duplicate key in ordered map";
-        carrier.seen.add(key);
-        carrier.list.push(item);
-        return "";
-      },
-      finalize: (carrier) => carrier.list
-    });
-    pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
-      create: () => [],
-      addItem: (container, item) => {
-        if (item instanceof Map) {
-          if (item.size !== 1) return "cannot resolve a pairs item";
-          container.push(item.entries().next().value);
-          return "";
-        }
-        if (Object.prototype.toString.call(item) !== "[object Object]") return "cannot resolve a pairs item";
-        const object = item;
-        const keys = Object.keys(object);
-        if (keys.length !== 1) return "cannot resolve a pairs item";
-        container.push([keys[0], object[keys[0]]]);
-        return "";
-      }
-    });
-    mapTag = defineMappingTag("tag:yaml.org,2002:map", {
-      create: () => ({}),
-      identify: isPlainObject,
-      represent: (o) => {
-        const map = /* @__PURE__ */ new Map();
-        for (const key of Object.keys(o)) map.set(key, o[key]);
-        return map;
-      },
-      addPair: (container, key, value) => {
-        if (key !== null && typeof key === "object") return "object-based map does not support complex keys";
-        const normalizedKey = String(key);
-        if (normalizedKey === "__proto__") Object.defineProperty(container, normalizedKey, {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true
-        });
-        else container[normalizedKey] = value;
-        return "";
-      },
-      has: (container, key) => {
-        if (key !== null && typeof key === "object") return false;
-        return Object.prototype.hasOwnProperty.call(container, String(key));
-      },
-      keys: (container) => Object.keys(container),
-      get: (container, key) => container[String(key)]
-    });
-    setTag = defineMappingTag("tag:yaml.org,2002:set", {
-      create: () => /* @__PURE__ */ new Set(),
-      identify: (data) => data instanceof Set,
-      represent: (data) => {
-        const map = /* @__PURE__ */ new Map();
-        for (const key of data) map.set(key, null);
-        return map;
-      },
-      addPair: (container, key, value) => {
-        if (value !== null) return "cannot resolve a set item";
-        container.add(key);
-        return "";
-      },
-      has: (container, key) => container.has(key),
-      keys: (container) => container.keys(),
-      get: () => null
-    });
-    Schema = class Schema2 {
-      tags;
-      implicitScalarTags;
-      implicitScalarByFirstChar;
-      implicitScalarAnyFirstChar;
-      defaultScalarTag;
-      defaultSequenceTag;
-      defaultMappingTag;
-      exact;
-      prefix;
-      constructor(tags) {
-        const compiledTags = compileTags(tags);
-        const implicitScalarTags = [];
-        const exact = createTagDefinitionMap();
-        const prefix = createTagDefinitionListMap();
-        for (const tag of compiledTags) {
-          if (tag.nodeKind === "scalar" && tag.implicit) {
-            if (tag.matchByTagPrefix) throw new Error("Implicit scalar tags cannot match by tag prefix");
-            implicitScalarTags.push(tag);
-          }
-          switch (tag.nodeKind) {
-            case "scalar":
-              if (tag.matchByTagPrefix) prefix.scalar.push(tag);
-              else exact.scalar[tag.tagName] = tag;
-              break;
-            case "sequence":
-              if (tag.matchByTagPrefix) prefix.sequence.push(tag);
-              else exact.sequence[tag.tagName] = tag;
-              break;
-            case "mapping":
-              if (tag.matchByTagPrefix) prefix.mapping.push(tag);
-              else exact.mapping[tag.tagName] = tag;
-              break;
-          }
-        }
-        const implicitScalarAnyFirstChar = implicitScalarTags.filter((tag) => tag.implicitFirstChars === null);
-        const keys = /* @__PURE__ */ new Set();
-        for (const tag of implicitScalarTags) if (tag.implicitFirstChars !== null) for (const key of tag.implicitFirstChars) keys.add(key);
-        const implicitScalarByFirstChar = /* @__PURE__ */ new Map();
-        for (const key of keys) implicitScalarByFirstChar.set(key, implicitScalarTags.filter((tag) => tag.implicitFirstChars === null || tag.implicitFirstChars.indexOf(key) !== -1));
-        const defaultScalarTag = exact.scalar["tag:yaml.org,2002:str"];
-        if (!defaultScalarTag) throw new Error("schema does not define the default scalar tag (tag:yaml.org,2002:str)");
-        this.tags = compiledTags;
-        this.implicitScalarTags = implicitScalarTags;
-        this.implicitScalarByFirstChar = implicitScalarByFirstChar;
-        this.implicitScalarAnyFirstChar = implicitScalarAnyFirstChar;
-        this.defaultScalarTag = defaultScalarTag;
-        this.defaultSequenceTag = exact.sequence["tag:yaml.org,2002:seq"];
-        this.defaultMappingTag = exact.mapping["tag:yaml.org,2002:map"];
-        this.exact = exact;
-        this.prefix = prefix;
-      }
-      withTags(...tags) {
-        let flatTags = [];
-        for (const tag of tags) flatTags = flatTags.concat(tag);
-        return new Schema2([...this.tags, ...flatTags]);
-      }
-    };
-    FAILSAFE_SCHEMA = new Schema([
-      strTag,
-      seqTag,
-      mapTag
-    ]);
-    JSON_SCHEMA = new Schema([
-      ...FAILSAFE_SCHEMA.tags,
-      nullJsonTag,
-      boolJsonTag,
-      intJsonTag,
-      floatJsonTag
-    ]);
-    CORE_SCHEMA = new Schema([
-      ...FAILSAFE_SCHEMA.tags,
-      nullCoreTag,
-      boolCoreTag,
-      intCoreTag,
-      floatCoreTag
-    ]);
-    YAML11_SCHEMA = new Schema([
-      ...FAILSAFE_SCHEMA.tags,
-      nullYaml11Tag,
-      boolYaml11Tag,
-      intYaml11Tag,
-      floatYaml11Tag,
-      timestampTag,
-      mergeTag,
-      binaryTag,
-      omapTag,
-      pairsTag,
-      setTag
-    ]);
-    realMapTag = defineMappingTag("tag:yaml.org,2002:map", {
-      create: () => /* @__PURE__ */ new Map(),
-      addPair: (container, key, value) => {
-        container.set(key, value);
-        return "";
-      },
-      has: (container, key) => container.has(key),
-      keys: (container) => container.keys(),
-      get: (container, key) => container.get(key),
-      identify: (data) => data instanceof Map || isPlainObject(data),
-      represent: (data) => {
-        if (data instanceof Map) return data;
-        const map = /* @__PURE__ */ new Map();
-        const obj = data;
-        for (const key of Object.keys(obj)) map.set(key, obj[key]);
-        return map;
-      }
-    });
-    legacyMapTag = defineMappingTag("tag:yaml.org,2002:map", {
-      create: () => ({}),
-      identify: isPlainObject,
-      represent: (o) => {
-        const map = /* @__PURE__ */ new Map();
-        for (const key of Object.keys(o)) map.set(key, o[key]);
-        return map;
-      },
-      addPair: (container, key, value) => {
-        const normalizedKey = normalizeKey(key);
-        if (normalizedKey === null) return "nested arrays are not supported inside keys";
-        if (normalizedKey === "__proto__") Object.defineProperty(container, normalizedKey, {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true
-        });
-        else container[normalizedKey] = value;
-        return "";
-      },
-      has: (container, key) => {
-        const normalizedKey = normalizeKey(key);
-        return normalizedKey !== null && Object.prototype.hasOwnProperty.call(container, normalizedKey);
-      },
-      keys: (container) => Object.keys(container),
-      get: (container, key) => container[String(key)]
-    });
-    DEFAULT_SNIPPET_OPTIONS = {
-      maxLength: 79,
-      indent: 1,
-      linesBefore: 3,
-      linesAfter: 2
-    };
-    YAMLException = class extends Error {
-      reason;
-      mark;
-      constructor(reason, mark) {
-        super();
-        this.name = "YAMLException";
-        this.reason = reason;
-        this.mark = mark;
-        this.message = formatError(this, false);
-        if (Error.captureStackTrace) Error.captureStackTrace(this, this.constructor);
-      }
-      toString(compact) {
-        return `${this.name}: ${formatError(this, compact)}`;
-      }
-    };
-    NO_RANGE$3 = -1;
-    simpleEscapeCheck = new Array(256);
-    simpleEscapeMap = new Array(256);
-    for (let i = 0; i < 256; i++) {
-      simpleEscapeCheck[i] = simpleEscapeSequence(i) ? 1 : 0;
-      simpleEscapeMap[i] = simpleEscapeSequence(i);
-    }
-    DEFAULT_TAG_HANDLERS = {
-      "!": "!",
-      "!!": "tag:yaml.org,2002:"
-    };
-    NO_RANGE$2 = -1;
-    DEFAULT_CONSTRUCTOR_OPTIONS = {
-      filename: "",
-      schema: CORE_SCHEMA,
-      json: false,
-      maxTotalMergeKeys: 1e4,
-      maxAliases: -1
-    };
-    NO_RANGE$1 = -1;
-    HAS_OWN = Object.prototype.hasOwnProperty;
-    CONTEXT_FLOW_IN = 1;
-    CONTEXT_FLOW_OUT = 2;
-    CONTEXT_BLOCK_IN = 3;
-    CONTEXT_BLOCK_OUT = 4;
-    PATTERN_NON_PRINTABLE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/;
-    PATTERN_FLOW_INDICATORS = /[,\[\]{}]/;
-    PATTERN_TAG_HANDLE = /^(?:!|!!|![0-9A-Za-z-]+!)$/;
-    NS_URI_CHAR = String.raw`(?:%[0-9A-Fa-f]{2}|[0-9A-Za-z\-#;/?:@&=+$,_.!~*'()\[\]])`;
-    NS_TAG_CHAR = String.raw`(?:%[0-9A-Fa-f]{2}|[0-9A-Za-z\-#;/?:@&=+$.~*'()_])`;
-    PATTERN_TAG_URI = new RegExp(`^(?:${NS_URI_CHAR})*$`);
-    PATTERN_TAG_SUFFIX = new RegExp(`^(?:${NS_TAG_CHAR})+$`);
-    PATTERN_TAG_PREFIX = new RegExp(`^(?:!(?:${NS_URI_CHAR})*|${NS_TAG_CHAR}(?:${NS_URI_CHAR})*)$`);
-    DEFAULT_PARSER_OPTIONS = {
-      filename: "",
-      maxDepth: 100
-    };
-    DEFAULT_LOAD_OPTIONS = {
-      ...DEFAULT_PARSER_OPTIONS,
-      ...DEFAULT_CONSTRUCTOR_OPTIONS
-    };
-    Style = class {
-      tagged = false;
-      flow = false;
-      singleQuoted = false;
-      doubleQuoted = false;
-      literal = false;
-      folded = false;
-    };
-    INVALID = /* @__PURE__ */ Symbol("INVALID");
-    VISIT_BREAK = /* @__PURE__ */ Symbol("visit:break");
-    VISIT_SKIP = /* @__PURE__ */ Symbol("visit:skip");
-    CHAR_BOM = 65279;
-    CHAR_TAB = 9;
-    CHAR_LINE_FEED = 10;
-    CHAR_CARRIAGE_RETURN = 13;
-    CHAR_SPACE = 32;
-    CHAR_EXCLAMATION = 33;
-    CHAR_DOUBLE_QUOTE = 34;
-    CHAR_SHARP = 35;
-    CHAR_PERCENT = 37;
-    CHAR_AMPERSAND = 38;
-    CHAR_SINGLE_QUOTE = 39;
-    CHAR_ASTERISK = 42;
-    CHAR_COMMA = 44;
-    CHAR_MINUS = 45;
-    CHAR_COLON = 58;
-    CHAR_EQUALS = 61;
-    CHAR_GREATER_THAN = 62;
-    CHAR_QUESTION = 63;
-    CHAR_COMMERCIAL_AT = 64;
-    CHAR_LEFT_SQUARE_BRACKET = 91;
-    CHAR_RIGHT_SQUARE_BRACKET = 93;
-    CHAR_GRAVE_ACCENT = 96;
-    CHAR_LEFT_CURLY_BRACKET = 123;
-    CHAR_VERTICAL_LINE = 124;
-    CHAR_RIGHT_CURLY_BRACKET = 125;
-    ESCAPE_SEQUENCES = {};
-    ESCAPE_SEQUENCES[0] = "\\0";
-    ESCAPE_SEQUENCES[7] = "\\a";
-    ESCAPE_SEQUENCES[8] = "\\b";
-    ESCAPE_SEQUENCES[9] = "\\t";
-    ESCAPE_SEQUENCES[10] = "\\n";
-    ESCAPE_SEQUENCES[11] = "\\v";
-    ESCAPE_SEQUENCES[12] = "\\f";
-    ESCAPE_SEQUENCES[13] = "\\r";
-    ESCAPE_SEQUENCES[27] = "\\e";
-    ESCAPE_SEQUENCES[34] = '\\"';
-    ESCAPE_SEQUENCES[92] = "\\\\";
-    ESCAPE_SEQUENCES[133] = "\\N";
-    ESCAPE_SEQUENCES[160] = "\\_";
-    ESCAPE_SEQUENCES[8232] = "\\L";
-    ESCAPE_SEQUENCES[8233] = "\\P";
-    DEFAULT_PRESENTER_OPTIONS = {
-      indent: 2,
-      seqNoIndent: false,
-      seqInlineFirst: true,
-      sortKeys: false,
-      lineWidth: 80,
-      flowBracketPadding: false,
-      flowSkipCommaSpace: false,
-      flowSkipColonSpace: false,
-      quoteFlowKeys: false,
-      quoteStyle: "single",
-      forceQuotes: false,
-      tagBeforeAnchor: false
-    };
-    STYLE_PLAIN = 1;
-    STYLE_SINGLE = 2;
-    STYLE_LITERAL = 3;
-    STYLE_FOLDED = 4;
-    STYLE_DOUBLE = 5;
-    DEFAULT_DUMP_SCHEMA = YAML11_SCHEMA.withTags({
-      ...intYaml11Tag,
-      resolve: (source, isExplicit, tagName) => {
-        const result2 = intYaml11Tag.resolve(source, isExplicit, tagName);
-        return result2 === NOT_RESOLVED ? intCoreTag.resolve(source, isExplicit, tagName) : result2;
-      }
-    }, {
-      ...floatYaml11Tag,
-      resolve: (source, isExplicit, tagName) => {
-        const result2 = floatYaml11Tag.resolve(source, isExplicit, tagName);
-        return result2 === NOT_RESOLVED ? floatCoreTag.resolve(source, isExplicit, tagName) : result2;
-      }
-    });
-    DEFAULT_DUMP_OPTIONS = {
-      ...DEFAULT_PRESENTER_OPTIONS,
-      schema: DEFAULT_DUMP_SCHEMA,
-      skipInvalid: false,
-      noRefs: false,
-      flowLevel: -1,
-      transform: () => {
-      }
-    };
-  }
-});
-
-// src/domain/constants.ts
-var VERSION, ROUTER_DIR;
-var init_constants = __esm({
-  "src/domain/constants.ts"() {
-    "use strict";
-    VERSION = true ? "0.4.0" : "0.0.0-dev";
-    ROUTER_DIR = ".router";
-  }
-});
 
 // node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS({
@@ -4807,8 +1868,8 @@ var require_keyword = __commonJS({
       var _a;
       const { gen, keyword, schema, parentSchema, $data, it } = cxt;
       checkAsyncKeyword(it, def);
-      const validate2 = !$data && def.compile ? def.compile.call(it.self, schema, parentSchema, it) : def.validate;
-      const validateRef = useKeyword(gen, keyword, validate2);
+      const validate = !$data && def.compile ? def.compile.call(it.self, schema, parentSchema, it) : def.validate;
+      const validateRef = useKeyword(gen, keyword, validate);
       const valid = gen.let("valid");
       cxt.block$data(valid, validateKeyword);
       cxt.ok((_a = def.valid) !== null && _a !== void 0 ? _a : valid);
@@ -5881,28 +2942,28 @@ var require_compile = __commonJS({
         if (this.opts.code.process)
           sourceCode = this.opts.code.process(sourceCode, sch);
         const makeValidate = new Function(`${names_1.default.self}`, `${names_1.default.scope}`, sourceCode);
-        const validate2 = makeValidate(this, this.scope.get());
-        this.scope.value(validateName, { ref: validate2 });
-        validate2.errors = null;
-        validate2.schema = sch.schema;
-        validate2.schemaEnv = sch;
+        const validate = makeValidate(this, this.scope.get());
+        this.scope.value(validateName, { ref: validate });
+        validate.errors = null;
+        validate.schema = sch.schema;
+        validate.schemaEnv = sch;
         if (sch.$async)
-          validate2.$async = true;
+          validate.$async = true;
         if (this.opts.code.source === true) {
-          validate2.source = { validateName, validateCode, scopeValues: gen._values };
+          validate.source = { validateName, validateCode, scopeValues: gen._values };
         }
         if (this.opts.unevaluated) {
           const { props, items } = schemaCxt;
-          validate2.evaluated = {
+          validate.evaluated = {
             props: props instanceof codegen_1.Name ? void 0 : props,
             items: items instanceof codegen_1.Name ? void 0 : items,
             dynamicProps: props instanceof codegen_1.Name,
             dynamicItems: items instanceof codegen_1.Name
           };
-          if (validate2.source)
-            validate2.source.evaluated = (0, codegen_1.stringify)(validate2.evaluated);
+          if (validate.source)
+            validate.source.evaluated = (0, codegen_1.stringify)(validate.evaluated);
         }
-        sch.validate = validate2;
+        sch.validate = validate;
         return sch;
       } catch (e) {
         delete sch.validate;
@@ -9509,407 +6570,3002 @@ var require_ajv = __commonJS({
   }
 });
 
-// schema/policy.schema.json
-var policy_schema_default;
-var init_policy_schema = __esm({
-  "schema/policy.schema.json"() {
-    policy_schema_default = {
-      $schema: "http://json-schema.org/draft-07/schema#",
-      $id: "https://agent-router-cc/schema/policy.schema.json",
-      title: "router policy.yaml (human-maintained, in git)",
-      type: "object",
-      additionalProperties: false,
-      required: ["schema_version", "scope", "verification"],
-      properties: {
-        schema_version: { const: 1 },
-        max_concurrent_workers: { type: "integer", minimum: 1 },
-        quota_error_pattern: { type: "string", minLength: 1 },
-        worker: { $ref: "#/definitions/worker" },
-        workers: {
-          type: "array",
-          minItems: 1,
-          items: { $ref: "#/definitions/worker" }
-        },
-        scope: {
-          type: "object",
-          additionalProperties: false,
-          required: ["max_changed_lines"],
-          properties: {
-            forbidden_globs: {
-              type: "array",
-              items: { type: "string", minLength: 1 }
-            },
-            test_globs: {
-              type: "array",
-              items: { type: "string", minLength: 1 }
-            },
-            max_changed_lines: { type: "integer", minimum: 1 }
-          }
-        },
-        verification: {
-          type: "object",
-          minProperties: 1,
-          additionalProperties: {
-            type: "array",
-            minItems: 1,
-            items: {
-              type: "array",
-              minItems: 1,
-              items: { type: "string", minLength: 1 }
-            }
-          }
-        },
-        escalation: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            max_attempts: { type: "integer", minimum: 1 },
-            rescue_worker: { $ref: "#/definitions/worker" }
-          }
-        },
-        budget_caps: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            max_cost_usd: { type: "number", minimum: 0 },
-            max_tokens: { type: "integer", minimum: 0 }
-          }
-        },
-        secret_scan: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            enabled: { type: "boolean" },
-            extra_patterns: {
-              type: "array",
-              items: { type: "string", minLength: 1 }
-            }
-          }
-        },
-        pricing: {
-          type: "object",
-          additionalProperties: {
-            type: "object",
-            additionalProperties: false,
-            required: ["input_per_mtok", "output_per_mtok"],
-            properties: {
-              input_per_mtok: { type: "number", minimum: 0 },
-              output_per_mtok: { type: "number", minimum: 0 }
-            }
-          }
-        },
-        routing: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            estimate_tokens_default: { type: "number", minimum: 0 },
-            calibration_alpha: { type: "number", minimum: 0, maximum: 1 },
-            calibration_margin: { type: "number", minimum: 0 }
-          }
-        },
-        tiers: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            clear: { $ref: "#/definitions/worker" }
-          }
-        }
-      },
-      definitions: {
-        worker: {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind"],
-          properties: {
-            kind: { enum: ["codex", "claude"] },
-            api_key_env: { type: "string", minLength: 1 },
-            model: { type: "string", minLength: 1 },
-            max_wall_minutes_default: { type: "integer", minimum: 1 },
-            stall_minutes: { type: "integer", minimum: 1 },
-            budget: {
-              type: "object",
-              additionalProperties: false,
-              required: ["window_minutes", "budget_tokens"],
-              properties: {
-                window_minutes: { type: "number", minimum: 1 },
-                budget_tokens: { type: "number", minimum: 1 },
-                switch_at: { type: "number", exclusiveMinimum: 0, maximum: 1 }
-              }
-            }
-          }
-        }
+// src/cli/args.ts
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run"]);
+var VALUE_FLAGS = /* @__PURE__ */ new Set([
+  "id",
+  "title",
+  "run",
+  "state",
+  "attempt",
+  "since",
+  "router-dir",
+  "tokens-in",
+  "tokens-out",
+  "cost-usd",
+  "wall",
+  "model",
+  "keep-metrics"
+]);
+function parseArgs(argv) {
+  const verb = argv[0];
+  const rest = argv.slice(1);
+  const positionals = [];
+  const flags = {};
+  for (let i = 0; i < rest.length; i++) {
+    const tok = rest[i];
+    if (tok.startsWith("--")) {
+      const body = tok.slice(2);
+      const eq = body.indexOf("=");
+      if (eq !== -1) {
+        flags[body.slice(0, eq)] = body.slice(eq + 1);
+        continue;
       }
-    };
-  }
-});
-
-// schema/task_contract.schema.json
-var task_contract_schema_default;
-var init_task_contract_schema = __esm({
-  "schema/task_contract.schema.json"() {
-    task_contract_schema_default = {
-      $schema: "http://json-schema.org/draft-07/schema#",
-      $id: "https://agent-router-cc/schema/task_contract.schema.json",
-      title: "router task.yaml (machine contract, frozen at VALIDATED)",
-      type: "object",
-      additionalProperties: false,
-      required: [
-        "schema_version",
-        "id",
-        "title",
-        "max_wall_minutes",
-        "allowed_globs"
-      ],
-      properties: {
-        schema_version: { const: 1 },
-        id: {
-          type: "string",
-          minLength: 1,
-          maxLength: 128,
-          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-        },
-        title: { type: "string", minLength: 1 },
-        base_sha: {
-          type: ["string", "null"],
-          pattern: "^[0-9a-f]{40}$"
-        },
-        max_wall_minutes: { type: "integer", minimum: 1, maximum: 1440 },
-        allowed_globs: {
-          type: "array",
-          minItems: 1,
-          items: { type: "string", minLength: 1 }
-        },
-        forbidden_globs: {
-          type: "array",
-          items: { type: "string", minLength: 1 }
-        },
-        max_changed_lines: { type: "integer", minimum: 1 },
-        build_ref: { type: "string", minLength: 1 },
-        test_ref: { type: "string", minLength: 1 },
-        verify: {
-          type: "array",
-          items: {
-            type: "array",
-            minItems: 1,
-            items: { type: "string", minLength: 1 }
-          }
-        },
-        verification_params: {
-          type: "object",
-          additionalProperties: { type: "string" }
-        },
-        depends_on: {
-          type: "array",
-          items: { type: "string", minLength: 1 }
-        },
-        worker: {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind"],
-          properties: {
-            kind: { enum: ["codex", "claude"] },
-            api_key_env: { type: "string", minLength: 1 },
-            model: { type: "string", minLength: 1 },
-            max_wall_minutes_default: { type: "integer", minimum: 1 },
-            stall_minutes: { type: "integer", minimum: 1 }
-          }
-        }
-      }
-    };
-  }
-});
-
-// src/domain/validate.ts
-function fmt(errors) {
-  return (errors ?? []).map((e) => {
-    const where = e.instancePath === "" ? "(root)" : e.instancePath;
-    return `${where} ${e.message ?? "invalid"}`.trim();
-  });
-}
-function validatePolicy(data) {
-  const ok = validatePolicyFn(data);
-  return ok ? { ok: true, value: data, errors: [] } : { ok: false, value: null, errors: fmt(validatePolicyFn.errors) };
-}
-function validateTaskYaml(data) {
-  const ok = validateTaskFn(data);
-  return ok ? { ok: true, value: data, errors: [] } : { ok: false, value: null, errors: fmt(validateTaskFn.errors) };
-}
-var import_ajv, ajv, validatePolicyFn, validateTaskFn;
-var init_validate = __esm({
-  "src/domain/validate.ts"() {
-    "use strict";
-    import_ajv = __toESM(require_ajv(), 1);
-    init_policy_schema();
-    init_task_contract_schema();
-    ajv = new import_ajv.Ajv({ allErrors: true });
-    validatePolicyFn = ajv.compile(policy_schema_default);
-    validateTaskFn = ajv.compile(task_contract_schema_default);
-  }
-});
-
-// src/core/contractHash.ts
-import { createHash } from "node:crypto";
-function normalizeLF(s) {
-  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-function hashContract(taskYamlText, contractMdText) {
-  const payload = `router-contract-v1
---- task.yaml ---
-${normalizeLF(taskYamlText)}
---- TASK_CONTRACT.md ---
-${normalizeLF(contractMdText)}
-`;
-  return createHash("sha256").update(payload, "utf8").digest("hex");
-}
-var init_contractHash = __esm({
-  "src/core/contractHash.ts"() {
-    "use strict";
-  }
-});
-
-// src/core/stateMachine.ts
-function isTerminal(state) {
-  return TERMINAL.has(state);
-}
-function nextStates(from) {
-  if (isTerminal(from)) return [];
-  const base = TABLE[from];
-  const extra = ALWAYS.filter((s) => s !== from && !base.includes(s));
-  return [...base, ...extra];
-}
-function canTransition(from, to) {
-  return nextStates(from).includes(to);
-}
-function assertTransition(from, to) {
-  if (!canTransition(from, to)) throw new IllegalTransitionError(from, to);
-}
-var TERMINAL, ALWAYS, TABLE, IllegalTransitionError;
-var init_stateMachine = __esm({
-  "src/core/stateMachine.ts"() {
-    "use strict";
-    TERMINAL = /* @__PURE__ */ new Set(["MERGED", "CANCELLED", "ABANDONED"]);
-    ALWAYS = ["CANCELLED", "ABANDONED"];
-    TABLE = {
-      DRAFT: ["VALIDATED"],
-      VALIDATED: ["QUEUED", "DRAFT"],
-      QUEUED: ["RUNNING"],
-      RUNNING: ["VERIFYING", "STALE", "FAILED"],
-      VERIFYING: ["PASSED", "FAILED"],
-      PASSED: ["MERGED"],
-      MERGED: [],
-      STALE: ["QUEUED", "FAILED", "NEEDS_REPLAN"],
-      FAILED: ["ESCALATED_1", "ESCALATED_2", "NEEDS_REPLAN", "QUEUED"],
-      ESCALATED_1: ["RUNNING", "ESCALATED_2", "NEEDS_REPLAN"],
-      ESCALATED_2: ["RUNNING", "NEEDS_REPLAN"],
-      NEEDS_REPLAN: ["DRAFT"],
-      CANCELLED: [],
-      ABANDONED: []
-    };
-    IllegalTransitionError = class extends Error {
-      from;
-      to;
-      constructor(from, to) {
-        super(`illegal transition ${from} -> ${to}`);
-        this.name = "IllegalTransitionError";
-        this.from = from;
-        this.to = to;
-      }
-    };
-  }
-});
-
-// src/core/escalation.ts
-function ladderTargetAfterFailure(input) {
-  const { attemptNumber, maxAttempts, countsAsAttempt: countsAsAttempt2 } = input;
-  if (!countsAsAttempt2) return null;
-  if (maxAttempts === void 0 || maxAttempts < 2) return null;
-  if (attemptNumber >= maxAttempts) return "NEEDS_REPLAN";
-  return attemptNumber <= 1 ? "ESCALATED_1" : "ESCALATED_2";
-}
-function isRescueAttempt(fromState) {
-  return fromState === "ESCALATED_2";
-}
-function resolveRescueWorker(policy) {
-  const explicit = policy.escalation?.rescue_worker;
-  if (explicit !== void 0) return explicit;
-  const chain = policy.workers ?? (policy.worker !== void 0 ? [policy.worker] : []);
-  return chain.length > 0 ? chain[chain.length - 1] : void 0;
-}
-var init_escalation = __esm({
-  "src/core/escalation.ts"() {
-    "use strict";
-  }
-});
-
-// src/core/glob.ts
-function compile(glob) {
-  const cached = cache.get(glob);
-  if (cached !== void 0) return cached;
-  let re = "^";
-  let i = 0;
-  while (i < glob.length) {
-    const c = glob[i];
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        if (glob[i + 2] === "/") {
-          re += "(?:[^/]+/)*";
-          i += 3;
-        } else if (i + 2 >= glob.length) {
-          re += ".*";
-          i += 2;
+      if (BOOLEAN_FLAGS.has(body)) {
+        flags[body] = true;
+      } else if (VALUE_FLAGS.has(body)) {
+        const next = rest[i + 1];
+        if (next !== void 0 && !next.startsWith("--")) {
+          flags[body] = next;
+          i += 1;
         } else {
-          re += "[^/]*";
-          i += 2;
+          flags[body] = "";
         }
       } else {
-        re += "[^/]*";
-        i += 1;
+        flags[body] = true;
       }
-    } else if (c === "?") {
-      re += "[^/]";
-      i += 1;
-    } else if (REGEX_SPECIAL.has(c)) {
-      re += `\\${c}`;
-      i += 1;
     } else {
-      re += c;
-      i += 1;
+      positionals.push(tok);
     }
   }
-  re += "$";
-  const compiled = new RegExp(re);
-  cache.set(glob, compiled);
-  return compiled;
+  return { verb, positionals, flags };
 }
-function matchGlob(path, glob) {
-  return compile(glob).test(path);
+function flagStr(flags, key) {
+  const v = flags[key];
+  return typeof v === "string" ? v : void 0;
 }
-function matchAny(path, globs) {
-  return globs.some((g) => compile(g).test(path));
+function flagBool(flags, key) {
+  return flags[key] === true;
 }
-var cache, REGEX_SPECIAL;
-var init_glob = __esm({
-  "src/core/glob.ts"() {
-    "use strict";
-    cache = /* @__PURE__ */ new Map();
-    REGEX_SPECIAL = /* @__PURE__ */ new Set([".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
+
+// src/cli/commands.ts
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join7 } from "node:path";
+
+// node_modules/js-yaml/dist/js-yaml.mjs
+var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
+var MERGE_KEY = /* @__PURE__ */ Symbol("MERGE_KEY");
+function defineScalarTag(tagName, options) {
+  return {
+    tagName,
+    nodeKind: "scalar",
+    implicit: options.implicit ?? false,
+    matchByTagPrefix: options.matchByTagPrefix ?? false,
+    implicitFirstChars: options.implicitFirstChars ?? null,
+    resolve: options.resolve,
+    identify: options.identify ?? null,
+    represent: options.represent ?? ((data) => String(data)),
+    representTagName: options.representTagName ?? null
+  };
+}
+function defineSequenceTag(tagName, options) {
+  const carrierIsResult = options.finalize === void 0;
+  return {
+    tagName,
+    nodeKind: "sequence",
+    implicit: false,
+    matchByTagPrefix: options.matchByTagPrefix ?? false,
+    create: options.create,
+    addItem: options.addItem,
+    finalize: options.finalize ?? ((carrier) => carrier),
+    carrierIsResult,
+    identify: options.identify ?? null,
+    represent: options.represent ?? ((data) => data),
+    representTagName: options.representTagName ?? null
+  };
+}
+function defineMappingTag(tagName, options) {
+  const carrierIsResult = options.finalize === void 0;
+  return {
+    tagName,
+    nodeKind: "mapping",
+    implicit: false,
+    matchByTagPrefix: options.matchByTagPrefix ?? false,
+    create: options.create,
+    addPair: options.addPair,
+    has: options.has,
+    keys: options.keys,
+    get: options.get,
+    finalize: options.finalize ?? ((carrier) => carrier),
+    carrierIsResult,
+    identify: options.identify ?? null,
+    represent: options.represent ?? ((data) => data),
+    representTagName: options.representTagName ?? null
+  };
+}
+var strTag = defineScalarTag("tag:yaml.org,2002:str", {
+  resolve: (source) => source,
+  identify: (data) => typeof data === "string"
+});
+var NULL_VALUES$1 = [
+  "",
+  "~",
+  "null",
+  "Null",
+  "NULL"
+];
+var nullCoreTag = defineScalarTag("tag:yaml.org,2002:null", {
+  implicit: true,
+  implicitFirstChars: [
+    "",
+    "~",
+    "n",
+    "N"
+  ],
+  resolve: (source) => {
+    if (NULL_VALUES$1.indexOf(source) !== -1) return null;
+    return NOT_RESOLVED;
+  },
+  identify: (object) => object === null,
+  represent: () => "null"
+});
+var nullJsonTag = defineScalarTag("tag:yaml.org,2002:null", {
+  implicit: true,
+  implicitFirstChars: ["n"],
+  resolve: (source, isExplicit) => {
+    if (source === "null" || isExplicit && source === "") return null;
+    return NOT_RESOLVED;
+  },
+  identify: (object) => object === null,
+  represent: () => "null"
+});
+var NULL_VALUES = [
+  "",
+  "~",
+  "null",
+  "Null",
+  "NULL"
+];
+var nullYaml11Tag = defineScalarTag("tag:yaml.org,2002:null", {
+  implicit: true,
+  implicitFirstChars: [
+    "",
+    "~",
+    "n",
+    "N"
+  ],
+  resolve: (source) => {
+    if (NULL_VALUES.indexOf(source) !== -1) return null;
+    return NOT_RESOLVED;
+  },
+  identify: (object) => object === null,
+  represent: () => "null"
+});
+var TRUE_VALUES$2 = [
+  "true",
+  "True",
+  "TRUE"
+];
+var FALSE_VALUES$2 = [
+  "false",
+  "False",
+  "FALSE"
+];
+var boolCoreTag = defineScalarTag("tag:yaml.org,2002:bool", {
+  implicit: true,
+  implicitFirstChars: [
+    "t",
+    "T",
+    "f",
+    "F"
+  ],
+  resolve: (source) => {
+    if (TRUE_VALUES$2.indexOf(source) !== -1) return true;
+    if (FALSE_VALUES$2.indexOf(source) !== -1) return false;
+    return NOT_RESOLVED;
+  },
+  identify: (object) => Object.prototype.toString.call(object) === "[object Boolean]",
+  represent: (object) => object ? "true" : "false"
+});
+var TRUE_VALUES$1 = ["true"];
+var FALSE_VALUES$1 = ["false"];
+var boolJsonTag = defineScalarTag("tag:yaml.org,2002:bool", {
+  implicit: true,
+  implicitFirstChars: ["t", "f"],
+  resolve: (source) => {
+    if (TRUE_VALUES$1.indexOf(source) !== -1) return true;
+    if (FALSE_VALUES$1.indexOf(source) !== -1) return false;
+    return NOT_RESOLVED;
+  },
+  identify: (object) => Object.prototype.toString.call(object) === "[object Boolean]",
+  represent: (object) => object ? "true" : "false"
+});
+var TRUE_VALUES = [
+  "true",
+  "True",
+  "TRUE",
+  "y",
+  "Y",
+  "yes",
+  "Yes",
+  "YES",
+  "on",
+  "On",
+  "ON"
+];
+var FALSE_VALUES = [
+  "false",
+  "False",
+  "FALSE",
+  "n",
+  "N",
+  "no",
+  "No",
+  "NO",
+  "off",
+  "Off",
+  "OFF"
+];
+var boolYaml11Tag = defineScalarTag("tag:yaml.org,2002:bool", {
+  implicit: true,
+  implicitFirstChars: [
+    "y",
+    "Y",
+    "n",
+    "N",
+    "t",
+    "T",
+    "f",
+    "F",
+    "o",
+    "O"
+  ],
+  resolve: (source) => {
+    if (TRUE_VALUES.indexOf(source) !== -1) return true;
+    if (FALSE_VALUES.indexOf(source) !== -1) return false;
+    return NOT_RESOLVED;
+  },
+  identify: (object) => Object.prototype.toString.call(object) === "[object Boolean]",
+  represent: (object) => object ? "true" : "false"
+});
+var YAML_INTEGER_IMPLICIT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:0o[0-7]+|0x[0-9a-fA-F]+|[-+]?[0-9]+)$");
+var YAML_INTEGER_EXPLICIT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1]+|[-+]?0o[0-7]+|[-+]?0x[0-9a-fA-F]+|[-+]?[0-9]+)$");
+function parseYamlInteger$2(source) {
+  let value = source;
+  let sign = 1;
+  if (value[0] === "-" || value[0] === "+") {
+    if (value[0] === "-") sign = -1;
+    value = value.slice(1);
+  }
+  if (value.startsWith("0b")) return sign * parseInt(value.slice(2), 2);
+  if (value.startsWith("0o")) return sign * parseInt(value.slice(2), 8);
+  if (value.startsWith("0x")) return sign * parseInt(value.slice(2), 16);
+  return sign * parseInt(value, 10);
+}
+function resolveYamlInteger$2(source, isExplicit) {
+  if (isExplicit) {
+    if (!YAML_INTEGER_EXPLICIT_PATTERN$1.test(source)) return NOT_RESOLVED;
+  } else if (!YAML_INTEGER_IMPLICIT_PATTERN$1.test(source)) return NOT_RESOLVED;
+  const result2 = parseYamlInteger$2(source);
+  return Number.isFinite(result2) ? result2 : NOT_RESOLVED;
+}
+var intCoreTag = defineScalarTag("tag:yaml.org,2002:int", {
+  implicit: true,
+  implicitFirstChars: [
+    "-",
+    "+",
+    ..."0123456789"
+  ],
+  resolve: resolveYamlInteger$2,
+  identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
+  represent: (object) => object.toString(10)
+});
+var YAML_INTEGER_IMPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^-?(?:0|[1-9][0-9]*)$");
+var YAML_INTEGER_EXPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1]+|[-+]?0o[0-7]+|[-+]?0x[0-9a-fA-F]+|[-+]?[0-9]+)$");
+function parseYamlInteger$1(source) {
+  let value = source;
+  let sign = 1;
+  if (value[0] === "-" || value[0] === "+") {
+    if (value[0] === "-") sign = -1;
+    value = value.slice(1);
+  }
+  if (value.startsWith("0b")) return sign * parseInt(value.slice(2), 2);
+  if (value.startsWith("0o")) return sign * parseInt(value.slice(2), 8);
+  if (value.startsWith("0x")) return sign * parseInt(value.slice(2), 16);
+  return sign * parseInt(value, 10);
+}
+function resolveYamlInteger$1(source, isExplicit) {
+  if (isExplicit) {
+    if (!YAML_INTEGER_EXPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
+  } else if (!YAML_INTEGER_IMPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
+  const result2 = parseYamlInteger$1(source);
+  return Number.isFinite(result2) ? result2 : NOT_RESOLVED;
+}
+var intJsonTag = defineScalarTag("tag:yaml.org,2002:int", {
+  implicit: true,
+  implicitFirstChars: ["-", ..."0123456789"],
+  resolve: resolveYamlInteger$1,
+  identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
+  represent: (object) => object.toString(10)
+});
+var YAML_INTEGER_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?0x[0-9a-fA-F_]+|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+|[-+]?(?:0|[1-9][0-9_]*))$");
+function parseYamlInteger(source) {
+  let value = source.replace(/_/g, "");
+  let sign = 1;
+  if (value[0] === "-" || value[0] === "+") {
+    if (value[0] === "-") sign = -1;
+    value = value.slice(1);
+  }
+  if (value.startsWith("0b")) return sign * parseInt(value.slice(2), 2);
+  if (value.startsWith("0x")) return sign * parseInt(value.slice(2), 16);
+  if (value.includes(":")) {
+    let result2 = 0;
+    for (const part of value.split(":")) result2 = result2 * 60 + Number(part);
+    return sign * result2;
+  }
+  if (value !== "0" && value[0] === "0") return sign * parseInt(value, 8);
+  return sign * parseInt(value, 10);
+}
+function resolveYamlInteger(source) {
+  if (!YAML_INTEGER_PATTERN.test(source)) return NOT_RESOLVED;
+  const result2 = parseYamlInteger(source);
+  return Number.isFinite(result2) ? result2 : NOT_RESOLVED;
+}
+var intYaml11Tag = defineScalarTag("tag:yaml.org,2002:int", {
+  implicit: true,
+  implicitFirstChars: [
+    "-",
+    "+",
+    ..."0123456789"
+  ],
+  resolve: resolveYamlInteger,
+  identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
+  represent: (object) => object.toString(10)
+});
+var YAML_FLOAT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?[0-9]+(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|[-+]?\\.[0-9]+(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
+var YAML_FLOAT_SPECIAL_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
+function resolveYamlFloat$2(source) {
+  if (!YAML_FLOAT_PATTERN$1.test(source)) return NOT_RESOLVED;
+  let value = source.toLowerCase();
+  const sign = value[0] === "-" ? -1 : 1;
+  if ("+-".includes(value[0])) value = value.slice(1);
+  if (value === ".inf") return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  if (value === ".nan") return NaN;
+  const result2 = sign * parseFloat(value);
+  if (Number.isFinite(result2) || YAML_FLOAT_SPECIAL_PATTERN$1.test(source)) return result2;
+  return NOT_RESOLVED;
+}
+function representYamlFloat$2(object) {
+  if (isNaN(object)) return ".nan";
+  if (object === Number.POSITIVE_INFINITY) return ".inf";
+  if (object === Number.NEGATIVE_INFINITY) return "-.inf";
+  if (Object.is(object, -0)) return "-0.0";
+  const result2 = object.toString(10);
+  return /^[-+]?[0-9]+e/.test(result2) ? result2.replace("e", ".e") : result2;
+}
+var floatCoreTag = defineScalarTag("tag:yaml.org,2002:float", {
+  implicit: true,
+  implicitFirstChars: [
+    "-",
+    "+",
+    ".",
+    ..."0123456789"
+  ],
+  resolve: resolveYamlFloat$2,
+  identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
+  represent: representYamlFloat$2
+});
+var YAML_FLOAT_IMPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$");
+var YAML_FLOAT_EXPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?[0-9]+(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|[-+]?\\.[0-9]+(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
+function resolveYamlFloat$1(source, isExplicit) {
+  if (isExplicit) {
+    if (!YAML_FLOAT_EXPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
+    let value = source.toLowerCase();
+    const sign = value[0] === "-" ? -1 : 1;
+    if ("+-".includes(value[0])) value = value.slice(1);
+    if (value === ".inf") return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+    if (value === ".nan") return NaN;
+    const result3 = sign * parseFloat(value);
+    return Number.isFinite(result3) ? result3 : NOT_RESOLVED;
+  }
+  if (!YAML_FLOAT_IMPLICIT_PATTERN.test(source)) return NOT_RESOLVED;
+  const result2 = Number(source);
+  if (Number.isFinite(result2)) return result2;
+  return NOT_RESOLVED;
+}
+function representYamlFloat$1(object) {
+  if (isNaN(object)) return ".nan";
+  if (object === Number.POSITIVE_INFINITY) return ".inf";
+  if (object === Number.NEGATIVE_INFINITY) return "-.inf";
+  if (Object.is(object, -0)) return "-0.0";
+  const result2 = object.toString(10);
+  return /^[-+]?[0-9]+e/.test(result2) ? result2.replace("e", ".e") : result2;
+}
+var floatJsonTag = defineScalarTag("tag:yaml.org,2002:float", {
+  implicit: true,
+  implicitFirstChars: ["-", ..."0123456789"],
+  resolve: resolveYamlFloat$1,
+  identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
+  represent: representYamlFloat$1
+});
+var YAML_FLOAT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?(?:(?:[0-9][0-9_]*)?\\.[0-9_]*)(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
+var YAML_FLOAT_SPECIAL_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
+function resolveYamlFloat(source) {
+  if (!YAML_FLOAT_PATTERN.test(source)) return NOT_RESOLVED;
+  let value = source.toLowerCase().replace(/_/g, "");
+  const sign = value[0] === "-" ? -1 : 1;
+  if ("+-".includes(value[0])) value = value.slice(1);
+  if (value === ".inf") return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  if (value === ".nan") return NaN;
+  let result2 = 0;
+  if (value.includes(":")) {
+    for (const part of value.split(":")) result2 = result2 * 60 + Number(part);
+    result2 *= sign;
+  } else result2 = sign * parseFloat(value);
+  if (Number.isFinite(result2) || YAML_FLOAT_SPECIAL_PATTERN.test(source)) return result2;
+  return NOT_RESOLVED;
+}
+function representYamlFloat(object) {
+  if (isNaN(object)) return ".nan";
+  if (object === Number.POSITIVE_INFINITY) return ".inf";
+  if (object === Number.NEGATIVE_INFINITY) return "-.inf";
+  if (Object.is(object, -0)) return "-0.0";
+  const result2 = object.toString(10);
+  return /^[-+]?[0-9]+e/.test(result2) ? result2.replace("e", ".e") : result2;
+}
+var floatYaml11Tag = defineScalarTag("tag:yaml.org,2002:float", {
+  implicit: true,
+  implicitFirstChars: [
+    "-",
+    "+",
+    ".",
+    ..."0123456789"
+  ],
+  resolve: resolveYamlFloat,
+  identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
+  represent: representYamlFloat
+});
+var mergeTag = defineScalarTag("tag:yaml.org,2002:merge", {
+  implicit: true,
+  implicitFirstChars: ["<"],
+  resolve: (source, isExplicit) => {
+    if (source === "<<" || isExplicit && source === "") return MERGE_KEY;
+    return NOT_RESOLVED;
   }
 });
+var BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+function resolveYamlBinary(source) {
+  const input = source.replace(/\s/g, "");
+  if (input.length % 4 !== 0 || !BASE64_PATTERN.test(input)) return NOT_RESOLVED;
+  const binary = atob(input);
+  const result2 = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) result2[index] = binary.charCodeAt(index);
+  return result2;
+}
+function representYamlBinary(object) {
+  let binary = "";
+  for (let index = 0; index < object.length; index++) binary += String.fromCharCode(object[index]);
+  return btoa(binary);
+}
+var binaryTag = defineScalarTag("tag:yaml.org,2002:binary", {
+  resolve: resolveYamlBinary,
+  identify: (object) => Object.prototype.toString.call(object) === "[object Uint8Array]",
+  represent: representYamlBinary
+});
+var YAML_DATE_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])$");
+var YAML_TIMESTAMP_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9]?)-([0-9][0-9]?)(?:[Tt]|[ \\t]+)([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])(?:\\.([0-9]*))?(?:[ \\t]*(Z|([-+])([0-9][0-9]?)(?::([0-9][0-9]))?))?$");
+function resolveYamlTimestamp(source) {
+  let match = YAML_DATE_REGEXP.exec(source);
+  if (match === null) match = YAML_TIMESTAMP_REGEXP.exec(source);
+  if (match === null) return NOT_RESOLVED;
+  const year = +match[1];
+  const month = +match[2] - 1;
+  const day = +match[3];
+  if (!match[4]) {
+    const date2 = new Date(Date.UTC(year, month, day));
+    if (date2.getUTCFullYear() !== year || date2.getUTCMonth() !== month || date2.getUTCDate() !== day) return NOT_RESOLVED;
+    return date2;
+  }
+  const hour = +match[4];
+  const minute = +match[5];
+  const second = +match[6];
+  let fraction = 0;
+  if (hour > 23 || minute > 59 || second > 59) return NOT_RESOLVED;
+  if (match[7]) {
+    let value = match[7].slice(0, 3);
+    while (value.length < 3) value += "0";
+    fraction = +value;
+  }
+  const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return NOT_RESOLVED;
+  if (match[9]) {
+    const offsetHour = +match[10];
+    const offsetMinute = +(match[11] || 0);
+    if (offsetHour > 23 || offsetMinute > 59) return NOT_RESOLVED;
+    const offset = (offsetHour * 60 + offsetMinute) * 6e4;
+    date.setTime(date.getTime() - (match[9] === "-" ? -offset : offset));
+  }
+  return date;
+}
+var timestampTag = defineScalarTag("tag:yaml.org,2002:timestamp", {
+  implicit: true,
+  implicitFirstChars: [..."0123456789"],
+  resolve: resolveYamlTimestamp,
+  identify: (object) => object instanceof Date,
+  represent: (object) => object.toISOString()
+});
+var seqTag = defineSequenceTag("tag:yaml.org,2002:seq", {
+  create: () => [],
+  addItem: (container, item) => {
+    container.push(item);
+  },
+  identify: Array.isArray
+});
+function isPlainObject(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+  const prototype = Object.getPrototypeOf(data);
+  return prototype === null || prototype === Object.prototype;
+}
+function pick(object, keys) {
+  const result2 = {};
+  for (const key of keys) if (object[key] !== void 0) result2[key] = object[key];
+  return result2;
+}
+var omapTag = defineSequenceTag("tag:yaml.org,2002:omap", {
+  create: () => ({
+    list: [],
+    seen: /* @__PURE__ */ new Set()
+  }),
+  addItem: (carrier, item) => {
+    let key;
+    if (item instanceof Map) {
+      if (item.size !== 1) return "cannot resolve an ordered map item";
+      key = item.keys().next().value;
+    } else if (isPlainObject(item)) {
+      const itemKeys = Object.keys(item);
+      if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
+      key = itemKeys[0];
+    } else return "cannot resolve an ordered map item";
+    if (carrier.seen.has(key)) return "duplicate key in ordered map";
+    carrier.seen.add(key);
+    carrier.list.push(item);
+    return "";
+  },
+  finalize: (carrier) => carrier.list
+});
+var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
+  create: () => [],
+  addItem: (container, item) => {
+    if (item instanceof Map) {
+      if (item.size !== 1) return "cannot resolve a pairs item";
+      container.push(item.entries().next().value);
+      return "";
+    }
+    if (Object.prototype.toString.call(item) !== "[object Object]") return "cannot resolve a pairs item";
+    const object = item;
+    const keys = Object.keys(object);
+    if (keys.length !== 1) return "cannot resolve a pairs item";
+    container.push([keys[0], object[keys[0]]]);
+    return "";
+  }
+});
+var mapTag = defineMappingTag("tag:yaml.org,2002:map", {
+  create: () => ({}),
+  identify: isPlainObject,
+  represent: (o) => {
+    const map = /* @__PURE__ */ new Map();
+    for (const key of Object.keys(o)) map.set(key, o[key]);
+    return map;
+  },
+  addPair: (container, key, value) => {
+    if (key !== null && typeof key === "object") return "object-based map does not support complex keys";
+    const normalizedKey = String(key);
+    if (normalizedKey === "__proto__") Object.defineProperty(container, normalizedKey, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+    else container[normalizedKey] = value;
+    return "";
+  },
+  has: (container, key) => {
+    if (key !== null && typeof key === "object") return false;
+    return Object.prototype.hasOwnProperty.call(container, String(key));
+  },
+  keys: (container) => Object.keys(container),
+  get: (container, key) => container[String(key)]
+});
+var setTag = defineMappingTag("tag:yaml.org,2002:set", {
+  create: () => /* @__PURE__ */ new Set(),
+  identify: (data) => data instanceof Set,
+  represent: (data) => {
+    const map = /* @__PURE__ */ new Map();
+    for (const key of data) map.set(key, null);
+    return map;
+  },
+  addPair: (container, key, value) => {
+    if (value !== null) return "cannot resolve a set item";
+    container.add(key);
+    return "";
+  },
+  has: (container, key) => container.has(key),
+  keys: (container) => container.keys(),
+  get: () => null
+});
+function createTagDefinitionMap() {
+  return {
+    scalar: {},
+    sequence: {},
+    mapping: {}
+  };
+}
+function createTagDefinitionListMap() {
+  return {
+    scalar: [],
+    sequence: [],
+    mapping: []
+  };
+}
+function compileTags(tags) {
+  const result2 = [];
+  for (const tag of tags) {
+    let index = result2.length;
+    for (let previousIndex = 0; previousIndex < result2.length; previousIndex++) {
+      const previous = result2[previousIndex];
+      if (previous.nodeKind === tag.nodeKind && previous.tagName === tag.tagName && previous.matchByTagPrefix === tag.matchByTagPrefix) {
+        index = previousIndex;
+        break;
+      }
+    }
+    result2[index] = tag;
+  }
+  return result2;
+}
+var Schema = class Schema2 {
+  tags;
+  implicitScalarTags;
+  implicitScalarByFirstChar;
+  implicitScalarAnyFirstChar;
+  defaultScalarTag;
+  defaultSequenceTag;
+  defaultMappingTag;
+  exact;
+  prefix;
+  constructor(tags) {
+    const compiledTags = compileTags(tags);
+    const implicitScalarTags = [];
+    const exact = createTagDefinitionMap();
+    const prefix = createTagDefinitionListMap();
+    for (const tag of compiledTags) {
+      if (tag.nodeKind === "scalar" && tag.implicit) {
+        if (tag.matchByTagPrefix) throw new Error("Implicit scalar tags cannot match by tag prefix");
+        implicitScalarTags.push(tag);
+      }
+      switch (tag.nodeKind) {
+        case "scalar":
+          if (tag.matchByTagPrefix) prefix.scalar.push(tag);
+          else exact.scalar[tag.tagName] = tag;
+          break;
+        case "sequence":
+          if (tag.matchByTagPrefix) prefix.sequence.push(tag);
+          else exact.sequence[tag.tagName] = tag;
+          break;
+        case "mapping":
+          if (tag.matchByTagPrefix) prefix.mapping.push(tag);
+          else exact.mapping[tag.tagName] = tag;
+          break;
+      }
+    }
+    const implicitScalarAnyFirstChar = implicitScalarTags.filter((tag) => tag.implicitFirstChars === null);
+    const keys = /* @__PURE__ */ new Set();
+    for (const tag of implicitScalarTags) if (tag.implicitFirstChars !== null) for (const key of tag.implicitFirstChars) keys.add(key);
+    const implicitScalarByFirstChar = /* @__PURE__ */ new Map();
+    for (const key of keys) implicitScalarByFirstChar.set(key, implicitScalarTags.filter((tag) => tag.implicitFirstChars === null || tag.implicitFirstChars.indexOf(key) !== -1));
+    const defaultScalarTag = exact.scalar["tag:yaml.org,2002:str"];
+    if (!defaultScalarTag) throw new Error("schema does not define the default scalar tag (tag:yaml.org,2002:str)");
+    this.tags = compiledTags;
+    this.implicitScalarTags = implicitScalarTags;
+    this.implicitScalarByFirstChar = implicitScalarByFirstChar;
+    this.implicitScalarAnyFirstChar = implicitScalarAnyFirstChar;
+    this.defaultScalarTag = defaultScalarTag;
+    this.defaultSequenceTag = exact.sequence["tag:yaml.org,2002:seq"];
+    this.defaultMappingTag = exact.mapping["tag:yaml.org,2002:map"];
+    this.exact = exact;
+    this.prefix = prefix;
+  }
+  withTags(...tags) {
+    let flatTags = [];
+    for (const tag of tags) flatTags = flatTags.concat(tag);
+    return new Schema2([...this.tags, ...flatTags]);
+  }
+};
+var FAILSAFE_SCHEMA = new Schema([
+  strTag,
+  seqTag,
+  mapTag
+]);
+var JSON_SCHEMA = new Schema([
+  ...FAILSAFE_SCHEMA.tags,
+  nullJsonTag,
+  boolJsonTag,
+  intJsonTag,
+  floatJsonTag
+]);
+var CORE_SCHEMA = new Schema([
+  ...FAILSAFE_SCHEMA.tags,
+  nullCoreTag,
+  boolCoreTag,
+  intCoreTag,
+  floatCoreTag
+]);
+var YAML11_SCHEMA = new Schema([
+  ...FAILSAFE_SCHEMA.tags,
+  nullYaml11Tag,
+  boolYaml11Tag,
+  intYaml11Tag,
+  floatYaml11Tag,
+  timestampTag,
+  mergeTag,
+  binaryTag,
+  omapTag,
+  pairsTag,
+  setTag
+]);
+var realMapTag = defineMappingTag("tag:yaml.org,2002:map", {
+  create: () => /* @__PURE__ */ new Map(),
+  addPair: (container, key, value) => {
+    container.set(key, value);
+    return "";
+  },
+  has: (container, key) => container.has(key),
+  keys: (container) => container.keys(),
+  get: (container, key) => container.get(key),
+  identify: (data) => data instanceof Map || isPlainObject(data),
+  represent: (data) => {
+    if (data instanceof Map) return data;
+    const map = /* @__PURE__ */ new Map();
+    const obj = data;
+    for (const key of Object.keys(obj)) map.set(key, obj[key]);
+    return map;
+  }
+});
+function normalizeKey(key) {
+  if (Array.isArray(key)) {
+    const array = Array.prototype.slice.call(key);
+    for (let index = 0; index < array.length; index++) {
+      if (Array.isArray(array[index])) return null;
+      if (typeof array[index] === "object" && Object.prototype.toString.call(array[index]) === "[object Object]") array[index] = "[object Object]";
+    }
+    return String(array);
+  }
+  if (typeof key === "object" && Object.prototype.toString.call(key) === "[object Object]") return "[object Object]";
+  return String(key);
+}
+var legacyMapTag = defineMappingTag("tag:yaml.org,2002:map", {
+  create: () => ({}),
+  identify: isPlainObject,
+  represent: (o) => {
+    const map = /* @__PURE__ */ new Map();
+    for (const key of Object.keys(o)) map.set(key, o[key]);
+    return map;
+  },
+  addPair: (container, key, value) => {
+    const normalizedKey = normalizeKey(key);
+    if (normalizedKey === null) return "nested arrays are not supported inside keys";
+    if (normalizedKey === "__proto__") Object.defineProperty(container, normalizedKey, {
+      value,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+    else container[normalizedKey] = value;
+    return "";
+  },
+  has: (container, key) => {
+    const normalizedKey = normalizeKey(key);
+    return normalizedKey !== null && Object.prototype.hasOwnProperty.call(container, normalizedKey);
+  },
+  keys: (container) => Object.keys(container),
+  get: (container, key) => container[String(key)]
+});
+var DEFAULT_SNIPPET_OPTIONS = {
+  maxLength: 79,
+  indent: 1,
+  linesBefore: 3,
+  linesAfter: 2
+};
+function getLine(buffer, lineStart, lineEnd, position, maxLineLength) {
+  let head = "";
+  let tail = "";
+  const maxHalfLength = Math.floor(maxLineLength / 2) - 1;
+  if (position - lineStart > maxHalfLength) {
+    head = " ... ";
+    lineStart = position - maxHalfLength + head.length;
+  }
+  if (lineEnd - position > maxHalfLength) {
+    tail = " ...";
+    lineEnd = position + maxHalfLength - tail.length;
+  }
+  return {
+    str: head + buffer.slice(lineStart, lineEnd).replace(/\t/g, "\u2192") + tail,
+    pos: position - lineStart + head.length
+  };
+}
+function padStart(string, max) {
+  return " ".repeat(Math.max(max - string.length, 0)) + string;
+}
+function makeSnippet(mark, options) {
+  if (!mark.buffer) return null;
+  const opts = {
+    ...DEFAULT_SNIPPET_OPTIONS,
+    ...options
+  };
+  const re = /\r?\n|\r|\0/g;
+  const lineStarts = [0];
+  const lineEnds = [];
+  let match;
+  let foundLineNo = -1;
+  while (match = re.exec(mark.buffer)) {
+    lineEnds.push(match.index);
+    lineStarts.push(match.index + match[0].length);
+    if (mark.position <= match.index && foundLineNo < 0) foundLineNo = lineStarts.length - 2;
+  }
+  if (foundLineNo < 0) foundLineNo = lineStarts.length - 1;
+  let result2 = "";
+  const lineNoLength = Math.min(mark.line + opts.linesAfter, lineEnds.length).toString().length;
+  const maxLineLength = opts.maxLength - (opts.indent + lineNoLength + 3);
+  for (let i = 1; i <= opts.linesBefore; i++) {
+    if (foundLineNo - i < 0) break;
+    const line2 = getLine(mark.buffer, lineStarts[foundLineNo - i], lineEnds[foundLineNo - i], mark.position - (lineStarts[foundLineNo] - lineStarts[foundLineNo - i]), maxLineLength);
+    result2 = `${" ".repeat(opts.indent)}${padStart((mark.line - i + 1).toString(), lineNoLength)} | ${line2.str}
+${result2}`;
+  }
+  const line = getLine(mark.buffer, lineStarts[foundLineNo], lineEnds[foundLineNo], mark.position, maxLineLength);
+  result2 += `${" ".repeat(opts.indent)}${padStart((mark.line + 1).toString(), lineNoLength)} | ${line.str}
+`;
+  result2 += `${"-".repeat(opts.indent + lineNoLength + 3 + line.pos)}^
+`;
+  for (let i = 1; i <= opts.linesAfter; i++) {
+    if (foundLineNo + i >= lineEnds.length) break;
+    const line2 = getLine(mark.buffer, lineStarts[foundLineNo + i], lineEnds[foundLineNo + i], mark.position - (lineStarts[foundLineNo] - lineStarts[foundLineNo + i]), maxLineLength);
+    result2 += `${" ".repeat(opts.indent)}${padStart((mark.line + i + 1).toString(), lineNoLength)} | ${line2.str}
+`;
+  }
+  return result2.replace(/\n$/, "");
+}
+function formatError(exception, compact) {
+  let where = "";
+  if (!exception.mark) return exception.reason;
+  if (exception.mark.name) where += `in "${exception.mark.name}" `;
+  where += `(${exception.mark.line + 1}:${exception.mark.column + 1})`;
+  if (!compact && exception.mark.snippet) where += `
 
-// src/io/clock.ts
-var systemClock;
-var init_clock = __esm({
-  "src/io/clock.ts"() {
-    "use strict";
-    systemClock = {
-      nowIso: () => (/* @__PURE__ */ new Date()).toISOString(),
-      monotonicMs: () => performance.now()
+${exception.mark.snippet}`;
+  return `${exception.reason} ${where}`;
+}
+var YAMLException = class extends Error {
+  reason;
+  mark;
+  constructor(reason, mark) {
+    super();
+    this.name = "YAMLException";
+    this.reason = reason;
+    this.mark = mark;
+    this.message = formatError(this, false);
+    if (Error.captureStackTrace) Error.captureStackTrace(this, this.constructor);
+  }
+  toString(compact) {
+    return `${this.name}: ${formatError(this, compact)}`;
+  }
+};
+function throwErrorAt(source, position, message, filename = "") {
+  let line = 0;
+  let lineStart = 0;
+  for (let index = 0; index < position; index++) {
+    const ch = source.charCodeAt(index);
+    if (ch === 10) {
+      line++;
+      lineStart = index + 1;
+    } else if (ch === 13) {
+      line++;
+      if (source.charCodeAt(index + 1) === 10) index++;
+      lineStart = index + 1;
+    }
+  }
+  const mark = {
+    name: filename,
+    buffer: source,
+    position,
+    line,
+    column: position - lineStart
+  };
+  mark.snippet = makeSnippet(mark);
+  throw new YAMLException(message, mark);
+}
+var NO_RANGE$3 = -1;
+function simpleEscapeSequence(c) {
+  switch (c) {
+    case 48:
+      return "\0";
+    case 97:
+      return "\x07";
+    case 98:
+      return "\b";
+    case 116:
+      return "	";
+    case 9:
+      return "	";
+    case 110:
+      return "\n";
+    case 118:
+      return "\v";
+    case 102:
+      return "\f";
+    case 114:
+      return "\r";
+    case 101:
+      return "\x1B";
+    case 32:
+      return " ";
+    case 34:
+      return '"';
+    case 47:
+      return "/";
+    case 92:
+      return "\\";
+    case 78:
+      return "\x85";
+    case 95:
+      return "\xA0";
+    case 76:
+      return "\u2028";
+    case 80:
+      return "\u2029";
+    default:
+      return "";
+  }
+}
+var simpleEscapeCheck = new Array(256);
+var simpleEscapeMap = new Array(256);
+for (let i = 0; i < 256; i++) {
+  simpleEscapeCheck[i] = simpleEscapeSequence(i) ? 1 : 0;
+  simpleEscapeMap[i] = simpleEscapeSequence(i);
+}
+function charFromCodepoint(c) {
+  if (c <= 65535) return String.fromCharCode(c);
+  return String.fromCharCode((c - 65536 >> 10) + 55296, (c - 65536 & 1023) + 56320);
+}
+function fromHexCode$1(c) {
+  if (c >= 48 && c <= 57) return c - 48;
+  return (c | 32) - 97 + 10;
+}
+function escapedHexLen$1(c) {
+  if (c === 120) return 2;
+  if (c === 117) return 4;
+  return 8;
+}
+function skipFoldedBreaks(input, position, end) {
+  let breaks = 0;
+  while (position < end) {
+    const ch = input.charCodeAt(position);
+    if (ch === 10) {
+      breaks++;
+      position++;
+    } else if (ch === 13) {
+      breaks++;
+      position++;
+      if (input.charCodeAt(position) === 10) position++;
+    } else if (ch === 32 || ch === 9) position++;
+    else break;
+  }
+  return {
+    position,
+    breaks
+  };
+}
+function foldedBreaks(count) {
+  if (count === 1) return " ";
+  return "\n".repeat(count - 1);
+}
+function getPlainValue(input, start, end) {
+  let result2 = "";
+  let position = start;
+  let captureStart = start;
+  let captureEnd = start;
+  while (position < end) {
+    const ch = input.charCodeAt(position);
+    if (ch === 10 || ch === 13) {
+      result2 += input.slice(captureStart, captureEnd);
+      const fold = skipFoldedBreaks(input, position, end);
+      result2 += foldedBreaks(fold.breaks);
+      position = captureStart = captureEnd = fold.position;
+    } else {
+      position++;
+      if (ch !== 32 && ch !== 9) captureEnd = position;
+    }
+  }
+  return result2 + input.slice(captureStart, captureEnd);
+}
+function getSingleQuotedValue(input, start, end) {
+  let result2 = "";
+  let position = start;
+  let captureStart = start;
+  let captureEnd = start;
+  while (position < end) {
+    const ch = input.charCodeAt(position);
+    if (ch === 39) {
+      result2 += input.slice(captureStart, position) + "'";
+      position += 2;
+      captureStart = captureEnd = position;
+    } else if (ch === 10 || ch === 13) {
+      result2 += input.slice(captureStart, captureEnd);
+      const fold = skipFoldedBreaks(input, position, end);
+      result2 += foldedBreaks(fold.breaks);
+      position = captureStart = captureEnd = fold.position;
+    } else {
+      position++;
+      if (ch !== 32 && ch !== 9) captureEnd = position;
+    }
+  }
+  return result2 + input.slice(captureStart, end);
+}
+function getDoubleQuotedValue(input, start, end) {
+  let result2 = "";
+  let position = start;
+  let captureStart = start;
+  let captureEnd = start;
+  while (position < end) {
+    const ch = input.charCodeAt(position);
+    if (ch === 92) {
+      result2 += input.slice(captureStart, position);
+      position++;
+      const escaped = input.charCodeAt(position);
+      if (escaped === 10 || escaped === 13) position = skipFoldedBreaks(input, position, end).position;
+      else if (escaped < 256 && simpleEscapeCheck[escaped]) {
+        result2 += simpleEscapeMap[escaped];
+        position++;
+      } else {
+        let hexLength = escapedHexLen$1(escaped);
+        let hexResult = 0;
+        for (; hexLength > 0; hexLength--) {
+          position++;
+          const digit = fromHexCode$1(input.charCodeAt(position));
+          hexResult = (hexResult << 4) + digit;
+        }
+        result2 += charFromCodepoint(hexResult);
+        position++;
+      }
+      captureStart = captureEnd = position;
+    } else if (ch === 10 || ch === 13) {
+      result2 += input.slice(captureStart, captureEnd);
+      const fold = skipFoldedBreaks(input, position, end);
+      result2 += foldedBreaks(fold.breaks);
+      position = captureStart = captureEnd = fold.position;
+    } else {
+      position++;
+      if (ch !== 32 && ch !== 9) captureEnd = position;
+    }
+  }
+  return result2 + input.slice(captureStart, end);
+}
+function getBlockValue(input, start, end, indent, chomping, folded) {
+  const textIndent = indent < 0 ? 0 : indent;
+  const region = input.slice(start, end).replace(/\r\n?/g, "\n");
+  const lines = region === "" ? [] : (region.endsWith("\n") ? region.slice(0, -1) : region).split("\n");
+  let result2 = "";
+  let didReadContent = false;
+  let emptyLines = 0;
+  let atMoreIndented = false;
+  for (const line of lines) {
+    let column = 0;
+    while (column < textIndent && line.charCodeAt(column) === 32) column++;
+    if (indent < 0 || column >= line.length) {
+      emptyLines++;
+      continue;
+    }
+    const content = line.slice(textIndent);
+    const first = content.charCodeAt(0);
+    if (folded) if (first === 32 || first === 9) {
+      atMoreIndented = true;
+      result2 += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
+    } else if (atMoreIndented) {
+      atMoreIndented = false;
+      result2 += "\n".repeat(emptyLines + 1);
+    } else if (emptyLines === 0) {
+      if (didReadContent) result2 += " ";
+    } else result2 += "\n".repeat(emptyLines);
+    else result2 += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
+    result2 += content;
+    didReadContent = true;
+    emptyLines = 0;
+  }
+  if (chomping === 3) result2 += "\n".repeat(didReadContent ? 1 + emptyLines : emptyLines);
+  else if (chomping !== 2) {
+    if (didReadContent) result2 += "\n";
+  }
+  return result2;
+}
+function getScalarValue(input, scalar) {
+  if (scalar.valueStart === NO_RANGE$3) return "";
+  const { valueStart, valueEnd } = scalar;
+  if (scalar.fast) return input.slice(valueStart, valueEnd);
+  switch (scalar.style) {
+    case 2:
+      return getSingleQuotedValue(input, valueStart, valueEnd);
+    case 3:
+      return getDoubleQuotedValue(input, valueStart, valueEnd);
+    case 4:
+      return getBlockValue(input, valueStart, valueEnd, scalar.indent, scalar.chomping, false);
+    case 5:
+      return getBlockValue(input, valueStart, valueEnd, scalar.indent, scalar.chomping, true);
+    default:
+      return getPlainValue(input, valueStart, valueEnd);
+  }
+}
+var DEFAULT_TAG_HANDLERS = {
+  "!": "!",
+  "!!": "tag:yaml.org,2002:"
+};
+function tagPercentEncode(source) {
+  return encodeURI(source).replace(/!/g, "%21");
+}
+function tagNameFull(rawTag, tagHandlers) {
+  if (rawTag.startsWith("!<") && rawTag.endsWith(">")) return decodeURIComponent(rawTag.slice(2, -1));
+  const handleEnd = rawTag.indexOf("!", 1);
+  const handle = handleEnd === -1 ? "!" : rawTag.slice(0, handleEnd + 1);
+  const prefix = tagHandlers?.[handle] ?? DEFAULT_TAG_HANDLERS[handle] ?? handle;
+  return decodeURIComponent(prefix) + decodeURIComponent(rawTag.slice(handle.length));
+}
+function tagNameShort(fullTag) {
+  let tag = fullTag;
+  if (tag.charCodeAt(0) === 33) {
+    tag = tag.slice(1);
+    return `!${tagPercentEncode(tag)}`;
+  }
+  if (tag.slice(0, 18) === "tag:yaml.org,2002:") return `!!${tagPercentEncode(tag.slice(18))}`;
+  return `!<${tagPercentEncode(tag)}>`;
+}
+var NO_RANGE$2 = -1;
+var DEFAULT_CONSTRUCTOR_OPTIONS = {
+  filename: "",
+  schema: CORE_SCHEMA,
+  json: false,
+  maxTotalMergeKeys: 1e4,
+  maxAliases: -1
+};
+function eventPosition$1(event) {
+  if ("tagStart" in event && event.tagStart !== NO_RANGE$2) return event.tagStart;
+  if ("anchorStart" in event && event.anchorStart !== NO_RANGE$2) return event.anchorStart;
+  if ("valueStart" in event && event.valueStart !== NO_RANGE$2) return event.valueStart;
+  if ("start" in event) return event.start;
+  return 0;
+}
+function throwError$1(state, message) {
+  throwErrorAt(state.source, state.position, message, state.filename);
+}
+function finalizeCollection(state, position, tag, carrier) {
+  try {
+    return tag.finalize(carrier);
+  } catch (error) {
+    if (error instanceof YAMLException) throw error;
+    throwErrorAt(state.source, position, error instanceof Error ? error.message : String(error), state.filename);
+  }
+}
+function lookupTag(exact, prefix, tagName) {
+  const exactTag = exact[tagName];
+  if (exactTag) return exactTag;
+  for (const tag of prefix) if (tagName.startsWith(tag.tagName)) return tag;
+}
+function findExplicitTag(state, exact, prefix, tagName, nodeKind) {
+  const tag = lookupTag(exact, prefix, tagName);
+  if (tag) return tag;
+  throwError$1(state, `unknown ${nodeKind} tag !<${tagName}>`);
+}
+function constructScalar(state, event) {
+  const source = getScalarValue(state.source, event);
+  const rawTag = event.tagStart === NO_RANGE$2 ? "" : state.source.slice(event.tagStart, event.tagEnd);
+  const strTag2 = state.schema.defaultScalarTag;
+  if (rawTag !== "") {
+    if (rawTag === "!") return {
+      value: source,
+      tag: strTag2
+    };
+    const tagName = tagNameFull(rawTag, state.tagHandlers);
+    const scalarTag = lookupTag(state.schema.exact.scalar, state.schema.prefix.scalar, tagName);
+    if (scalarTag) {
+      const result2 = scalarTag.resolve(source, true, tagName);
+      if (result2 === NOT_RESOLVED) throwError$1(state, `cannot resolve a node with !<${tagName}> explicit tag`);
+      return {
+        value: result2,
+        tag: scalarTag
+      };
+    }
+    const collectionTagDef = lookupTag(state.schema.exact.mapping, state.schema.prefix.mapping, tagName) ?? lookupTag(state.schema.exact.sequence, state.schema.prefix.sequence, tagName);
+    if (collectionTagDef) {
+      if (source !== "") throwError$1(state, `cannot resolve a node with !<${tagName}> explicit tag`);
+      const carrier = collectionTagDef.create(tagName);
+      return {
+        value: collectionTagDef.carrierIsResult ? carrier : finalizeCollection(state, state.position, collectionTagDef, carrier),
+        tag: collectionTagDef
+      };
+    }
+    throwError$1(state, `unknown scalar tag !<${tagName}>`);
+  }
+  if (event.style === 1) {
+    const candidates = state.schema.implicitScalarByFirstChar.get(source.charAt(0)) ?? state.schema.implicitScalarAnyFirstChar;
+    for (const tag of candidates) {
+      const result2 = tag.resolve(source, false, tag.tagName);
+      if (result2 !== NOT_RESOLVED) return {
+        value: result2,
+        tag
+      };
+    }
+  }
+  return {
+    value: strTag2.resolve(source, false, strTag2.tagName),
+    tag: strTag2
+  };
+}
+function collectionTag(state, event, exact, prefix, defaultTagName, nodeKind) {
+  const rawTag = event.tagStart === NO_RANGE$2 ? "" : state.source.slice(event.tagStart, event.tagEnd);
+  const tagName = rawTag === "" || rawTag === "!" ? defaultTagName : tagNameFull(rawTag, state.tagHandlers);
+  return {
+    tagName,
+    tag: findExplicitTag(state, exact, prefix, tagName, nodeKind)
+  };
+}
+function isMappingTag(tag) {
+  return tag.nodeKind === "mapping";
+}
+function mergeKeys(state, frame, source, sourceTag) {
+  for (const sourceKey of sourceTag.keys(source)) {
+    if (state.maxTotalMergeKeys !== -1 && ++state.totalMergeKeys > state.maxTotalMergeKeys) throwError$1(state, `merge keys exceeded maxTotalMergeKeys (${state.maxTotalMergeKeys})`);
+    if (frame.tag.has(frame.value, sourceKey)) continue;
+    const err2 = frame.tag.addPair(frame.value, sourceKey, sourceTag.get(source, sourceKey));
+    if (err2) throwError$1(state, err2);
+    (frame.overridable ??= /* @__PURE__ */ new Set()).add(sourceKey);
+  }
+}
+function mergeSource(state, frame, source, sourceTag) {
+  state.position = frame.keyPosition;
+  if (isMappingTag(sourceTag)) mergeKeys(state, frame, source, sourceTag);
+  else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) for (const element of source) mergeKeys(state, frame, element, frame.tag);
+  else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
+}
+function addMappingValue(state, frame, key, value, tag) {
+  state.position = frame.keyPosition;
+  if (key === MERGE_KEY) {
+    mergeSource(state, frame, value, tag);
+    return;
+  }
+  if (!state.json && frame.tag.has(frame.value, key) && !frame.overridable?.has(key)) throwError$1(state, "duplicated mapping key");
+  const err2 = frame.tag.addPair(frame.value, key, value);
+  if (err2) throwError$1(state, err2);
+  frame.overridable?.delete(key);
+}
+function addValue(state, value, tag) {
+  const frame = state.frames[state.frames.length - 1];
+  if (frame.kind === "document") {
+    frame.value = value;
+    frame.hasValue = true;
+  } else if (frame.kind === "sequence") {
+    if (frame.merge) {
+      if (!isMappingTag(tag)) throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
+    }
+    const err2 = frame.tag.addItem(frame.value, value, frame.index++);
+    if (err2) throwError$1(state, err2);
+  } else if (frame.hasKey) {
+    const key = frame.key;
+    frame.key = void 0;
+    frame.hasKey = false;
+    addMappingValue(state, frame, key, value, tag);
+  } else {
+    frame.key = value;
+    frame.keyPosition = state.position;
+    frame.hasKey = true;
+  }
+}
+function storeAnchor(state, event, value, tag, isValueFinal) {
+  if (event.anchorStart !== NO_RANGE$2) {
+    const anchor = {
+      value,
+      tag,
+      isValueFinal
+    };
+    state.anchors.set(state.source.slice(event.anchorStart, event.anchorEnd), anchor);
+    return anchor;
+  }
+  return null;
+}
+function constructFromEvents(events, options) {
+  const state = {
+    ...DEFAULT_CONSTRUCTOR_OPTIONS,
+    ...options,
+    events,
+    documents: [],
+    eventIndex: 0,
+    position: 0,
+    frames: [],
+    anchors: /* @__PURE__ */ new Map(),
+    tagHandlers: /* @__PURE__ */ Object.create(null),
+    totalMergeKeys: 0,
+    aliasCount: 0
+  };
+  while (state.eventIndex < state.events.length) {
+    const event = state.events[state.eventIndex++];
+    state.position = eventPosition$1(event);
+    switch (event.type) {
+      case 1:
+        state.anchors = /* @__PURE__ */ new Map();
+        state.aliasCount = 0;
+        state.tagHandlers = /* @__PURE__ */ Object.create(null);
+        for (const directive of event.directives) if (directive.kind === "tag") state.tagHandlers[directive.handle] = directive.prefix;
+        state.frames.push({
+          kind: "document",
+          position: state.position,
+          value: void 0,
+          hasValue: false
+        });
+        break;
+      case 4: {
+        const { value, tag } = constructScalar(state, event);
+        storeAnchor(state, event, value, tag, true);
+        addValue(state, value, tag);
+        break;
+      }
+      case 2: {
+        const definition = collectionTag(state, event, state.schema.exact.sequence, state.schema.prefix.sequence, "tag:yaml.org,2002:seq", "sequence");
+        const value = definition.tag.create(definition.tagName);
+        const anchor = storeAnchor(state, event, value, definition.tag, definition.tag.carrierIsResult);
+        const parent = state.frames[state.frames.length - 1];
+        const merge = parent !== void 0 && parent.kind === "mapping" && parent.hasKey && parent.key === MERGE_KEY;
+        state.frames.push({
+          kind: "sequence",
+          position: state.position,
+          value,
+          tag: definition.tag,
+          anchor,
+          index: 0,
+          merge
+        });
+        break;
+      }
+      case 3: {
+        const definition = collectionTag(state, event, state.schema.exact.mapping, state.schema.prefix.mapping, "tag:yaml.org,2002:map", "mapping");
+        const value = definition.tag.create(definition.tagName);
+        const anchor = storeAnchor(state, event, value, definition.tag, definition.tag.carrierIsResult);
+        state.frames.push({
+          kind: "mapping",
+          position: state.position,
+          value,
+          tag: definition.tag,
+          anchor,
+          key: void 0,
+          keyPosition: state.position,
+          hasKey: false,
+          overridable: null
+        });
+        break;
+      }
+      case 5: {
+        if (state.maxAliases !== -1 && ++state.aliasCount > state.maxAliases) throwError$1(state, `aliases exceeded maxAliases (${state.maxAliases})`);
+        const name = state.source.slice(event.anchorStart, event.anchorEnd);
+        const anchor = state.anchors.get(name);
+        if (!anchor) throwError$1(state, `unidentified alias "${name}"`);
+        if (!anchor.isValueFinal) throwError$1(state, `recursive alias "${name}" is not supported for tag ${anchor.tag.tagName} because it uses finalize()`);
+        addValue(state, anchor.value, anchor.tag);
+        break;
+      }
+      case 6: {
+        const frame = state.frames.pop();
+        if (frame.kind === "document") state.documents.push(frame.value);
+        else {
+          const value = frame.tag.carrierIsResult ? frame.value : finalizeCollection(state, frame.position, frame.tag, frame.value);
+          if (frame.anchor) {
+            frame.anchor.value = value;
+            frame.anchor.isValueFinal = true;
+          }
+          addValue(state, value, frame.tag);
+        }
+        break;
+      }
+    }
+  }
+  return state.documents;
+}
+var NO_RANGE$1 = -1;
+var HAS_OWN = Object.prototype.hasOwnProperty;
+var CONTEXT_FLOW_IN = 1;
+var CONTEXT_FLOW_OUT = 2;
+var CONTEXT_BLOCK_IN = 3;
+var CONTEXT_BLOCK_OUT = 4;
+var PATTERN_NON_PRINTABLE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/;
+var PATTERN_FLOW_INDICATORS = /[,\[\]{}]/;
+var PATTERN_TAG_HANDLE = /^(?:!|!!|![0-9A-Za-z-]+!)$/;
+var NS_URI_CHAR = String.raw`(?:%[0-9A-Fa-f]{2}|[0-9A-Za-z\-#;/?:@&=+$,_.!~*'()\[\]])`;
+var NS_TAG_CHAR = String.raw`(?:%[0-9A-Fa-f]{2}|[0-9A-Za-z\-#;/?:@&=+$.~*'()_])`;
+var PATTERN_TAG_URI = new RegExp(`^(?:${NS_URI_CHAR})*$`);
+var PATTERN_TAG_SUFFIX = new RegExp(`^(?:${NS_TAG_CHAR})+$`);
+var PATTERN_TAG_PREFIX = new RegExp(`^(?:!(?:${NS_URI_CHAR})*|${NS_TAG_CHAR}(?:${NS_URI_CHAR})*)$`);
+var DEFAULT_PARSER_OPTIONS = {
+  filename: "",
+  maxDepth: 100
+};
+function addDocumentEvent(state, explicitStart, explicitEnd) {
+  state.events.push({
+    type: 1,
+    explicitStart,
+    explicitEnd,
+    directives: state.directives
+  });
+}
+function addSequenceEvent(state, start, anchorStart, anchorEnd, tagStart, tagEnd, style) {
+  state.events.push({
+    type: 2,
+    start,
+    anchorStart,
+    anchorEnd,
+    tagStart,
+    tagEnd,
+    style
+  });
+}
+function addMappingEvent(state, start, anchorStart, anchorEnd, tagStart, tagEnd, style) {
+  state.events.push({
+    type: 3,
+    start,
+    anchorStart,
+    anchorEnd,
+    tagStart,
+    tagEnd,
+    style
+  });
+}
+function addScalarEvent(state, valueStart, valueEnd, anchorStart, anchorEnd, tagStart, tagEnd, style, chomping = 1, indent = -1, fast = false) {
+  state.events.push({
+    type: 4,
+    valueStart,
+    valueEnd,
+    anchorStart,
+    anchorEnd,
+    tagStart,
+    tagEnd,
+    style,
+    chomping,
+    indent,
+    fast
+  });
+}
+function addAliasEvent(state, anchorStart, anchorEnd) {
+  state.events.push({
+    type: 5,
+    anchorStart,
+    anchorEnd
+  });
+}
+function addPopEvent(state) {
+  state.events.push({ type: 6 });
+}
+function addEmptyScalarEvent(state) {
+  addScalarEvent(state, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 1);
+}
+function emptyProperties() {
+  return {
+    anchorStart: NO_RANGE$1,
+    anchorEnd: NO_RANGE$1,
+    tagStart: NO_RANGE$1,
+    tagEnd: NO_RANGE$1
+  };
+}
+function snapshotState(state) {
+  return {
+    position: state.position,
+    line: state.line,
+    lineStart: state.lineStart,
+    lineIndent: state.lineIndent,
+    firstTabInLine: state.firstTabInLine,
+    eventsLength: state.events.length
+  };
+}
+function restoreState(state, snapshot) {
+  state.position = snapshot.position;
+  state.line = snapshot.line;
+  state.lineStart = snapshot.lineStart;
+  state.lineIndent = snapshot.lineIndent;
+  state.firstTabInLine = snapshot.firstTabInLine;
+  state.events.length = snapshot.eventsLength;
+}
+function throwError(state, message) {
+  throwErrorAt(state.input.slice(0, state.length), state.position, message, state.filename);
+}
+function isEol(c) {
+  return c === 10 || c === 13;
+}
+function isWhiteSpace(c) {
+  return c === 9 || c === 32;
+}
+function isWsOrEol(c) {
+  return isWhiteSpace(c) || isEol(c);
+}
+function isWsOrEolOrEnd(c) {
+  return c === 0 || isWsOrEol(c);
+}
+function isFlowIndicator(c) {
+  return c === 44 || c === 91 || c === 93 || c === 123 || c === 125;
+}
+function fromDecimalCode(c) {
+  return c >= 48 && c <= 57 ? c - 48 : -1;
+}
+function fromHexCode(c) {
+  if (c >= 48 && c <= 57) return c - 48;
+  const lc = c | 32;
+  if (lc >= 97 && lc <= 102) return lc - 97 + 10;
+  return -1;
+}
+function escapedHexLen(c) {
+  if (c === 120) return 2;
+  if (c === 117) return 4;
+  if (c === 85) return 8;
+  return 0;
+}
+function isSimpleEscape(c) {
+  return c === 48 || c === 97 || c === 98 || c === 116 || c === 9 || c === 110 || c === 118 || c === 102 || c === 114 || c === 101 || c === 32 || c === 34 || c === 47 || c === 92 || c === 78 || c === 95 || c === 76 || c === 80;
+}
+function consumeLineBreak(state) {
+  if (state.input.charCodeAt(state.position) === 10) state.position++;
+  else {
+    state.position++;
+    if (state.input.charCodeAt(state.position) === 10) state.position++;
+  }
+  state.line++;
+  state.lineStart = state.position;
+  state.lineIndent = 0;
+  state.firstTabInLine = -1;
+}
+function skipSeparationSpace(state, allowComments) {
+  let lineBreaks = 0;
+  let ch = state.input.charCodeAt(state.position);
+  let hasSeparation = state.position === state.lineStart || isWsOrEol(state.input.charCodeAt(state.position - 1));
+  while (ch !== 0) {
+    while (isWhiteSpace(ch)) {
+      hasSeparation = true;
+      if (ch === 9 && state.firstTabInLine === -1) state.firstTabInLine = state.position;
+      ch = state.input.charCodeAt(++state.position);
+    }
+    if (allowComments && hasSeparation && ch === 35) do
+      ch = state.input.charCodeAt(++state.position);
+    while (!isEol(ch) && ch !== 0);
+    if (!isEol(ch)) break;
+    consumeLineBreak(state);
+    lineBreaks++;
+    hasSeparation = true;
+    ch = state.input.charCodeAt(state.position);
+    while (ch === 32) {
+      state.lineIndent++;
+      ch = state.input.charCodeAt(++state.position);
+    }
+  }
+  return lineBreaks;
+}
+function testDocumentSeparator(state, position = state.position) {
+  const ch = state.input.charCodeAt(position);
+  if ((ch === 45 || ch === 46) && ch === state.input.charCodeAt(position + 1) && ch === state.input.charCodeAt(position + 2)) {
+    const following = state.input.charCodeAt(position + 3);
+    return following === 0 || isWsOrEol(following);
+  }
+  return false;
+}
+function skipUntilLineEnd(state) {
+  let ch = state.input.charCodeAt(state.position);
+  while (ch !== 0 && !isEol(ch)) ch = state.input.charCodeAt(++state.position);
+}
+function checkPrintable(state, start, end) {
+  if (PATTERN_NON_PRINTABLE.test(state.input.slice(start, end))) throwError(state, "the stream contains non-printable characters");
+}
+function readTagProperty(state, props, inFlow) {
+  if (state.input.charCodeAt(state.position) !== 33) return false;
+  if (props.tagStart !== NO_RANGE$1) throwError(state, "duplication of a tag property");
+  const start = state.position;
+  let isVerbatim = false;
+  let isNamed = false;
+  let tagHandle = "!";
+  let ch = state.input.charCodeAt(++state.position);
+  if (ch === 60) {
+    isVerbatim = true;
+    ch = state.input.charCodeAt(++state.position);
+  } else if (ch === 33) {
+    isNamed = true;
+    tagHandle = "!!";
+    ch = state.input.charCodeAt(++state.position);
+  }
+  let suffixStart = state.position;
+  let tagName;
+  if (isVerbatim) {
+    while (ch !== 0 && ch !== 62) ch = state.input.charCodeAt(++state.position);
+    if (ch !== 62) throwError(state, "unexpected end of the stream within a verbatim tag");
+    tagName = state.input.slice(suffixStart, state.position);
+    state.position++;
+  } else {
+    while (ch !== 0 && !isWsOrEol(ch) && !(inFlow && isFlowIndicator(ch))) {
+      if (ch === 33) if (!isNamed) {
+        tagHandle = state.input.slice(suffixStart - 1, state.position + 1);
+        if (!PATTERN_TAG_HANDLE.test(tagHandle)) throwError(state, "named tag handle cannot contain such characters");
+        isNamed = true;
+        suffixStart = state.position + 1;
+      } else throwError(state, "tag suffix cannot contain exclamation marks");
+      ch = state.input.charCodeAt(++state.position);
+    }
+    tagName = state.input.slice(suffixStart, state.position);
+    if (PATTERN_FLOW_INDICATORS.test(tagName)) throwError(state, "tag suffix cannot contain flow indicator characters");
+  }
+  if (tagName && !(isVerbatim ? PATTERN_TAG_URI.test(tagName) : PATTERN_TAG_SUFFIX.test(tagName))) throwError(state, `tag name cannot contain such characters: ${tagName}`);
+  if (!isVerbatim && tagHandle !== "!" && tagHandle !== "!!" && !HAS_OWN.call(state.tagHandlers, tagHandle)) throwError(state, `undeclared tag handle "${tagHandle}"`);
+  props.tagStart = start;
+  props.tagEnd = state.position;
+  return true;
+}
+function readAnchorProperty(state, props) {
+  if (state.input.charCodeAt(state.position) !== 38) return false;
+  if (props.anchorStart !== NO_RANGE$1) throwError(state, "duplication of an anchor property");
+  state.position++;
+  const start = state.position;
+  while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position)) && !isFlowIndicator(state.input.charCodeAt(state.position))) state.position++;
+  if (state.position === start) throwError(state, "name of an anchor node must contain at least one character");
+  props.anchorStart = start;
+  props.anchorEnd = state.position;
+  return true;
+}
+function readAlias(state, props) {
+  if (state.input.charCodeAt(state.position) !== 42) return false;
+  if (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1) throwError(state, "alias node should not have any properties");
+  state.position++;
+  const start = state.position;
+  while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position)) && !isFlowIndicator(state.input.charCodeAt(state.position))) state.position++;
+  if (state.position === start) throwError(state, "name of an alias node must contain at least one character");
+  addAliasEvent(state, start, state.position);
+  return true;
+}
+function readFlowScalarBreak(state, nodeIndent) {
+  skipSeparationSpace(state, false);
+  if (state.lineIndent < nodeIndent) throwError(state, "deficient indentation");
+}
+function readSingleQuotedScalar(state, nodeIndent, props) {
+  if (state.input.charCodeAt(state.position) !== 39) return false;
+  state.position++;
+  const start = state.position;
+  let simple = true;
+  while (state.input.charCodeAt(state.position) !== 0) {
+    const ch = state.input.charCodeAt(state.position);
+    if (ch === 39) {
+      if (state.input.charCodeAt(state.position + 1) === 39) {
+        simple = false;
+        state.position += 2;
+        continue;
+      }
+      const end = state.position;
+      state.position++;
+      addScalarEvent(state, start, end, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 2, 1, -1, simple);
+      return true;
+    }
+    if (isEol(ch)) {
+      simple = false;
+      readFlowScalarBreak(state, nodeIndent);
+    } else if (state.position === state.lineStart && testDocumentSeparator(state)) throwError(state, "unexpected end of the document within a single quoted scalar");
+    else if (ch !== 9 && ch < 32) throwError(state, "expected valid JSON character");
+    else state.position++;
+  }
+  throwError(state, "unexpected end of the stream within a single quoted scalar");
+}
+function readDoubleQuotedScalar(state, nodeIndent, props) {
+  if (state.input.charCodeAt(state.position) !== 34) return false;
+  state.position++;
+  const start = state.position;
+  let simple = true;
+  while (state.input.charCodeAt(state.position) !== 0) {
+    const ch = state.input.charCodeAt(state.position);
+    if (ch === 34) {
+      const end = state.position;
+      state.position++;
+      addScalarEvent(state, start, end, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 3, 1, -1, simple);
+      return true;
+    }
+    if (ch === 92) {
+      simple = false;
+      const escaped = state.input.charCodeAt(++state.position);
+      if (isEol(escaped)) readFlowScalarBreak(state, nodeIndent);
+      else if (isSimpleEscape(escaped)) state.position++;
+      else {
+        let hexLength = escapedHexLen(escaped);
+        if (hexLength === 0) throwError(state, "unknown escape sequence");
+        while (hexLength-- > 0) {
+          state.position++;
+          if (fromHexCode(state.input.charCodeAt(state.position)) < 0) throwError(state, "expected hexadecimal character");
+        }
+        state.position++;
+      }
+    } else if (isEol(ch)) {
+      simple = false;
+      readFlowScalarBreak(state, nodeIndent);
+    } else if (state.position === state.lineStart && testDocumentSeparator(state)) throwError(state, "unexpected end of the document within a double quoted scalar");
+    else if (ch !== 9 && ch < 32) throwError(state, "expected valid JSON character");
+    else state.position++;
+  }
+  throwError(state, "unexpected end of the stream within a double quoted scalar");
+}
+function readBlockScalar(state, parentIndent, props) {
+  const ch = state.input.charCodeAt(state.position);
+  let chomping = 1;
+  let indent = -1;
+  let detectedIndent = false;
+  if (ch !== 124 && ch !== 62) return false;
+  const style = ch === 124 ? 4 : 5;
+  state.position++;
+  while (state.input.charCodeAt(state.position) !== 0) {
+    const current = state.input.charCodeAt(state.position);
+    const digit = fromDecimalCode(current);
+    if (current === 43 || current === 45) {
+      if (chomping !== 1) throwError(state, "repeat of a chomping mode identifier");
+      chomping = current === 43 ? 3 : 2;
+      state.position++;
+    } else if (digit >= 0) {
+      if (digit === 0) throwError(state, "bad explicit indentation width of a block scalar; it cannot be less than one");
+      if (detectedIndent) throwError(state, "repeat of an indentation width identifier");
+      indent = parentIndent + digit - 1;
+      detectedIndent = true;
+      state.position++;
+    } else break;
+  }
+  let hadWhitespace = false;
+  while (isWhiteSpace(state.input.charCodeAt(state.position))) {
+    hadWhitespace = true;
+    state.position++;
+  }
+  if (hadWhitespace && state.input.charCodeAt(state.position) === 35) skipUntilLineEnd(state);
+  if (isEol(state.input.charCodeAt(state.position))) consumeLineBreak(state);
+  else if (state.input.charCodeAt(state.position) !== 0) throwError(state, "a line break is expected");
+  let contentIndent = detectedIndent ? indent : -1;
+  let maxLeadingIndent = 0;
+  const valueStart = state.position;
+  let valueEnd = state.position;
+  while (state.input.charCodeAt(state.position) !== 0) {
+    const linePosition = state.position;
+    let column = 0;
+    while (state.input.charCodeAt(linePosition + column) === 32) column++;
+    const first = state.input.charCodeAt(linePosition + column);
+    if (first === 0) {
+      if (contentIndent >= 0) {
+        if (column > contentIndent) valueEnd = linePosition + column;
+      } else if (column > 0) valueEnd = linePosition + column;
+      break;
+    }
+    if (linePosition === state.lineStart && testDocumentSeparator(state, linePosition)) break;
+    if (!detectedIndent && contentIndent === -1 && isEol(first)) maxLeadingIndent = Math.max(maxLeadingIndent, column);
+    if (!detectedIndent && contentIndent === -1 && !isEol(first)) {
+      if (first === 9 && column < parentIndent) {
+        state.position = linePosition + column;
+        throwError(state, "tab characters must not be used in indentation");
+      }
+      if (column < maxLeadingIndent) {
+        state.position = linePosition + column;
+        throwError(state, "bad indentation of a mapping entry");
+      }
+    }
+    if (contentIndent === -1 && first !== 0 && !isEol(first) && column < parentIndent) {
+      state.lineIndent = column;
+      state.position = linePosition + column;
+      break;
+    }
+    if (!detectedIndent && first !== 0 && !isEol(first) && contentIndent === -1) contentIndent = column;
+    const requiredIndent = contentIndent === -1 ? parentIndent + 1 : contentIndent;
+    if (first !== 0 && !isEol(first) && column < requiredIndent) {
+      state.lineIndent = column;
+      state.position = linePosition + column;
+      break;
+    }
+    skipUntilLineEnd(state);
+    valueEnd = state.position;
+    if (isEol(state.input.charCodeAt(state.position))) {
+      consumeLineBreak(state);
+      valueEnd = state.position;
+    }
+  }
+  checkPrintable(state, valueStart, valueEnd);
+  addScalarEvent(state, valueStart, valueEnd, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, style, chomping, contentIndent);
+  return true;
+}
+function canStartPlainScalar(state, nodeContext) {
+  const ch = state.input.charCodeAt(state.position);
+  const inFlow = nodeContext === CONTEXT_FLOW_IN;
+  if (ch === 0 || isWsOrEol(ch) || ch === 35 || ch === 38 || ch === 42 || ch === 33 || ch === 124 || ch === 62 || ch === 39 || ch === 34 || ch === 37 || ch === 64 || ch === 96 || inFlow && isFlowIndicator(ch)) return false;
+  if (ch === 63 || ch === 45) {
+    const following = state.input.charCodeAt(state.position + 1);
+    if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) return false;
+  }
+  return true;
+}
+function readPlainScalar(state, nodeIndent, nodeContext, props) {
+  if (!canStartPlainScalar(state, nodeContext)) return false;
+  const start = state.position;
+  let end = state.position;
+  let ch = state.input.charCodeAt(state.position);
+  const inFlow = nodeContext === CONTEXT_FLOW_IN;
+  let multiline = false;
+  while (ch !== 0) {
+    if (state.position === state.lineStart && testDocumentSeparator(state)) break;
+    if (ch === 58) {
+      const following = state.input.charCodeAt(state.position + 1);
+      if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) break;
+    } else if (ch === 35) {
+      if (isWsOrEol(state.input.charCodeAt(state.position - 1))) break;
+    } else if (inFlow && isFlowIndicator(ch)) break;
+    else if (isEol(ch)) {
+      const savedPosition = state.position;
+      const savedLine = state.line;
+      const savedLineStart = state.lineStart;
+      const savedLineIndent = state.lineIndent;
+      skipSeparationSpace(state, false);
+      if (state.lineIndent >= nodeIndent) {
+        multiline = true;
+        ch = state.input.charCodeAt(state.position);
+        continue;
+      }
+      state.position = savedPosition;
+      state.line = savedLine;
+      state.lineStart = savedLineStart;
+      state.lineIndent = savedLineIndent;
+      break;
+    }
+    if (!isWhiteSpace(ch)) end = state.position + 1;
+    ch = state.input.charCodeAt(++state.position);
+  }
+  if (end === start) return false;
+  checkPrintable(state, start, end);
+  addScalarEvent(state, start, end, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1, 1, -1, !multiline);
+  return true;
+}
+function skipFlowSeparationSpace(state, nodeIndent) {
+  const startLine = state.line;
+  skipSeparationSpace(state, true);
+  if (state.line > startLine && state.lineIndent < nodeIndent || state.firstTabInLine !== -1 && state.lineIndent < nodeIndent) throwError(state, "deficient indentation");
+}
+function readFlowCollection(state, nodeIndent, props) {
+  const ch = state.input.charCodeAt(state.position);
+  const isMapping = ch === 123;
+  const start = state.position;
+  let readNext = true;
+  if (ch !== 91 && ch !== 123) return false;
+  const terminator = isMapping ? 125 : 93;
+  if (isMapping) addMappingEvent(state, start, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 2);
+  else addSequenceEvent(state, start, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 2);
+  state.position++;
+  while (state.input.charCodeAt(state.position) !== 0) {
+    skipFlowSeparationSpace(state, nodeIndent);
+    let ch2 = state.input.charCodeAt(state.position);
+    if (ch2 === terminator) {
+      state.position++;
+      addPopEvent(state);
+      return true;
+    } else if (!readNext) throwError(state, "missed comma between flow collection entries");
+    else if (ch2 === 44) throwError(state, "expected the node content, but found ','");
+    let isPair = false;
+    let isExplicitPair = false;
+    if (ch2 === 63 && isWsOrEol(state.input.charCodeAt(state.position + 1))) {
+      isPair = isExplicitPair = true;
+      state.position += 1;
+      skipFlowSeparationSpace(state, nodeIndent);
+    }
+    const entryLine = state.line;
+    const entryStart = snapshotState(state);
+    const keyWasRead = parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
+    skipFlowSeparationSpace(state, nodeIndent);
+    ch2 = state.input.charCodeAt(state.position);
+    if ((isMapping || isExplicitPair || state.line === entryLine) && ch2 === 58) {
+      isPair = true;
+      state.position++;
+      skipFlowSeparationSpace(state, nodeIndent);
+      if (!isMapping) {
+        restoreState(state, entryStart);
+        addMappingEvent(state, entryStart.position, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 2);
+        if (!parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)) addEmptyScalarEvent(state);
+        skipFlowSeparationSpace(state, nodeIndent);
+        state.position++;
+        skipFlowSeparationSpace(state, nodeIndent);
+      } else if (!keyWasRead) addEmptyScalarEvent(state);
+      if (!parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)) addEmptyScalarEvent(state);
+      skipFlowSeparationSpace(state, nodeIndent);
+      if (!isMapping) addPopEvent(state);
+    } else if (isMapping && isPair) {
+      if (!keyWasRead) addEmptyScalarEvent(state);
+      addEmptyScalarEvent(state);
+    } else if (isMapping) addEmptyScalarEvent(state);
+    else if (isPair) {
+      restoreState(state, entryStart);
+      addMappingEvent(state, entryStart.position, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 2);
+      parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
+      addEmptyScalarEvent(state);
+      addPopEvent(state);
+    }
+    ch2 = state.input.charCodeAt(state.position);
+    if (ch2 === 44) {
+      readNext = true;
+      state.position++;
+    } else readNext = false;
+  }
+  throwError(state, "unexpected end of the stream within a flow collection");
+}
+function readBlockSequence(state, nodeIndent, props) {
+  if (state.firstTabInLine !== -1 || state.input.charCodeAt(state.position) !== 45 || !isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) return false;
+  addSequenceEvent(state, state.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
+  while (state.input.charCodeAt(state.position) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) {
+    if (state.firstTabInLine !== -1) {
+      state.position = state.firstTabInLine;
+      throwError(state, "tab characters must not be used in indentation");
+    }
+    const entryLine = state.line;
+    state.position++;
+    const hadBreak = skipSeparationSpace(state, true) > 0;
+    if (state.firstTabInLine !== -1 && state.input.charCodeAt(state.position) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) throwError(state, "bad indentation of a sequence entry");
+    if (hadBreak && state.lineIndent <= nodeIndent) addEmptyScalarEvent(state);
+    else parseNode(state, nodeIndent, CONTEXT_BLOCK_IN, false, true);
+    skipSeparationSpace(state, true);
+    if (state.lineIndent < nodeIndent || state.position >= state.length) break;
+    if (state.lineIndent > nodeIndent) throwError(state, "bad indentation of a sequence entry");
+    if (state.line === entryLine && state.input.charCodeAt(state.position) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 1))) throwError(state, "bad indentation of a sequence entry");
+  }
+  addPopEvent(state);
+  return true;
+}
+function readBlockMapping(state, nodeIndent, flowIndent, props) {
+  let atExplicitKey = false;
+  let detected = false;
+  let mappingOpened = false;
+  let pendingExplicitKey = false;
+  if (state.firstTabInLine !== -1) return false;
+  let ch = state.input.charCodeAt(state.position);
+  while (ch !== 0) {
+    if (!atExplicitKey && state.firstTabInLine !== -1) {
+      state.position = state.firstTabInLine;
+      throwError(state, "tab characters must not be used in indentation");
+    }
+    const following = state.input.charCodeAt(state.position + 1);
+    const entryLine = state.line;
+    if ((ch === 63 || ch === 58) && isWsOrEolOrEnd(following)) {
+      if (!mappingOpened) {
+        addMappingEvent(state, state.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
+        mappingOpened = true;
+      }
+      if (ch === 63) {
+        if (atExplicitKey) addEmptyScalarEvent(state);
+        detected = true;
+        atExplicitKey = true;
+      } else if (atExplicitKey) atExplicitKey = false;
+      else {
+        addEmptyScalarEvent(state);
+        detected = true;
+        atExplicitKey = false;
+      }
+      state.position += 1;
+      pendingExplicitKey = true;
+    } else {
+      if (atExplicitKey) {
+        addEmptyScalarEvent(state);
+        atExplicitKey = false;
+      }
+      const beforeKey = snapshotState(state);
+      if (!parseNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true)) break;
+      if (state.line === entryLine) {
+        ch = state.input.charCodeAt(state.position);
+        while (isWhiteSpace(ch)) ch = state.input.charCodeAt(++state.position);
+        if (ch === 58) {
+          ch = state.input.charCodeAt(++state.position);
+          if (!isWsOrEolOrEnd(ch)) throwError(state, "a whitespace character is expected after the key-value separator within a block mapping");
+          if (!mappingOpened) {
+            restoreState(state, beforeKey);
+            addMappingEvent(state, beforeKey.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
+            mappingOpened = true;
+            parseNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true);
+            ch = state.input.charCodeAt(state.position);
+            while (isWhiteSpace(ch)) ch = state.input.charCodeAt(++state.position);
+            state.position++;
+          }
+          detected = true;
+          atExplicitKey = false;
+          pendingExplicitKey = false;
+        } else if (detected) throwError(state, "expected ':' after a mapping key");
+        else {
+          if (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1) {
+            restoreState(state, beforeKey);
+            return false;
+          }
+          return true;
+        }
+      } else if (detected) throwError(state, "can not read a block mapping entry; a multiline key may not be an implicit key");
+      else {
+        if (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1) {
+          restoreState(state, beforeKey);
+          return false;
+        }
+        return true;
+      }
+    }
+    if (parseNode(state, nodeIndent, CONTEXT_BLOCK_OUT, true, pendingExplicitKey)) pendingExplicitKey = false;
+    if (!atExplicitKey) {
+      if (pendingExplicitKey) {
+        addEmptyScalarEvent(state);
+        pendingExplicitKey = false;
+      }
+    }
+    skipSeparationSpace(state, true);
+    ch = state.input.charCodeAt(state.position);
+    if ((state.line === entryLine || state.lineIndent > nodeIndent) && ch !== 0) throwError(state, "bad indentation of a mapping entry");
+    else if (state.lineIndent < nodeIndent) break;
+  }
+  if (!detected) return false;
+  if (atExplicitKey) addEmptyScalarEvent(state);
+  if (mappingOpened) addPopEvent(state);
+  return true;
+}
+function parseNode(state, parentIndent, nodeContext, allowToSeek, allowCompact, allowPropertyMapping = true) {
+  if (state.depth >= state.maxDepth) throwError(state, `nesting exceeded maxDepth (${state.maxDepth})`);
+  state.depth++;
+  let indentStatus = 1;
+  let atNewLine = false;
+  let hasContent = false;
+  let propertyStart = null;
+  const props = emptyProperties();
+  let allowBlockScalars = nodeContext === CONTEXT_BLOCK_OUT || nodeContext === CONTEXT_BLOCK_IN;
+  let allowBlockCollections = allowBlockScalars;
+  const allowBlockStyles = allowBlockScalars;
+  if (allowToSeek && skipSeparationSpace(state, true)) {
+    atNewLine = true;
+    if (state.lineIndent > parentIndent) indentStatus = 1;
+    else if (state.lineIndent === parentIndent) indentStatus = 0;
+    else indentStatus = -1;
+  }
+  if (state.position === state.lineStart && testDocumentSeparator(state)) {
+    state.depth--;
+    return false;
+  }
+  if (indentStatus === 1) while (true) {
+    const ch = state.input.charCodeAt(state.position);
+    const propertyState = snapshotState(state);
+    if (atNewLine && indentStatus !== 1 && (ch === 33 || ch === 38)) break;
+    if (atNewLine && allowBlockStyles && (props.tagStart !== NO_RANGE$1 || props.anchorStart !== NO_RANGE$1) && (ch === 33 || ch === 38)) {
+      const fallbackState = snapshotState(state);
+      const flowIndent = parentIndent + 1;
+      if (readBlockMapping(state, state.position - state.lineStart, flowIndent, props) && state.events[fallbackState.eventsLength]?.type === 3) {
+        state.depth--;
+        return true;
+      }
+      restoreState(state, fallbackState);
+    }
+    if (atNewLine && (ch === 33 && props.tagStart !== NO_RANGE$1 || ch === 38 && props.anchorStart !== NO_RANGE$1)) break;
+    if (!readTagProperty(state, props, nodeContext === CONTEXT_FLOW_IN) && !readAnchorProperty(state, props)) break;
+    if (propertyStart === null) propertyStart = propertyState;
+    if (skipSeparationSpace(state, true)) {
+      atNewLine = true;
+      allowBlockCollections = allowBlockStyles;
+      if (state.lineIndent > parentIndent) indentStatus = 1;
+      else if (state.lineIndent === parentIndent) indentStatus = 0;
+      else indentStatus = -1;
+    } else allowBlockCollections = false;
+  }
+  if (allowBlockCollections) allowBlockCollections = atNewLine || allowCompact;
+  if (indentStatus === 1 || nodeContext === CONTEXT_BLOCK_OUT) {
+    const flowIndent = nodeContext === CONTEXT_FLOW_IN || nodeContext === CONTEXT_FLOW_OUT ? parentIndent : parentIndent + 1;
+    const blockIndent = state.position - state.lineStart;
+    if (indentStatus === 1) if (allowBlockCollections && (readBlockSequence(state, blockIndent, props) || readBlockMapping(state, blockIndent, flowIndent, props)) || readFlowCollection(state, flowIndent, props)) hasContent = true;
+    else {
+      const ch = state.input.charCodeAt(state.position);
+      if (propertyStart !== null && allowPropertyMapping && allowBlockStyles && !allowBlockCollections && ch !== 124 && ch !== 62) {
+        const fallbackState = snapshotState(state);
+        const propertyIndent = propertyStart.position - propertyStart.lineStart;
+        restoreState(state, propertyStart);
+        if (readBlockMapping(state, propertyIndent, flowIndent, emptyProperties()) && state.events[fallbackState.eventsLength]?.type === 3) hasContent = true;
+        else restoreState(state, fallbackState);
+      }
+      if (!hasContent && (allowBlockScalars && readBlockScalar(state, flowIndent, props) || readSingleQuotedScalar(state, flowIndent, props) || readDoubleQuotedScalar(state, flowIndent, props) || readAlias(state, props) || readPlainScalar(state, flowIndent, nodeContext, props))) hasContent = true;
+    }
+    else if (indentStatus === 0) hasContent = allowBlockCollections && readBlockSequence(state, blockIndent, props);
+  }
+  allowBlockScalars = allowBlockScalars && !hasContent;
+  if (!hasContent && (props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1 || allowBlockScalars)) {
+    addScalarEvent(state, NO_RANGE$1, NO_RANGE$1, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, 1);
+    hasContent = true;
+  }
+  state.depth--;
+  return hasContent || props.anchorStart !== NO_RANGE$1 || props.tagStart !== NO_RANGE$1;
+}
+function readDirective(state) {
+  if (state.lineIndent > 0 || state.input.charCodeAt(state.position) !== 37) return false;
+  state.position++;
+  const nameStart = state.position;
+  while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position))) state.position++;
+  const name = state.input.slice(nameStart, state.position);
+  const args = [];
+  if (name.length === 0) throwError(state, "directive name must not be less than one character in length");
+  while (state.input.charCodeAt(state.position) !== 0 && !isEol(state.input.charCodeAt(state.position))) {
+    while (isWhiteSpace(state.input.charCodeAt(state.position))) state.position++;
+    if (state.input.charCodeAt(state.position) === 35 || isEol(state.input.charCodeAt(state.position)) || state.input.charCodeAt(state.position) === 0) break;
+    const start = state.position;
+    while (state.input.charCodeAt(state.position) !== 0 && !isWsOrEol(state.input.charCodeAt(state.position))) state.position++;
+    args.push(state.input.slice(start, state.position));
+  }
+  if (isEol(state.input.charCodeAt(state.position))) consumeLineBreak(state);
+  if (name === "YAML") {
+    if (state.directives.some((directive) => directive.kind === "yaml")) throwError(state, "duplication of %YAML directive");
+    if (args.length !== 1) throwError(state, "YAML directive accepts exactly one argument");
+    const match = /^([0-9]+)\.([0-9]+)$/.exec(args[0]);
+    if (match === null) throwError(state, "ill-formed argument of the YAML directive");
+    if (parseInt(match[1], 10) !== 1) throwError(state, "unacceptable YAML version of the document");
+    state.directives.push({
+      kind: "yaml",
+      version: args[0]
+    });
+  } else if (name === "TAG") {
+    if (args.length !== 2) throwError(state, "TAG directive accepts exactly two arguments");
+    const [handle, prefix] = args;
+    if (!PATTERN_TAG_HANDLE.test(handle)) throwError(state, "ill-formed tag handle (first argument) of the TAG directive");
+    if (HAS_OWN.call(state.tagHandlers, handle)) throwError(state, `there is a previously declared suffix for "${handle}" tag handle`);
+    if (!PATTERN_TAG_PREFIX.test(prefix)) throwError(state, "ill-formed tag prefix (second argument) of the TAG directive");
+    state.tagHandlers[handle] = prefix;
+    state.directives.push({
+      kind: "tag",
+      handle,
+      prefix
+    });
+  }
+  return true;
+}
+function readDocument(state) {
+  state.directives = [];
+  state.tagHandlers = /* @__PURE__ */ Object.create(null);
+  let hasDirectives = false;
+  skipSeparationSpace(state, true);
+  while (readDirective(state)) {
+    hasDirectives = true;
+    skipSeparationSpace(state, true);
+  }
+  let explicitStart = false;
+  let explicitEnd = false;
+  let allowCompact = true;
+  if (state.lineIndent === 0 && state.input.charCodeAt(state.position) === 45 && state.input.charCodeAt(state.position + 1) === 45 && state.input.charCodeAt(state.position + 2) === 45 && isWsOrEolOrEnd(state.input.charCodeAt(state.position + 3))) {
+    explicitStart = true;
+    const markerLine = state.line;
+    state.position += 3;
+    skipSeparationSpace(state, true);
+    allowCompact = state.line > markerLine;
+  } else if (hasDirectives) throwError(state, "directives end mark is expected");
+  const documentEventIndex = state.events.length;
+  if (!explicitStart && state.position === state.lineStart && state.input.charCodeAt(state.position) === 46 && testDocumentSeparator(state)) {
+    state.position += 3;
+    skipSeparationSpace(state, true);
+    return;
+  }
+  addDocumentEvent(state, explicitStart, false);
+  if (!parseNode(state, state.lineIndent - 1, CONTEXT_BLOCK_OUT, false, allowCompact, allowCompact)) addEmptyScalarEvent(state);
+  skipSeparationSpace(state, true);
+  if (state.position === state.lineStart && testDocumentSeparator(state)) {
+    explicitEnd = state.input.charCodeAt(state.position) === 46;
+    if (explicitEnd) {
+      const markerLine = state.line;
+      state.position += 3;
+      skipSeparationSpace(state, true);
+      if (state.line === markerLine && state.position < state.length) throwError(state, "end of the stream or a document separator is expected");
+    }
+  }
+  const documentEvent = state.events[documentEventIndex];
+  if (documentEvent?.type === 1) documentEvent.explicitEnd = explicitEnd;
+  addPopEvent(state);
+  if (!explicitEnd && state.position < state.length && !(state.position === state.lineStart && testDocumentSeparator(state))) throwError(state, "end of the stream or a document separator is expected");
+}
+function parseEvents(input, options) {
+  const length = input.length;
+  const state = {
+    ...DEFAULT_PARSER_OPTIONS,
+    ...options,
+    input: `${input}\0`,
+    length,
+    position: 0,
+    line: 0,
+    lineStart: 0,
+    lineIndent: 0,
+    firstTabInLine: -1,
+    depth: 0,
+    directives: [],
+    tagHandlers: /* @__PURE__ */ Object.create(null),
+    events: []
+  };
+  const nullpos = input.indexOf("\0");
+  if (nullpos !== -1) throwErrorAt(input, nullpos, "null byte is not allowed in input", state.filename);
+  if (state.input.charCodeAt(state.position) === 65279) state.position++;
+  while (state.position < state.length) {
+    skipSeparationSpace(state, true);
+    if (state.position >= state.length) break;
+    const documentStart = state.position;
+    readDocument(state);
+    if (state.position === documentStart)
+      throwError(state, "can not read a document");
+  }
+  return state.events;
+}
+var DEFAULT_LOAD_OPTIONS = {
+  ...DEFAULT_PARSER_OPTIONS,
+  ...DEFAULT_CONSTRUCTOR_OPTIONS
+};
+function loadDocuments(input, options = {}) {
+  const opts = {
+    ...DEFAULT_LOAD_OPTIONS,
+    ...options
+  };
+  const source = String(input);
+  const PARSER_OPT_KEYS = Object.keys(DEFAULT_PARSER_OPTIONS);
+  const CONSTRUCTOR_OPT_KEYS = Object.keys(DEFAULT_CONSTRUCTOR_OPTIONS);
+  return constructFromEvents(parseEvents(source, pick(opts, PARSER_OPT_KEYS)), {
+    ...pick(opts, CONSTRUCTOR_OPT_KEYS),
+    source
+  });
+}
+function load(input, options) {
+  const documents = loadDocuments(input, options);
+  if (documents.length === 0) throw new YAMLException("expected a document, but the input is empty");
+  if (documents.length === 1) return documents[0];
+  throw new YAMLException("expected a single document in the stream, but found more");
+}
+var Style = class {
+  tagged = false;
+  flow = false;
+  singleQuoted = false;
+  doubleQuoted = false;
+  literal = false;
+  folded = false;
+};
+var INVALID = /* @__PURE__ */ Symbol("INVALID");
+function buildRepresentTypes(schema) {
+  const defaultTags = new Set([
+    schema.defaultScalarTag,
+    schema.defaultSequenceTag,
+    schema.defaultMappingTag
+  ].filter((t) => t !== void 0));
+  const implicitScalars = schema.implicitScalarTags;
+  const explicitTags = schema.tags.filter((t) => !(t.nodeKind === "scalar" && t.implicit) && !defaultTags.has(t));
+  const defaultTagsLast = schema.tags.filter((t) => defaultTags.has(t));
+  return [
+    ...implicitScalars.map((tag) => ({
+      tag,
+      implicitTag: true
+    })),
+    ...explicitTags.map((tag) => ({
+      tag,
+      implicitTag: false
+    })),
+    ...defaultTagsLast.map((tag) => ({
+      tag,
+      implicitTag: true
+    }))
+  ];
+}
+function matchTag(state, object) {
+  for (let index = 0, length = state.representTypes.length; index < length; index += 1) {
+    const { tag, implicitTag } = state.representTypes[index];
+    if (tag.identify && tag.identify(object)) {
+      let tagName;
+      if (tag.matchByTagPrefix && tag.representTagName) tagName = tag.representTagName(object);
+      else tagName = tag.tagName;
+      return {
+        tag,
+        tagName,
+        implicitTag
+      };
+    }
+  }
+  return null;
+}
+function build(state, object) {
+  if (!state.noRefs && object !== null && typeof object === "object") {
+    const existing = state.refs.get(object);
+    if (existing) {
+      if (existing.anchor === void 0) existing.anchor = `ref_${state.refCounter++}`;
+      return {
+        kind: "alias",
+        tag: "",
+        style: new Style(),
+        anchor: existing.anchor
+      };
+    }
+  }
+  const matched = matchTag(state, object);
+  if (!matched) {
+    if (object === void 0) return INVALID;
+    if (state.skipInvalid) return INVALID;
+    throw new YAMLException(`unacceptable kind of an object to dump ${Object.prototype.toString.call(object)}`);
+  }
+  const { tag, tagName, implicitTag } = matched;
+  const nodeTagName = implicitTag ? tagName : tagNameShort(tagName);
+  if (tag.nodeKind === "scalar") {
+    const style2 = new Style();
+    style2.tagged = !implicitTag;
+    return {
+      kind: "scalar",
+      tag: nodeTagName,
+      style: style2,
+      value: tag.represent(object)
     };
   }
+  if (tag.nodeKind === "sequence") {
+    const container = tag.represent(object);
+    const style2 = new Style();
+    style2.tagged = !implicitTag;
+    const node2 = {
+      kind: "sequence",
+      tag: nodeTagName,
+      style: style2,
+      items: []
+    };
+    if (!state.noRefs) state.refs.set(object, node2);
+    for (let index = 0, length = container.length; index < length; index += 1) {
+      let item = build(state, container[index]);
+      if (item === INVALID && container[index] === void 0) item = build(state, null);
+      if (item === INVALID) continue;
+      node2.items.push(item);
+    }
+    return node2;
+  }
+  const map = tag.represent(object);
+  const style = new Style();
+  style.tagged = !implicitTag;
+  const node = {
+    kind: "mapping",
+    tag: nodeTagName,
+    style,
+    items: []
+  };
+  if (!state.noRefs) state.refs.set(object, node);
+  for (const [objectKey, objectValue] of map) {
+    const key = build(state, objectKey);
+    if (key === INVALID) continue;
+    const value = build(state, objectValue);
+    if (value === INVALID) continue;
+    node.items.push({
+      key,
+      value
+    });
+  }
+  return node;
+}
+function jsToAst(input, schema, options = {}) {
+  const root = build({
+    representTypes: buildRepresentTypes(schema),
+    noRefs: options.noRefs ?? false,
+    skipInvalid: options.skipInvalid ?? false,
+    refs: /* @__PURE__ */ new Map(),
+    refCounter: 0
+  }, input);
+  return [{
+    contents: root === INVALID ? null : root,
+    directives: []
+  }];
+}
+var VISIT_BREAK = /* @__PURE__ */ Symbol("visit:break");
+var VISIT_SKIP = /* @__PURE__ */ Symbol("visit:skip");
+function visitNode(node, visitor, ctx) {
+  const control = visitor(node, ctx);
+  if (control === VISIT_BREAK) return true;
+  if (control === VISIT_SKIP) return false;
+  const depth = ctx.depth + 1;
+  switch (node.kind) {
+    case "sequence":
+      for (const item of node.items) if (visitNode(item, visitor, {
+        depth,
+        parent: node,
+        isKey: false
+      })) return true;
+      break;
+    case "mapping":
+      for (const { key, value } of node.items) {
+        if (visitNode(key, visitor, {
+          depth,
+          parent: node,
+          isKey: true
+        })) return true;
+        if (visitNode(value, visitor, {
+          depth,
+          parent: node,
+          isKey: false
+        })) return true;
+      }
+      break;
+  }
+  return false;
+}
+function visit(documents, visitor) {
+  for (const doc of documents) if (doc.contents && visitNode(doc.contents, visitor, {
+    depth: 0,
+    parent: null,
+    isKey: false
+  })) return;
+}
+var CHAR_BOM = 65279;
+var CHAR_TAB = 9;
+var CHAR_LINE_FEED = 10;
+var CHAR_CARRIAGE_RETURN = 13;
+var CHAR_SPACE = 32;
+var CHAR_EXCLAMATION = 33;
+var CHAR_DOUBLE_QUOTE = 34;
+var CHAR_SHARP = 35;
+var CHAR_PERCENT = 37;
+var CHAR_AMPERSAND = 38;
+var CHAR_SINGLE_QUOTE = 39;
+var CHAR_ASTERISK = 42;
+var CHAR_COMMA = 44;
+var CHAR_MINUS = 45;
+var CHAR_COLON = 58;
+var CHAR_EQUALS = 61;
+var CHAR_GREATER_THAN = 62;
+var CHAR_QUESTION = 63;
+var CHAR_COMMERCIAL_AT = 64;
+var CHAR_LEFT_SQUARE_BRACKET = 91;
+var CHAR_RIGHT_SQUARE_BRACKET = 93;
+var CHAR_GRAVE_ACCENT = 96;
+var CHAR_LEFT_CURLY_BRACKET = 123;
+var CHAR_VERTICAL_LINE = 124;
+var CHAR_RIGHT_CURLY_BRACKET = 125;
+var ESCAPE_SEQUENCES = {};
+ESCAPE_SEQUENCES[0] = "\\0";
+ESCAPE_SEQUENCES[7] = "\\a";
+ESCAPE_SEQUENCES[8] = "\\b";
+ESCAPE_SEQUENCES[9] = "\\t";
+ESCAPE_SEQUENCES[10] = "\\n";
+ESCAPE_SEQUENCES[11] = "\\v";
+ESCAPE_SEQUENCES[12] = "\\f";
+ESCAPE_SEQUENCES[13] = "\\r";
+ESCAPE_SEQUENCES[27] = "\\e";
+ESCAPE_SEQUENCES[34] = '\\"';
+ESCAPE_SEQUENCES[92] = "\\\\";
+ESCAPE_SEQUENCES[133] = "\\N";
+ESCAPE_SEQUENCES[160] = "\\_";
+ESCAPE_SEQUENCES[8232] = "\\L";
+ESCAPE_SEQUENCES[8233] = "\\P";
+var DEFAULT_PRESENTER_OPTIONS = {
+  indent: 2,
+  seqNoIndent: false,
+  seqInlineFirst: true,
+  sortKeys: false,
+  lineWidth: 80,
+  flowBracketPadding: false,
+  flowSkipCommaSpace: false,
+  flowSkipColonSpace: false,
+  quoteFlowKeys: false,
+  quoteStyle: "single",
+  forceQuotes: false,
+  tagBeforeAnchor: false
+};
+function nodeTagShort(node) {
+  return node.style.tagged ? node.tag : tagNameShort(node.tag);
+}
+function createPresenterState(options) {
+  const opts = {
+    ...DEFAULT_PRESENTER_OPTIONS,
+    ...options
+  };
+  return {
+    ...opts,
+    defaultScalarTagName: opts.schema.defaultScalarTag.tagName,
+    implicitResolvers: opts.schema.implicitScalarTags
+  };
+}
+function encodeNonPrintable(character) {
+  const string = character.toString(16).toUpperCase();
+  const handle = character <= 255 ? "x" : "u";
+  const length = character <= 255 ? 2 : 4;
+  return `\\${handle}${"0".repeat(length - string.length)}${string}`;
+}
+function indentString(string, spaces) {
+  const ind = " ".repeat(spaces);
+  let position = 0;
+  let result2 = "";
+  const length = string.length;
+  while (position < length) {
+    let line;
+    const next = string.indexOf("\n", position);
+    if (next === -1) {
+      line = string.slice(position);
+      position = length;
+    } else {
+      line = string.slice(position, next + 1);
+      position = next + 1;
+    }
+    if (line.length && line !== "\n") result2 += ind;
+    result2 += line;
+  }
+  return result2;
+}
+function generateNextLine(state, level) {
+  return `
+${" ".repeat(state.indent * level)}`;
+}
+function scalarLayout(state, level) {
+  const indent = state.indent * Math.max(1, level);
+  return {
+    indent,
+    blockIndent: level === 0 ? state.indent + 1 : state.indent,
+    lineWidth: state.lineWidth === -1 ? -1 : Math.max(Math.min(state.lineWidth, 40), state.lineWidth - indent)
+  };
+}
+function resolveImplicitTag(state, str) {
+  for (let index = 0, length = state.implicitResolvers.length; index < length; index += 1) {
+    const tagDefinition = state.implicitResolvers[index];
+    if (tagDefinition.resolve(str, false, tagDefinition.tagName) !== NOT_RESOLVED) return tagDefinition.tagName;
+  }
+  return state.defaultScalarTagName;
+}
+function isWhitespace(c) {
+  return c === CHAR_SPACE || c === CHAR_TAB;
+}
+function startsWithDocumentSeparator(string) {
+  const marker = string.charCodeAt(0);
+  if (marker !== CHAR_MINUS && marker !== 46 || string.charCodeAt(1) !== marker || string.charCodeAt(2) !== marker) return false;
+  if (string.length === 3) return true;
+  const following = string.charCodeAt(3);
+  return isWhitespace(following) || following === CHAR_CARRIAGE_RETURN || following === CHAR_LINE_FEED;
+}
+function isPrintable(c) {
+  return c >= 32 && c <= 126 || c >= 161 && c <= 55295 && c !== 8232 && c !== 8233 || c >= 57344 && c <= 65533 && c !== CHAR_BOM || c >= 65536 && c <= 1114111;
+}
+function isNsCharOrWhitespace(c) {
+  return isPrintable(c) && c !== CHAR_BOM && c !== CHAR_CARRIAGE_RETURN && c !== CHAR_LINE_FEED;
+}
+function isPlainSafe(c, prev, inblock) {
+  const cIsNsCharOrWhitespace = isNsCharOrWhitespace(c);
+  const cIsNsChar = cIsNsCharOrWhitespace && !isWhitespace(c);
+  return (inblock ? cIsNsCharOrWhitespace : cIsNsCharOrWhitespace && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET) && c !== CHAR_SHARP && !(prev === CHAR_COLON && !cIsNsChar) || isNsCharOrWhitespace(prev) && !isWhitespace(prev) && c === CHAR_SHARP || prev === CHAR_COLON && cIsNsChar;
+}
+function isPlainSafeFirst(c) {
+  return isPrintable(c) && c !== CHAR_BOM && !isWhitespace(c) && c !== CHAR_MINUS && c !== CHAR_QUESTION && c !== CHAR_COLON && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET && c !== CHAR_SHARP && c !== CHAR_AMPERSAND && c !== CHAR_ASTERISK && c !== CHAR_EXCLAMATION && c !== CHAR_VERTICAL_LINE && c !== CHAR_EQUALS && c !== CHAR_GREATER_THAN && c !== CHAR_SINGLE_QUOTE && c !== CHAR_DOUBLE_QUOTE && c !== CHAR_PERCENT && c !== CHAR_COMMERCIAL_AT && c !== CHAR_GRAVE_ACCENT;
+}
+function isPlainSafeAtStart(string, inblock) {
+  const first = codePointAt(string, 0);
+  if (isPlainSafeFirst(first)) return true;
+  if (string.length > 1 && (first === CHAR_MINUS || first === CHAR_QUESTION || first === CHAR_COLON)) {
+    const second = codePointAt(string, 1);
+    return !isWhitespace(second) && isPlainSafe(second, first, inblock);
+  }
+  return false;
+}
+function isPlainSafeLast(c) {
+  return !isWhitespace(c) && c !== CHAR_COLON;
+}
+function codePointAt(string, pos) {
+  const first = string.charCodeAt(pos);
+  let second;
+  if (first >= 55296 && first <= 56319 && pos + 1 < string.length) {
+    second = string.charCodeAt(pos + 1);
+    if (second >= 56320 && second <= 57343) return (first - 55296) * 1024 + second - 56320 + 65536;
+  }
+  return first;
+}
+function needIndentIndicator(string) {
+  return /^\n* /.test(string);
+}
+var STYLE_PLAIN = 1;
+var STYLE_SINGLE = 2;
+var STYLE_LITERAL = 3;
+var STYLE_FOLDED = 4;
+var STYLE_DOUBLE = 5;
+function chooseScalarStyle(state, string, layout, singleLineOnly, forceQuote, inblock) {
+  const { blockIndent, lineWidth } = layout;
+  let i;
+  let char = 0;
+  let prevChar = -1;
+  let hasLineBreak = false;
+  let hasFoldableLine = false;
+  const shouldTrackWidth = lineWidth !== -1;
+  let previousLineBreak = -1;
+  let plain = !startsWithDocumentSeparator(string) && isPlainSafeAtStart(string, inblock) && isPlainSafeLast(codePointAt(string, string.length - 1));
+  if (singleLineOnly || forceQuote) for (i = 0; i < string.length; char >= 65536 ? i += 2 : i++) {
+    char = codePointAt(string, i);
+    if (!isPrintable(char)) return STYLE_DOUBLE;
+    plain = plain && isPlainSafe(char, prevChar, inblock);
+    prevChar = char;
+  }
+  else {
+    for (i = 0; i < string.length; char >= 65536 ? i += 2 : i++) {
+      char = codePointAt(string, i);
+      if (char === CHAR_LINE_FEED) {
+        hasLineBreak = true;
+        if (shouldTrackWidth) {
+          hasFoldableLine = hasFoldableLine || i - previousLineBreak - 1 > lineWidth && string[previousLineBreak + 1] !== " ";
+          previousLineBreak = i;
+        }
+      } else if (!isPrintable(char)) return STYLE_DOUBLE;
+      plain = plain && isPlainSafe(char, prevChar, inblock);
+      prevChar = char;
+    }
+    hasFoldableLine = hasFoldableLine || shouldTrackWidth && i - previousLineBreak - 1 > lineWidth && string[previousLineBreak + 1] !== " ";
+  }
+  if (!hasLineBreak && !hasFoldableLine) {
+    if (plain && !forceQuote) return STYLE_PLAIN;
+    return state.quoteStyle === "double" ? STYLE_DOUBLE : STYLE_SINGLE;
+  }
+  if (blockIndent > 9 && needIndentIndicator(string)) return STYLE_DOUBLE;
+  return hasFoldableLine ? STYLE_FOLDED : STYLE_LITERAL;
+}
+function renderScalarStyle(string, style, layout) {
+  const { indent, blockIndent, lineWidth } = layout;
+  switch (style) {
+    case STYLE_PLAIN:
+      return encodeFlowBreaks(string, indent);
+    case STYLE_SINGLE:
+      return `'${encodeFlowBreaks(string, indent).replace(/'/g, "''")}'`;
+    case STYLE_LITERAL:
+      return "|" + blockHeader(string, blockIndent) + dropEndingNewline(indentString(string, indent));
+    case STYLE_FOLDED:
+      return ">" + blockHeader(string, blockIndent) + dropEndingNewline(indentString(foldBlockScalar(string, lineWidth), indent));
+    case STYLE_DOUBLE:
+      return `"${escapeString(string)}"`;
+  }
+}
+function resolveScalarStyle(state, node, layout, iskey, inblock) {
+  const singleLineOnly = iskey || !inblock;
+  if (node.style.singleQuoted) return STYLE_SINGLE;
+  if (node.style.doubleQuoted) return STYLE_DOUBLE;
+  if (!singleLineOnly) {
+    if (node.style.literal) return STYLE_LITERAL;
+    if (node.style.folded) return STYLE_FOLDED;
+  }
+  const string = node.value;
+  if (string.length === 0) {
+    if (node.style.tagged || resolveImplicitTag(state, string) === node.tag) return STYLE_PLAIN;
+    return state.quoteStyle === "double" ? STYLE_DOUBLE : STYLE_SINGLE;
+  }
+  const style = chooseScalarStyle(state, string, layout, singleLineOnly, state.forceQuotes && !iskey, inblock);
+  if (style === STYLE_PLAIN && !node.style.tagged && resolveImplicitTag(state, string) !== node.tag) return state.quoteStyle === "double" ? STYLE_DOUBLE : STYLE_SINGLE;
+  return style;
+}
+function blockHeader(string, indentPerLevel) {
+  const indentIndicator = needIndentIndicator(string) ? String(indentPerLevel) : "";
+  const clip = string[string.length - 1] === "\n";
+  return `${indentIndicator}${clip && (string[string.length - 2] === "\n" || string === "\n") ? "+" : clip ? "" : "-"}
+`;
+}
+function encodeFlowBreaks(string, indent) {
+  let nextLF = string.indexOf("\n");
+  if (nextLF === -1) return string;
+  const pad = " ".repeat(indent);
+  let result2 = string.slice(0, nextLF);
+  const lineRe = /(\n+)([^\n]*)/g;
+  lineRe.lastIndex = nextLF;
+  let match;
+  while (match = lineRe.exec(string)) {
+    const breaks = match[1].length;
+    const line = match[2];
+    result2 += "\n".repeat(breaks + 1) + pad + line;
+  }
+  return result2;
+}
+function dropEndingNewline(string) {
+  return string[string.length - 1] === "\n" ? string.slice(0, -1) : string;
+}
+function foldBlockScalar(string, width) {
+  const lineRe = /(\n+)([^\n]*)/g;
+  let nextLF = string.indexOf("\n");
+  if (nextLF === -1) nextLF = string.length;
+  lineRe.lastIndex = nextLF;
+  let result2 = foldLine(string.slice(0, nextLF), width);
+  let prevMoreIndented = string[0] === "\n" || string[0] === " ";
+  let moreIndented;
+  let match;
+  while (match = lineRe.exec(string)) {
+    const prefix = match[1];
+    const line = match[2];
+    moreIndented = line[0] === " ";
+    result2 += prefix + (!prevMoreIndented && !moreIndented && line !== "" ? "\n" : "") + foldLine(line, width);
+    prevMoreIndented = moreIndented;
+  }
+  return result2;
+}
+function foldLine(line, width) {
+  if (line === "" || line[0] === " ") return line;
+  const breakRe = / [^ ]/g;
+  let match;
+  let start = 0;
+  let end;
+  let curr = 0;
+  let next = 0;
+  let result2 = "";
+  while (match = breakRe.exec(line)) {
+    next = match.index;
+    if (next - start > width) {
+      end = curr > start ? curr : next;
+      result2 += `
+${line.slice(start, end)}`;
+      start = end + 1;
+    }
+    curr = next;
+  }
+  result2 += "\n";
+  if (line.length - start > width && curr > start) result2 += `${line.slice(start, curr)}
+${line.slice(curr + 1)}`;
+  else result2 += line.slice(start);
+  return result2.slice(1);
+}
+function escapeString(string) {
+  let result2 = "";
+  let char = 0;
+  for (let i = 0; i < string.length; char >= 65536 ? i += 2 : i++) {
+    char = codePointAt(string, i);
+    const escapeSeq = ESCAPE_SEQUENCES[char];
+    if (escapeSeq) {
+      result2 += escapeSeq;
+      continue;
+    }
+    if (isPrintable(char)) {
+      result2 += string[i];
+      if (char >= 65536) result2 += string[i + 1];
+      continue;
+    }
+    result2 += encodeNonPrintable(char);
+  }
+  return result2;
+}
+function writeFlowSequence(state, level, node) {
+  let result2 = "";
+  for (let index = 0, length = node.items.length; index < length; index += 1) {
+    const item = writeNode(state, level, node.items[index], {});
+    if (result2 !== "") result2 += `,${!state.flowSkipCommaSpace ? " " : ""}`;
+    result2 += item;
+  }
+  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
+  return `[${pad}${result2}${pad}]`;
+}
+function writeBlockSequence(state, level, node, compact) {
+  let result2 = "";
+  for (let index = 0, length = node.items.length; index < length; index += 1) {
+    const item = writeNode(state, level + 1, node.items[index], {
+      block: true,
+      compact: state.seqInlineFirst,
+      isblockseq: true
+    });
+    if (!compact || result2 !== "") result2 += generateNextLine(state, level);
+    if (item === "" || CHAR_LINE_FEED === item.charCodeAt(0)) result2 += "-";
+    else result2 += "- ";
+    result2 += item;
+  }
+  return result2;
+}
+function writeFlowMapping(state, level, node) {
+  let result2 = "";
+  const items = sortMappingItems(state, node.items);
+  for (const { key, value } of items) {
+    let pairBuffer = "";
+    if (result2 !== "") pairBuffer += `,${!state.flowSkipCommaSpace ? " " : ""}`;
+    const keyText = writeNode(state, level, key, { iskey: true });
+    const explicitPair = keyText.length > 1024;
+    if (explicitPair) pairBuffer += "? ";
+    else if (state.quoteFlowKeys) pairBuffer += '"';
+    const valueText = writeNode(state, level, value, {});
+    const sep = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep}${valueText}`;
+    result2 += pairBuffer;
+  }
+  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
+  return `{${pad}${result2}${pad}}`;
+}
+function sortKeyValue(key) {
+  return key.kind === "scalar" ? key.value : key;
+}
+function sortMappingItems(state, items) {
+  if (!state.sortKeys) return items;
+  const copy = items.slice();
+  if (state.sortKeys === true) copy.sort((a, b) => {
+    const x = sortKeyValue(a.key);
+    const y = sortKeyValue(b.key);
+    if (x < y) return -1;
+    if (x > y) return 1;
+    return 0;
+  });
+  else {
+    const fn = state.sortKeys;
+    copy.sort((a, b) => fn(sortKeyValue(a.key), sortKeyValue(b.key)));
+  }
+  return copy;
+}
+function writeBlockMapping(state, level, node, compact) {
+  let result2 = "";
+  const items = sortMappingItems(state, node.items);
+  for (let index = 0, length = items.length; index < length; index += 1) {
+    let pairBuffer = "";
+    if (!compact || result2 !== "") pairBuffer += generateNextLine(state, level);
+    const { key, value } = items[index];
+    const keyIsBlock = (key.kind === "mapping" || key.kind === "sequence") && !key.style.flow && key.items.length !== 0 || key.kind === "scalar" && (key.style.literal || key.style.folded);
+    const keyText = keyIsBlock ? writeNode(state, level + 1, key, {
+      block: true,
+      compact: true,
+      isblockseq: !cannotBeCompact(state, key, level + 1)
+    }) : writeNode(state, level + 1, key, {
+      block: true,
+      compact: true,
+      iskey: true
+    });
+    const keyHasLineBreak = key.kind === "scalar" && key.value.indexOf("\n") !== -1;
+    const explicitPair = keyIsBlock || keyHasLineBreak || keyText.length > 1024;
+    if (explicitPair) if (keyText && CHAR_LINE_FEED === keyText.charCodeAt(0)) pairBuffer += "?";
+    else pairBuffer += "? ";
+    pairBuffer += keyText;
+    if (explicitPair) pairBuffer += generateNextLine(state, level);
+    const valueText = writeNode(state, level + 1, value, {
+      block: true,
+      compact: explicitPair,
+      isblockseq: explicitPair && !cannotBeCompact(state, value, level + 1)
+    });
+    const keyIsBareProps = key.kind === "scalar" && key.value === "" && keyText !== "" && keyText.charCodeAt(keyText.length - 1) !== CHAR_SINGLE_QUOTE && keyText.charCodeAt(keyText.length - 1) !== CHAR_DOUBLE_QUOTE;
+    const keyColonSep = !explicitPair && (key.kind === "alias" || keyIsBareProps) ? " " : "";
+    if (valueText === "" || CHAR_LINE_FEED === valueText.charCodeAt(0)) pairBuffer += `${keyColonSep}:`;
+    else pairBuffer += `${keyColonSep}: `;
+    pairBuffer += valueText;
+    result2 += pairBuffer;
+  }
+  return result2;
+}
+function cannotBeCompact(state, node, level) {
+  return node.style.tagged || node.anchor !== void 0 || state.indent < 2 && level > 0;
+}
+function writeNode(state, level, node, ctx) {
+  if (node.kind === "alias") return `*${node.anchor}`;
+  const { block = false, iskey = false, isblockseq = false } = ctx;
+  let compact = ctx.compact ?? false;
+  const hasAnchor = node.anchor !== void 0;
+  if (cannotBeCompact(state, node, level)) compact = false;
+  let body;
+  let shouldPrintTag = node.style.tagged;
+  const useBlockCollection = block && (node.kind === "mapping" || node.kind === "sequence") && !node.style.flow && node.items.length !== 0;
+  if (node.kind === "mapping") if (useBlockCollection) body = writeBlockMapping(state, level, node, compact);
+  else body = writeFlowMapping(state, level, node);
+  else if (node.kind === "sequence") if (useBlockCollection) if (state.seqNoIndent && !isblockseq && level > 0) body = writeBlockSequence(state, level - 1, node, compact);
+  else body = writeBlockSequence(state, level, node, compact);
+  else body = writeFlowSequence(state, level, node);
+  else {
+    const layout = scalarLayout(state, level);
+    const style = resolveScalarStyle(state, node, layout, iskey, block);
+    body = renderScalarStyle(node.value, style, layout);
+    shouldPrintTag = node.style.tagged || style !== STYLE_PLAIN && node.tag !== state.defaultScalarTagName;
+  }
+  if (useBlockCollection && compact && level > 0 && state.indent > 2) body = `${" ".repeat(state.indent - 2)}${body}`;
+  if (shouldPrintTag || hasAnchor) {
+    const props = [];
+    const tag = shouldPrintTag ? nodeTagShort(node) : null;
+    const anchor = hasAnchor ? `&${node.anchor}` : null;
+    if (state.tagBeforeAnchor) {
+      if (tag !== null) props.push(tag);
+      if (anchor !== null) props.push(anchor);
+    } else {
+      if (anchor !== null) props.push(anchor);
+      if (tag !== null) props.push(tag);
+    }
+    const sep = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    body = `${props.join(" ")}${sep}${body}`;
+  }
+  return body;
+}
+function rootStartsOwnLine(node) {
+  return (node.kind === "sequence" || node.kind === "mapping") && !node.style.flow && node.items.length !== 0 && !node.style.tagged && node.anchor === void 0;
+}
+function isOpenEnded(node) {
+  let leaf = node;
+  while ((leaf.kind === "sequence" || leaf.kind === "mapping") && !leaf.style.flow && leaf.items.length !== 0) leaf = leaf.kind === "sequence" ? leaf.items[leaf.items.length - 1] : leaf.items[leaf.items.length - 1].value;
+  if (leaf.kind !== "scalar" || !(leaf.style.literal || leaf.style.folded)) return false;
+  const { value } = leaf;
+  return value.endsWith("\n\n") || value === "\n";
+}
+function writeDocumentDirectives(doc) {
+  let result2 = "";
+  for (const directive of doc.directives) {
+    if (directive.kind === "yaml") {
+      result2 += `%YAML ${directive.version}
+`;
+      continue;
+    }
+    const { handle, prefix } = directive;
+    result2 += `%TAG ${handle} ${prefix}
+`;
+  }
+  return result2;
+}
+function present(documents, options) {
+  const state = createPresenterState(options);
+  let result2 = "";
+  let previousEnded = false;
+  for (let index = 0; index < documents.length; index += 1) {
+    const doc = documents[index];
+    const directives = writeDocumentDirectives(doc);
+    const hasDirectives = directives !== "";
+    const marker = doc.explicitStart || hasDirectives || index > 0 && !previousEnded;
+    result2 += directives;
+    if (doc.contents === null) {
+      if (marker) result2 += "---\n";
+    } else if (marker) {
+      const body = writeNode(state, 0, doc.contents, {
+        block: true,
+        compact: true
+      });
+      const sep = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result2 += `---${sep}${body}
+`;
+    } else result2 += writeNode(state, 0, doc.contents, {
+      block: true,
+      compact: true
+    }) + "\n";
+    previousEnded = doc.explicitEnd || doc.contents !== null && isOpenEnded(doc.contents);
+    if (previousEnded) result2 += "...\n";
+  }
+  return result2;
+}
+var DEFAULT_DUMP_SCHEMA = YAML11_SCHEMA.withTags({
+  ...intYaml11Tag,
+  resolve: (source, isExplicit, tagName) => {
+    const result2 = intYaml11Tag.resolve(source, isExplicit, tagName);
+    return result2 === NOT_RESOLVED ? intCoreTag.resolve(source, isExplicit, tagName) : result2;
+  }
+}, {
+  ...floatYaml11Tag,
+  resolve: (source, isExplicit, tagName) => {
+    const result2 = floatYaml11Tag.resolve(source, isExplicit, tagName);
+    return result2 === NOT_RESOLVED ? floatCoreTag.resolve(source, isExplicit, tagName) : result2;
+  }
 });
+var DEFAULT_DUMP_OPTIONS = {
+  ...DEFAULT_PRESENTER_OPTIONS,
+  schema: DEFAULT_DUMP_SCHEMA,
+  skipInvalid: false,
+  noRefs: false,
+  flowLevel: -1,
+  transform: () => {
+  }
+};
+function dump(input, options = {}) {
+  const opts = {
+    ...DEFAULT_DUMP_OPTIONS,
+    ...options
+  };
+  const documents = jsToAst(input, opts.schema, {
+    noRefs: opts.noRefs,
+    skipInvalid: opts.skipInvalid
+  });
+  if (opts.flowLevel >= 0) visit(documents, (node, ctx) => {
+    if (ctx.depth < opts.flowLevel) return;
+    node.style.flow = true;
+    return VISIT_SKIP;
+  });
+  opts.transform(documents);
+  return present(documents, {
+    ...pick(opts, Object.keys(DEFAULT_PRESENTER_OPTIONS)),
+    schema: opts.schema
+  });
+}
+
+// src/domain/constants.ts
+var VERSION = true ? "0.4.0" : "0.0.0-dev";
+var ROUTER_DIR = ".router";
+
+// src/io/clock.ts
+var systemClock = {
+  nowIso: () => (/* @__PURE__ */ new Date()).toISOString(),
+  monotonicMs: () => performance.now()
+};
 
 // src/io/git.ts
 import { execFileSync } from "node:child_process";
+var GitError = class extends Error {
+  stderr;
+  code;
+  constructor(args, stderr, code) {
+    super(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`);
+    this.name = "GitError";
+    this.stderr = stderr;
+    this.code = code;
+  }
+};
 function tryGit(cwd, args, input) {
   try {
     const stdout = execFileSync("git", args, {
@@ -9936,14 +9592,6 @@ function git(cwd, args, input) {
 }
 function resolveCommit(cwd, ref) {
   return git(cwd, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]).trim();
-}
-function listTrackedFiles(cwd, cap = 2e3) {
-  const all = git(cwd, ["ls-files"]).split("\n").filter((l) => l !== "");
-  return { files: all.slice(0, cap), truncated: all.length > cap };
-}
-function showFileAtRev(cwd, sha, relPath) {
-  const r = tryGit(cwd, ["show", "--textconv", `${sha}:${relPath}`]);
-  return r.ok ? r.stdout : null;
 }
 function splitNul(s) {
   const parts = s.split("\0");
@@ -10052,22 +9700,6 @@ function mergeAbort(cwd) {
 function deleteBranch(cwd, branch) {
   tryGit(cwd, ["branch", "-D", branch]);
 }
-var GitError;
-var init_git = __esm({
-  "src/io/git.ts"() {
-    "use strict";
-    GitError = class extends Error {
-      stderr;
-      code;
-      constructor(args, stderr, code) {
-        super(`git ${args.join(" ")} failed (${code}): ${stderr.trim()}`);
-        this.name = "GitError";
-        this.stderr = stderr;
-        this.code = code;
-      }
-    };
-  }
-});
 
 // src/io/paths.ts
 import { existsSync, statSync } from "node:fs";
@@ -10075,14 +9707,14 @@ import { dirname, join, resolve } from "node:path";
 function runId(n) {
   return `run-${String(n).padStart(3, "0")}`;
 }
-function runBranch(id, run2) {
-  return `router/${id}/${run2}`;
+function runBranch(id, run) {
+  return `router/${id}/${run}`;
 }
 function routerPaths(routerDir) {
   const root = resolve(routerDir);
   const tasksDir = join(root, "tasks");
   const taskDir = (id) => join(tasksDir, id);
-  const runDir = (id, run2) => join(taskDir(id), "runs", run2);
+  const runDir = (id, run) => join(taskDir(id), "runs", run);
   return {
     root,
     repoRoot: dirname(root),
@@ -10106,12 +9738,12 @@ function routerPaths(routerDir) {
     taskContextDir: (id) => join(taskDir(id), "context"),
     runsDir: (id) => join(taskDir(id), "runs"),
     runDir,
-    lease: (id, run2) => join(runDir(id, run2), "lease.json"),
-    heartbeat: (id, run2) => join(runDir(id, run2), "heartbeat"),
-    resultJson: (id, run2) => join(runDir(id, run2), "result.json"),
-    diffPatch: (id, run2) => join(runDir(id, run2), "diff.patch"),
-    workerLog: (id, run2) => join(runDir(id, run2), "logs", "worker.log"),
-    worktree: (id, run2) => join(root, "worktrees", id, run2)
+    lease: (id, run) => join(runDir(id, run), "lease.json"),
+    heartbeat: (id, run) => join(runDir(id, run), "heartbeat"),
+    resultJson: (id, run) => join(runDir(id, run), "result.json"),
+    diffPatch: (id, run) => join(runDir(id, run), "diff.patch"),
+    workerLog: (id, run) => join(runDir(id, run), "logs", "worker.log"),
+    worktree: (id, run) => join(root, "worktrees", id, run)
   };
 }
 function findRouterDir(startDir) {
@@ -10124,30 +9756,9 @@ function findRouterDir(startDir) {
     dir = parent;
   }
 }
-var init_paths = __esm({
-  "src/io/paths.ts"() {
-    "use strict";
-    init_constants();
-  }
-});
 
-// src/io/signals.ts
-function killProcessGroup(pgid, signal) {
-  if (!Number.isInteger(pgid) || pgid <= 1) return false;
-  try {
-    process.kill(-pgid, signal);
-    return true;
-  } catch (err2) {
-    const code = err2.code;
-    if (code === "ESRCH" || code === "EPERM") return false;
-    throw err2;
-  }
-}
-var init_signals = __esm({
-  "src/io/signals.ts"() {
-    "use strict";
-  }
-});
+// src/io/store.ts
+import { existsSync as existsSync3, readFileSync as readFileSync2, readdirSync, rmSync, statSync as statSync2, writeFileSync } from "node:fs";
 
 // src/io/atomicWrite.ts
 import {
@@ -10160,6 +9771,7 @@ import {
   writeSync
 } from "node:fs";
 import { dirname as dirname2, join as join2 } from "node:path";
+var counter = 0;
 function tmpPath(target) {
   counter += 1;
   return join2(dirname2(target), `.tmp.${process.pid}.${counter}.${target.length}`);
@@ -10194,13 +9806,6 @@ function writeJsonAtomic(target, value) {
   writeFileAtomic(target, `${JSON.stringify(value, null, 2)}
 `);
 }
-var counter;
-var init_atomicWrite = __esm({
-  "src/io/atomicWrite.ts"() {
-    "use strict";
-    counter = 0;
-  }
-});
 
 // src/io/jsonl.ts
 import { appendFileSync, existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync } from "node:fs";
@@ -10214,565 +9819,43 @@ function appendJsonl(path, record) {
   appendFileSync(path, `${line}
 `, { flag: "a" });
 }
-function readJsonl(path) {
-  if (!existsSync2(path)) return [];
-  const raw = readFileSync(path, "utf8");
-  const out2 = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    try {
-      out2.push(JSON.parse(trimmed));
-    } catch {
-    }
-  }
-  return out2;
-}
-var init_jsonl = __esm({
-  "src/io/jsonl.ts"() {
-    "use strict";
-  }
-});
 
 // src/io/store.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2, readdirSync, rmSync, statSync as statSync2, writeFileSync } from "node:fs";
-import { join as join3 } from "node:path";
 function readJson(path) {
   if (!existsSync3(path)) return null;
   return JSON.parse(readFileSync2(path, "utf8"));
 }
-function readState(p, id) {
-  return readJson(p.stateFile(id));
+function readResult(p, id, run) {
+  return readJson(p.resultJson(id, run));
 }
-function writeState(p, id, state) {
-  writeJsonAtomic(p.stateFile(id), state);
-}
-function readEvents(p, id) {
-  return readJsonl(p.eventsFile(id));
-}
-function appendEvent(p, id, event) {
-  appendJsonl(p.eventsFile(id), event);
-}
-function readRegistry(p) {
-  return readJson(p.registry);
-}
-function writeRegistry(p, registry) {
-  writeJsonAtomic(p.registry, registry);
-}
-function readLease(p, id, run2) {
-  return readJson(p.lease(id, run2));
-}
-function writeLease(p, id, run2, lease) {
-  writeJsonAtomic(p.lease(id, run2), lease);
-}
-function readResult(p, id, run2) {
-  return readJson(p.resultJson(id, run2));
-}
-function writeResult(p, id, run2, result2) {
-  writeJsonAtomic(p.resultJson(id, run2), result2);
+function writeResult(p, id, run, result2) {
+  writeJsonAtomic(p.resultJson(id, run), result2);
 }
 function appendMetric(p, record) {
   appendJsonl(p.metrics, record);
 }
-function readMetrics(p) {
-  return readJsonl(p.metrics);
-}
-function overwriteMetrics(p, records) {
-  const text = records.map((r) => JSON.stringify(r)).join("\n");
-  writeFileSync(p.metrics, text.length > 0 ? `${text}
-` : "");
-}
-function writeMetricsArchive(p, records) {
-  const text = records.map((r) => JSON.stringify(r)).join("\n");
-  writeFileSync(p.metricsArchive, text.length > 0 ? `${text}
-` : "");
-}
-function readApproval(p, id) {
-  return readJson(p.approval(id));
-}
-function writeApproval(p, id, record) {
-  writeJsonAtomic(p.approval(id), record);
-}
-function appendBaseline(p, record) {
-  appendJsonl(p.baseline, record);
-}
-function readBaseline(p) {
-  return readJsonl(p.baseline);
-}
-function appendRouting(p, record) {
-  appendJsonl(p.routing, record);
-}
-function readRouting(p) {
-  return readJsonl(p.routing);
-}
-function listTaskIds(p) {
-  if (!existsSync3(p.tasksDir)) return [];
-  return readdirSync(p.tasksDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
-}
-function listRunIds(p, id) {
-  const dir = p.runsDir(id);
-  if (!existsSync3(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name)).map((e) => e.name).sort();
-}
-function listWorktreeRuns(p, id) {
-  const dir = join3(p.worktreesDir, id);
-  if (!existsSync3(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name)).map((e) => e.name).sort();
-}
-function pathSizeBytes(path) {
-  let total = 0;
-  let st;
-  try {
-    st = statSync2(path);
-  } catch {
-    return 0;
-  }
-  if (st.isDirectory()) {
-    for (const name of readdirSync(path)) total += pathSizeBytes(join3(path, name));
-  } else {
-    total += st.size;
-  }
-  return total;
-}
-function removeEmptyWorktreeParent(p, id) {
-  const dir = join3(p.worktreesDir, id);
-  if (existsSync3(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true, force: true });
-}
-var init_store = __esm({
-  "src/io/store.ts"() {
-    "use strict";
-    init_atomicWrite();
-    init_jsonl();
-  }
-});
 
-// src/io/lock.ts
-import {
-  mkdirSync as mkdirSync3,
-  readFileSync as readFileSync3,
-  rmSync as rmSync2,
-  statSync as statSync3,
-  writeFileSync as writeFileSync2
-} from "node:fs";
-import { dirname as dirname4, join as join4 } from "node:path";
-import { hostname } from "node:os";
-function sleepSync(ms) {
-  if (ms <= 0) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function makeNonce() {
-  nonceCounter += 1;
-  return `${process.pid}-${nonceCounter}-${process.hrtime.bigint()}`;
-}
-function isProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err2) {
-    const code = err2.code;
-    if (code === "ESRCH") return false;
-    if (code === "EPERM") return true;
-    return true;
-  }
-}
-function readOwner(lockDir) {
-  try {
-    return JSON.parse(readFileSync3(ownerFile(lockDir), "utf8"));
-  } catch {
-    return null;
-  }
-}
-function dirAgeMs(lockDir) {
-  try {
-    return Date.now() - statSync3(lockDir).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-function isStale(lockDir, staleMs) {
-  const owner = readOwner(lockDir);
-  const age = dirAgeMs(lockDir);
-  if (owner === null) return age !== null && age > staleMs;
-  const sameHost = owner.host === hostname();
-  const pidDead = sameHost && !isProcessAlive(owner.pid);
-  const tooOld = age !== null && age > staleMs;
-  return pidDead || tooOld;
-}
-function acquireLock(lockDir, opts = {}) {
-  const staleMs = opts.staleMs ?? DEFAULTS.staleMs;
-  const timeoutMs = opts.timeoutMs ?? DEFAULTS.timeoutMs;
-  const retryMs = opts.retryMs ?? DEFAULTS.retryMs;
-  const nonce = makeNonce();
-  const deadline = Date.now() + timeoutMs;
-  mkdirSync3(dirname4(lockDir), { recursive: true });
-  for (; ; ) {
-    try {
-      mkdirSync3(lockDir);
-      const info = {
-        pid: process.pid,
-        host: hostname(),
-        nonce,
-        acquiredAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      writeFileSync2(ownerFile(lockDir), `${JSON.stringify(info)}
-`);
-      return { lockDir, nonce };
-    } catch (err2) {
-      if (err2.code !== "EEXIST") throw err2;
-      if (isStale(lockDir, staleMs)) {
-        try {
-          rmSync2(lockDir, { recursive: true, force: true });
-        } catch {
-        }
-        continue;
-      }
-      if (Date.now() >= deadline) throw new LockTimeoutError(lockDir, timeoutMs);
-      sleepSync(retryMs);
-    }
-  }
-}
-function releaseLock(handle) {
-  const owner = readOwner(handle.lockDir);
-  if (owner !== null && owner.nonce !== handle.nonce) return;
-  try {
-    rmSync2(handle.lockDir, { recursive: true, force: true });
-  } catch {
-  }
-}
-function withGlobalLock(lockDir, fn, opts) {
-  const handle = acquireLock(lockDir, opts);
-  try {
-    return fn();
-  } finally {
-    releaseLock(handle);
-  }
-}
-var DEFAULTS, LockTimeoutError, nonceCounter, ownerFile;
-var init_lock = __esm({
-  "src/io/lock.ts"() {
-    "use strict";
-    DEFAULTS = { staleMs: 3e4, timeoutMs: 1e4, retryMs: 20 };
-    LockTimeoutError = class extends Error {
-      constructor(lockDir, ms) {
-        super(`could not acquire lock ${lockDir} within ${ms}ms`);
-        this.name = "LockTimeoutError";
-      }
-    };
-    nonceCounter = 0;
-    ownerFile = (lockDir) => join4(lockDir, "owner.json");
-  }
-});
+// src/app/dispatch.ts
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { homedir } from "node:os";
+import { join as join6 } from "node:path";
 
-// src/core/projectState.ts
-function metaString(meta, key) {
-  const v = meta?.[key];
-  return typeof v === "string" ? v : void 0;
-}
-function metaNumber(meta, key) {
-  const v = meta?.[key];
-  return typeof v === "number" ? v : void 0;
-}
-function foldEvents(id, events) {
-  if (events.length === 0) {
-    throw new CorruptEventLogError(`no events for task ${id}`);
-  }
-  let state = null;
-  let baseSha = null;
-  let contractHash = null;
-  let currentRun = null;
-  let attempt = 0;
-  let title = "";
-  let updatedAt = "";
-  let expectedSeq = 1;
-  for (const e of events) {
-    if (e.seq !== expectedSeq) {
-      throw new CorruptEventLogError(
-        `task ${id}: event seq gap - expected ${expectedSeq}, got ${e.seq}`
-      );
-    }
-    expectedSeq += 1;
-    if (state === null) {
-      if (e.from !== null || e.to !== "DRAFT") {
-        throw new CorruptEventLogError(
-          `task ${id}: first event must be (null -> DRAFT), got (${e.from} -> ${e.to})`
-        );
-      }
-    } else {
-      if (e.from !== state) {
-        throw new CorruptEventLogError(
-          `task ${id}: event.from ${e.from} != current state ${state} at seq ${e.seq}`
-        );
-      }
-      if (!canTransition(state, e.to)) {
-        throw new CorruptEventLogError(
-          `task ${id}: illegal transition ${state} -> ${e.to} at seq ${e.seq}`
-        );
-      }
-    }
-    state = e.to;
-    updatedAt = e.ts;
-    const title2 = metaString(e.meta, "title");
-    if (title2 !== void 0) title = title2;
-    const base = metaString(e.meta, "base_sha");
-    if (base !== void 0) baseSha = base;
-    const hash = metaString(e.meta, "contract_hash");
-    if (hash !== void 0) contractHash = hash;
-    if (e.to === "RUNNING") {
-      const n = metaNumber(e.meta, "attempt_number");
-      attempt = n !== void 0 ? n : attempt + 1;
-    }
-    if (e.run_id !== null) currentRun = e.run_id;
-  }
-  const last = events[events.length - 1];
-  return {
-    schema_version: 1,
-    id,
-    state,
-    base_sha: baseSha,
-    contract_hash: contractHash,
-    current_run: currentRun,
-    attempt_number: attempt,
-    title,
-    updated_at: updatedAt,
-    last_event_seq: last.seq
-  };
-}
-var CorruptEventLogError;
-var init_projectState = __esm({
-  "src/core/projectState.ts"() {
-    "use strict";
-    init_stateMachine();
-    CorruptEventLogError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "CorruptEventLogError";
-      }
-    };
-  }
-});
-
-// src/app/transition.ts
-function upsertRegistry(paths, id, st) {
-  const registry = readRegistry(paths) ?? {
-    schema_version: 1,
-    rebuilt_at: st.updated_at,
-    tasks: {}
-  };
-  const entry = {
-    state: st.state,
-    current_run: st.current_run,
-    title: st.title,
-    updated_at: st.updated_at
-  };
-  registry.tasks[id] = entry;
-  writeRegistry(paths, registry);
-}
-function createTask(deps, id, title) {
-  const { paths, clock } = deps;
-  return withGlobalLock(paths.lockDir, () => {
-    const events = readEvents(paths, id);
-    if (events.length > 0) {
-      const cur = foldEvents(id, events);
-      if (cur.state === "DRAFT") return cur;
-      throw new TaskExistsError(id, cur.state);
-    }
-    const ev = {
-      seq: 1,
-      ts: clock.nowIso(),
-      from: null,
-      to: "DRAFT",
-      actor: "cli:new",
-      run_id: null,
-      meta: { title }
-    };
-    appendEvent(paths, id, ev);
-    const st = foldEvents(id, [ev]);
-    writeState(paths, id, st);
-    upsertRegistry(paths, id, st);
-    return st;
-  });
-}
-function transition(deps, id, to, opts) {
-  const { paths, clock } = deps;
-  return withGlobalLock(paths.lockDir, () => {
-    const events = readEvents(paths, id);
-    if (events.length === 0) throw new NoSuchTaskError(id);
-    const cur = foldEvents(id, events);
-    assertTransition(cur.state, to);
-    if (opts.guard !== void 0) opts.guard(paths);
-    const ev = {
-      seq: cur.last_event_seq + 1,
-      ts: clock.nowIso(),
-      from: cur.state,
-      to,
-      actor: opts.actor,
-      run_id: opts.runId ?? null,
-      ...opts.meta ? { meta: opts.meta } : {}
-    };
-    appendEvent(paths, id, ev);
-    const st = foldEvents(id, [...events, ev]);
-    writeState(paths, id, st);
-    upsertRegistry(paths, id, st);
-    return st;
-  });
-}
-function currentState(paths, id) {
-  const events = readEvents(paths, id);
-  if (events.length === 0) return null;
-  return foldEvents(id, events);
-}
-var NoSuchTaskError, TaskExistsError;
-var init_transition = __esm({
-  "src/app/transition.ts"() {
-    "use strict";
-    init_lock();
-    init_store();
-    init_stateMachine();
-    init_projectState();
-    NoSuchTaskError = class extends Error {
-      constructor(id) {
-        super(`no such task: ${id}`);
-        this.name = "NoSuchTaskError";
-      }
-    };
-    TaskExistsError = class extends Error {
-      constructor(id, state) {
-        super(`task ${id} already exists (state ${state})`);
-        this.name = "TaskExistsError";
-      }
-    };
-  }
-});
-
-// src/app/policyLoad.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
-function parseAndValidate(source, yamlText) {
-  let data;
-  try {
-    data = load(yamlText, { schema: JSON_SCHEMA });
-  } catch (err2) {
-    throw new PolicyError(`policy YAML parse error (${source}): ${err2.message}`);
-  }
-  const r = validatePolicy(data);
-  if (!r.ok || r.value === null) {
-    throw new PolicyError(`invalid policy (${source}): ${r.errors.join("; ")}`);
-  }
-  return r.value;
-}
-function loadPolicyFromGit(paths, baseSha) {
-  const repoRoot = paths.repoRoot;
-  const text = showFileAtRev(repoRoot, baseSha, POLICY_REL);
-  if (text === null) {
-    throw new PolicyError(`policy.yaml not found at ${baseSha}:${POLICY_REL}`);
-  }
-  return parseAndValidate(`git ${baseSha.slice(0, 12)}:${POLICY_REL}`, text);
-}
-function loadPolicyFromDisk(paths) {
-  if (!existsSync4(paths.policy)) {
-    throw new PolicyError(`policy.yaml not found at ${paths.policy}`);
-  }
-  return parseAndValidate(paths.policy, readFileSync4(paths.policy, "utf8"));
-}
-var PolicyError, POLICY_REL;
-var init_policyLoad = __esm({
-  "src/app/policyLoad.ts"() {
-    "use strict";
-    init_js_yaml();
-    init_constants();
-    init_validate();
-    init_git();
-    PolicyError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "PolicyError";
-      }
-    };
-    POLICY_REL = `${ROUTER_DIR}/policy.yaml`;
-  }
-});
-
-// src/app/usage.ts
-function parseCodexLog(logText) {
-  let found = false;
-  let input = 0;
-  let output = 0;
-  let cached = 0;
-  let model = null;
-  for (const line of logText.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("{")) continue;
-    let o;
-    try {
-      o = JSON.parse(t);
-    } catch {
-      continue;
-    }
-    const rec = o;
-    if (rec.type === "turn.completed" && rec.usage) {
-      found = true;
-      input += num(rec.usage.input_tokens);
-      output += num(rec.usage.output_tokens);
-      cached += num(rec.usage.cached_input_tokens);
-    }
-    if (model === null) {
-      const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
-      if (typeof m === "string" && m !== "") model = m;
+// src/core/pickExecutor.ts
+function pickExecutor(quotas) {
+  const available = quotas.filter((q) => q.available);
+  if (available.length === 0) return null;
+  let best = available[0];
+  for (const q of available.slice(1)) {
+    if (q.used_percent < best.used_percent) best = q;
+    else if (q.used_percent === best.used_percent) {
+      const qr = q.resets_at ?? Infinity;
+      const br = best.resets_at ?? Infinity;
+      if (qr < br) best = q;
     }
   }
-  return { usage: found ? { input, output, cached } : null, model };
+  return best.kind;
 }
-function parseClaudeLog(logText) {
-  let usage = null;
-  let costUsd = null;
-  let model = null;
-  for (const line of logText.split("\n")) {
-    const t = line.trim();
-    if (!t.startsWith("{")) continue;
-    let o;
-    try {
-      o = JSON.parse(t);
-    } catch {
-      continue;
-    }
-    const rec = o;
-    if (rec.type === "result" && rec.usage) {
-      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
-      if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
-    }
-    if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
-  }
-  return { usage, model, costUsd };
-}
-function num(v) {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-function resolvePrice(policy, model, env) {
-  const table = policy.pricing;
-  if (table !== void 0) {
-    const hit = (model !== void 0 ? table[model] : void 0) ?? table["default"];
-    if (hit !== void 0) return hit;
-  }
-  const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? "");
-  const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? "");
-  if (!Number.isFinite(pin) && !Number.isFinite(pout)) return null;
-  return {
-    ...Number.isFinite(pin) ? { input_per_mtok: pin } : {},
-    ...Number.isFinite(pout) ? { output_per_mtok: pout } : {}
-  };
-}
-function estimateCostUsd(usage, price) {
-  if (price === null) return null;
-  const pin = price.input_per_mtok ?? 0;
-  const pout = price.output_per_mtok ?? 0;
-  if (pin === 0 && pout === 0) return null;
-  return pin * (usage.input / 1e6) + pout * (usage.output / 1e6);
-}
-var init_usage = __esm({
-  "src/app/usage.ts"() {
-    "use strict";
-  }
-});
 
 // src/core/exitTaxonomy.ts
 function classifyExit(o) {
@@ -10784,22 +9867,14 @@ function classifyExit(o) {
   if (o.exitCode === 0) return "ok";
   return "task_failed";
 }
-function countsAsAttempt(exitClass) {
-  return exitClass !== "env_error" && exitClass !== "quota_exhausted";
-}
+var DEFAULT_QUOTA_PATTERN = "\\b(rate.?limit|rate_limited|usage limit|usage_limit_reached|quota|insufficient_quota|too many requests|429)\\b";
 function reclassifyQuota(exitClass, logText, pattern = DEFAULT_QUOTA_PATTERN) {
   if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
   return new RegExp(pattern, "i").test(logText) ? "quota_exhausted" : exitClass;
 }
-var DEFAULT_QUOTA_PATTERN;
-var init_exitTaxonomy = __esm({
-  "src/core/exitTaxonomy.ts"() {
-    "use strict";
-    DEFAULT_QUOTA_PATTERN = "\\b(rate.?limit|rate_limited|usage limit|usage_limit_reached|quota|insufficient_quota|too many requests|429)\\b";
-  }
-});
 
 // src/io/env.ts
+var BASE_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM"];
 function buildWorkerEnv(source, extraKeys = []) {
   const out2 = {};
   for (const key of [...BASE_ALLOW, ...extraKeys]) {
@@ -10808,27 +9883,121 @@ function buildWorkerEnv(source, extraKeys = []) {
   }
   return out2;
 }
-var BASE_ALLOW;
-var init_env = __esm({
-  "src/io/env.ts"() {
-    "use strict";
-    BASE_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM"];
+
+// src/io/quota.ts
+import { existsSync as existsSync4, readFileSync as readFileSync3, readdirSync as readdirSync2, statSync as statSync3 } from "node:fs";
+import { join as join3 } from "node:path";
+function walkJsonl(dir) {
+  let out2 = [];
+  let entries;
+  try {
+    entries = readdirSync2(dir);
+  } catch {
+    return out2;
   }
-});
+  for (const name of entries) {
+    const p = join3(dir, name);
+    let s;
+    try {
+      s = statSync3(p);
+    } catch {
+      continue;
+    }
+    if (s.isDirectory()) out2 = out2.concat(walkJsonl(p));
+    else if (name.endsWith(".jsonl")) out2.push(p);
+  }
+  return out2;
+}
+function findRateLimits(x) {
+  if (x === null || typeof x !== "object") return null;
+  const obj = x;
+  if (obj["rate_limits"] && typeof obj["rate_limits"] === "object") return obj["rate_limits"];
+  for (const k of Object.keys(obj)) {
+    const r = findRateLimits(obj[k]);
+    if (r) return r;
+  }
+  return null;
+}
+function readCodexQuota(sessionsDir) {
+  const files = walkJsonl(sessionsDir).sort();
+  const newest = files.at(-1);
+  if (newest === void 0) return null;
+  let lines;
+  try {
+    lines = readFileSync3(newest, "utf8").split("\n");
+  } catch {
+    return null;
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ln = lines[i];
+    if (!ln.includes("rate_limits")) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(ln);
+    } catch {
+      continue;
+    }
+    const rl = findRateLimits(parsed);
+    if (rl === null) continue;
+    const windows = [rl.primary, rl.secondary].filter((w) => w != null);
+    if (windows.length === 0) continue;
+    let binding = windows[0];
+    for (const w of windows.slice(1)) if ((w.used_percent ?? 0) > (binding.used_percent ?? 0)) binding = w;
+    const used = binding.used_percent ?? 0;
+    return {
+      kind: "codex",
+      used_percent: used,
+      resets_at: binding.resets_at ?? null,
+      available: (rl.rate_limit_reached_type ?? null) === null && used < 100
+    };
+  }
+  return null;
+}
+function readClaudeQuota(usageJsonPath) {
+  if (!existsSync4(usageJsonPath)) return null;
+  let o;
+  try {
+    o = JSON.parse(readFileSync3(usageJsonPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof o.used_percent !== "number") return null;
+  return {
+    kind: "claude",
+    used_percent: o.used_percent,
+    resets_at: typeof o.resets_at === "number" ? o.resets_at : null,
+    available: o.reached !== true && o.used_percent < 100
+  };
+}
 
 // src/io/supervisor.ts
 import { spawn } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync4, openSync as openSync2, statSync as statSync6, writeFileSync as writeFileSync4 } from "node:fs";
-import { dirname as dirname5, join as join6 } from "node:path";
+import { closeSync as closeSync2, mkdirSync as mkdirSync3, openSync as openSync2, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { dirname as dirname4, join as join4 } from "node:path";
+
+// src/io/signals.ts
+function killProcessGroup(pgid, signal) {
+  if (!Number.isInteger(pgid) || pgid <= 1) return false;
+  try {
+    process.kill(-pgid, signal);
+    return true;
+  } catch (err2) {
+    const code = err2.code;
+    if (code === "ESRCH" || code === "EPERM") return false;
+    throw err2;
+  }
+}
+
+// src/io/supervisor.ts
 function activitySignal(logPath, watchDir) {
   let sig = 0;
   try {
-    sig += statSync6(logPath).size;
+    sig += statSync4(logPath).size;
   } catch {
   }
-  for (const p of [watchDir, join6(watchDir, ".git")]) {
+  for (const p of [watchDir, join4(watchDir, ".git")]) {
     try {
-      sig += Math.floor(statSync6(p).mtimeMs);
+      sig += Math.floor(statSync4(p).mtimeMs);
     } catch {
     }
   }
@@ -10839,8 +10008,8 @@ function superviseWorker(spec) {
   const pollIntervalMs = spec.pollIntervalMs ?? 1e3;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 1e4;
   return new Promise((resolve2) => {
-    mkdirSync4(dirname5(spec.logPath), { recursive: true });
-    mkdirSync4(dirname5(spec.heartbeatPath), { recursive: true });
+    mkdirSync3(dirname4(spec.logPath), { recursive: true });
+    mkdirSync3(dirname4(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
     const logFd = openSync2(spec.logPath, "a");
     let timedOut = false;
@@ -10903,7 +10072,7 @@ function superviseWorker(spec) {
       timers.push(
         setInterval(() => {
           try {
-            writeFileSync4(spec.heartbeatPath, `${Date.now()}
+            writeFileSync2(spec.heartbeatPath, `${Date.now()}
 `);
           } catch {
           }
@@ -10924,1133 +10093,71 @@ function superviseWorker(spec) {
         }, pollIntervalMs)
       );
       try {
-        writeFileSync4(spec.heartbeatPath, `${startedAtMs}
+        writeFileSync2(spec.heartbeatPath, `${startedAtMs}
 `);
       } catch {
       }
     }
   });
 }
-var init_supervisor = __esm({
-  "src/io/supervisor.ts"() {
-    "use strict";
-    init_exitTaxonomy();
-    init_signals();
-  }
-});
 
-// src/app/taskLoad.ts
-import { readFileSync as readFileSync7 } from "node:fs";
-function loadTask(paths, id) {
-  const taskYamlText = readFileSync7(paths.taskYaml(id), "utf8");
-  let contractMdText = "";
-  try {
-    contractMdText = readFileSync7(paths.contractMd(id), "utf8");
-  } catch {
-    contractMdText = "";
-  }
-  let data;
-  try {
-    data = load(taskYamlText, { schema: JSON_SCHEMA });
-  } catch (err2) {
-    throw new TaskContractError(`task.yaml parse error: ${err2.message}`);
-  }
-  const r = validateTaskYaml(data);
-  if (!r.ok || r.value === null) {
-    throw new TaskContractError(`invalid task.yaml: ${r.errors.join("; ")}`);
-  }
-  return { task: r.value, taskYamlText, contractMdText };
-}
-var TaskContractError;
-var init_taskLoad = __esm({
-  "src/app/taskLoad.ts"() {
-    "use strict";
-    init_js_yaml();
-    init_validate();
-    TaskContractError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "TaskContractError";
-      }
-    };
-  }
-});
-
-// src/core/scope.ts
-function buildEffectiveScope(task, policy) {
-  const policyMax = policy.scope.max_changed_lines;
-  const taskMax = task.max_changed_lines;
-  return {
-    allowed_globs: task.allowed_globs,
-    forbidden_globs: [...policy.scope.forbidden_globs ?? [], ...task.forbidden_globs ?? []],
-    test_globs: policy.scope.test_globs ?? [],
-    max_changed_lines: taskMax !== void 0 ? Math.min(taskMax, policyMax) : policyMax
-  };
-}
-function pathsToCheck(entry) {
-  return entry.oldPath !== void 0 ? [entry.oldPath, entry.path] : [entry.path];
-}
-function evaluateScope(changes, scope) {
-  const violations = [];
-  if (changes.length === 0) {
-    return {
-      ok: false,
-      changedLines: 0,
-      violations: [{ kind: "empty_diff", detail: "diff is empty - worker produced no changes" }]
-    };
-  }
-  let changedLines = 0;
-  for (const entry of changes) {
-    for (const p of pathsToCheck(entry)) {
-      if (matchAny(p, scope.forbidden_globs)) {
-        violations.push({ kind: "forbidden", path: p, detail: `path matches a forbidden glob` });
-      } else if (!matchAny(p, scope.allowed_globs)) {
-        violations.push({ kind: "not_allowed", path: p, detail: `path is outside allowed_globs` });
-      }
-    }
-    const deletesTest = entry.status === "D" && matchAny(entry.path, scope.test_globs);
-    const renamesTestAway = entry.status === "R" && entry.oldPath !== void 0 && matchAny(entry.oldPath, scope.test_globs) && !matchAny(entry.path, scope.test_globs);
-    if (deletesTest || renamesTestAway) {
-      violations.push({
-        kind: "test_deletion",
-        path: entry.oldPath ?? entry.path,
-        detail: "removes a file matching test_globs"
-      });
-    }
-    if (!entry.binary) changedLines += entry.added + entry.deleted;
-  }
-  if (changedLines > scope.max_changed_lines) {
-    violations.push({
-      kind: "max_lines",
-      detail: `changed ${changedLines} lines > max ${scope.max_changed_lines}`
-    });
-  }
-  return { ok: violations.length === 0, changedLines, violations };
-}
-var init_scope = __esm({
-  "src/core/scope.ts"() {
-    "use strict";
-    init_glob();
-  }
-});
-
-// src/core/whitelist.ts
-function validatePlaceholderValue(name, value) {
-  const errors = [];
-  if (value === "") errors.push(`{${name}}: empty value`);
-  if (value.startsWith("-")) errors.push(`{${name}}: value may not start with '-' (option injection)`);
-  if (CONTROL_CHARS.test(value)) errors.push(`{${name}}: control characters not allowed`);
-  if (value.startsWith("/")) errors.push(`{${name}}: absolute paths not allowed`);
-  if (value.split("/").includes("..")) errors.push(`{${name}}: '..' path segments not allowed`);
-  return errors;
-}
-function instantiateTemplate(template, params) {
-  const errors = [];
-  const argv = [];
-  if (template.length === 0) {
-    return { ok: false, argv: null, errors: ["empty command template"] };
-  }
-  if (PLACEHOLDER.test(template[0])) {
-    errors.push("command program (argv[0]) must be a literal, not a placeholder");
-  }
-  for (const token of template) {
-    const m = PLACEHOLDER.exec(token);
-    if (m === null) {
-      argv.push(token);
+// src/app/usage.ts
+function parseCodexLog(logText) {
+  let found = false;
+  let input = 0;
+  let output = 0;
+  let cached = 0;
+  let model = null;
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let o;
+    try {
+      o = JSON.parse(t);
+    } catch {
       continue;
     }
-    const name = m[1];
-    const value = params[name];
-    if (value === void 0) {
-      errors.push(`missing verification_param: ${name}`);
+    const rec = o;
+    if (rec.type === "turn.completed" && rec.usage) {
+      found = true;
+      input += num(rec.usage.input_tokens);
+      output += num(rec.usage.output_tokens);
+      cached += num(rec.usage.cached_input_tokens);
+    }
+    if (model === null) {
+      const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
+      if (typeof m === "string" && m !== "") model = m;
+    }
+  }
+  return { usage: found ? { input, output, cached } : null, model };
+}
+function parseClaudeLog(logText) {
+  let usage = null;
+  let costUsd = null;
+  let model = null;
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let o;
+    try {
+      o = JSON.parse(t);
+    } catch {
       continue;
     }
-    errors.push(...validatePlaceholderValue(name, value));
-    argv.push(value);
-  }
-  return errors.length === 0 ? { ok: true, argv, errors: [] } : { ok: false, argv: null, errors };
-}
-var PLACEHOLDER, CONTROL_CHARS;
-var init_whitelist = __esm({
-  "src/core/whitelist.ts"() {
-    "use strict";
-    PLACEHOLDER = /^\{([a-zA-Z_][a-zA-Z0-9_]*)\}$/;
-    CONTROL_CHARS = /[\x00-\x1f\x7f]/;
-  }
-});
-
-// src/core/secrets.ts
-function looksLikeSecret(value) {
-  return value.length >= 20 && /[A-Za-z]/.test(value) && /[0-9]/.test(value);
-}
-function redact(content) {
-  const t = content.trim();
-  return t.length <= 16 ? t : `${t.slice(0, 12)}...(${t.length} chars)`;
-}
-function scanSecrets(diffText, extraPatterns = []) {
-  const findings = [];
-  const extra = extraPatterns.map((p) => new RegExp(p));
-  const lines = diffText.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.startsWith("+") || line.startsWith("+++")) continue;
-    const content = line.slice(1);
-    if (AWS_ACCESS_KEY.test(content)) {
-      findings.push({ rule: "aws_access_key", line: i + 1, snippet: redact(content) });
+    const rec = o;
+    if (rec.type === "result" && rec.usage) {
+      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
     }
-    if (PRIVATE_KEY_HEADER.test(content)) {
-      findings.push({ rule: "private_key_header", line: i + 1, snippet: redact(content) });
-    }
-    const m = SECRET_ASSIGNMENT.exec(content);
-    if (m !== null && looksLikeSecret(m[1])) {
-      findings.push({ rule: "secret_assignment", line: i + 1, snippet: redact(content) });
-    }
-    for (let k = 0; k < extra.length; k++) {
-      if (extra[k].test(content)) {
-        findings.push({ rule: `custom_pattern[${k}]`, line: i + 1, snippet: redact(content) });
-      }
-    }
+    if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
   }
-  return findings;
+  return { usage, model, costUsd };
 }
-var AWS_ACCESS_KEY, PRIVATE_KEY_HEADER, SECRET_ASSIGNMENT;
-var init_secrets = __esm({
-  "src/core/secrets.ts"() {
-    "use strict";
-    AWS_ACCESS_KEY = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/;
-    PRIVATE_KEY_HEADER = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
-    SECRET_ASSIGNMENT = /(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|token)["']?\s*[:=]\s*["']([^"']{20,})["']/i;
-  }
-});
-
-// src/io/proc.ts
-import { spawnSync } from "node:child_process";
-function runCommand(argv, opts) {
-  if (argv.length === 0) {
-    return { rc: null, stdout: "", stderr: "", timedOut: false, spawnError: "empty argv" };
-  }
-  const [cmd, ...args] = argv;
-  const r = spawnSync(cmd, args, {
-    cwd: opts.cwd,
-    env: opts.env,
-    shell: false,
-    encoding: "utf8",
-    timeout: opts.timeoutMs,
-    maxBuffer: opts.maxBufferBytes ?? 64 * 1024 * 1024,
-    killSignal: "SIGKILL"
-  });
-  const timedOut = r.error !== void 0 && r.error.code === "ETIMEDOUT";
-  const spawnError = r.error !== void 0 && !timedOut ? r.error.message ?? String(r.error) : null;
-  return {
-    rc: r.status,
-    stdout: r.stdout ?? "",
-    stderr: r.stderr ?? "",
-    timedOut,
-    spawnError
-  };
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
-var init_proc = __esm({
-  "src/io/proc.ts"() {
-    "use strict";
-  }
-});
-
-// src/app/verifier.ts
-import { mkdtempSync, rmSync as rmSync3 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join as join7 } from "node:path";
-function fail(id, detail, rc) {
-  return rc !== void 0 ? { id, ok: false, detail, rc } : { id, ok: false, detail };
-}
-function pass(id, detail) {
-  return detail !== void 0 ? { id, ok: true, detail } : { id, ok: true };
-}
-function runRef(req, ref) {
-  const templates = ref !== void 0 ? req.policy.verification[ref] : void 0;
-  if (templates === void 0 || templates.length === 0) {
-    return { ok: false, detail: `no verification template for ref '${ref}'`, rc: null };
-  }
-  const inst = instantiateTemplate(templates[0], req.task.verification_params ?? {});
-  if (!inst.ok || inst.argv === null) {
-    return { ok: false, detail: `command not whitelisted: ${inst.errors.join("; ")}`, rc: null };
-  }
-  const r = runCommand(inst.argv, {
-    cwd: req.worktreeDir,
-    env: req.env,
-    ...req.buildTimeoutMs !== void 0 ? { timeoutMs: req.buildTimeoutMs } : {}
-  });
-  if (r.spawnError !== null) return { ok: false, detail: `spawn error: ${r.spawnError}`, rc: null };
-  if (r.timedOut) return { ok: false, detail: `timed out`, rc: null };
-  return { ok: r.rc === 0, detail: `${inst.argv.join(" ")} (rc ${r.rc})`, rc: r.rc };
-}
-function verify(req) {
-  const checks = [];
-  let changedLines;
-  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
-  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
-  if (patch.trim() === "") {
-    checks.push(fail("diff_applies", "diff is empty - worker produced no committed change"));
-    return { result: "FAILED", checks };
-  }
-  const tmpBase = mkdtempSync(join7(tmpdir(), "router-verify-base-"));
-  let applies;
-  try {
-    worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
-    applies = applyCheck(tmpBase, patch);
-  } finally {
-    worktreeRemove(req.repoRoot, tmpBase);
-    rmSync3(tmpBase, { recursive: true, force: true });
-  }
-  if (!applies) {
-    checks.push(fail("diff_applies", "patch does not apply cleanly onto base_sha"));
-    return { result: "FAILED", checks };
-  }
-  checks.push(pass("diff_applies"));
-  const scope = buildEffectiveScope(req.task, req.policy);
-  const verdict = evaluateScope(changes, scope);
-  changedLines = verdict.changedLines;
-  if (!verdict.ok) {
-    checks.push(fail("scope", verdict.violations.map((v) => `${v.kind}:${v.path ?? ""}`).join(", ")));
-    return { result: "FAILED", checks, changed_lines: changedLines };
-  }
-  checks.push(pass("scope", `${verdict.changedLines} lines`));
-  const secretPolicy = req.policy.secret_scan;
-  if (secretPolicy?.enabled !== false) {
-    const findings = scanSecrets(patch, secretPolicy?.extra_patterns ?? []);
-    if (findings.length > 0) {
-      const detail = findings.map((f) => `${f.rule}@L${f.line}`).join(", ");
-      checks.push(fail("secret_scan", `likely secret(s) in diff: ${detail}`));
-      return { result: "FAILED", checks, changed_lines: changedLines };
-    }
-    checks.push(pass("secret_scan"));
-  }
-  const build2 = runRef(req, req.task.build_ref);
-  checks.push(build2.ok ? pass("build", build2.detail) : fail("build", build2.detail, build2.rc ?? void 0));
-  if (!build2.ok) return { result: "FAILED", checks, changed_lines: changedLines };
-  const test = runRef(req, req.task.test_ref);
-  checks.push(test.ok ? pass("test", test.detail) : fail("test", test.detail, test.rc ?? void 0));
-  if (!test.ok) return { result: "FAILED", checks, changed_lines: changedLines };
-  const recomputed = hashContract(req.taskYamlText, req.contractMdText);
-  if (recomputed !== req.frozenContractHash) {
-    checks.push(fail("contract_hash", "frozen contract was modified after validation"));
-    return { result: "FAILED", checks, changed_lines: changedLines };
-  }
-  checks.push(pass("contract_hash"));
-  return { result: "PASSED", checks, changed_lines: changedLines };
-}
-function verifyTask(req) {
-  const checks = [];
-  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
-  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
-  if (patch.trim() === "") {
-    checks.push(fail("diff_applies", "diff is empty - executor produced no committed change"));
-    return { result: "FAILED", checks };
-  }
-  const tmpBase = mkdtempSync(join7(tmpdir(), "router-verify-base-"));
-  let applies;
-  try {
-    worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
-    applies = applyCheck(tmpBase, patch);
-  } finally {
-    worktreeRemove(req.repoRoot, tmpBase);
-    rmSync3(tmpBase, { recursive: true, force: true });
-  }
-  if (!applies) {
-    checks.push(fail("diff_applies", "patch does not apply cleanly onto base_sha"));
-    return { result: "FAILED", checks };
-  }
-  checks.push(pass("diff_applies"));
-  const scope = {
-    allowed_globs: req.allowedGlobs,
-    forbidden_globs: req.forbiddenGlobs ?? [],
-    test_globs: DEFAULT_TEST_GLOBS,
-    max_changed_lines: req.maxChangedLines ?? DEFAULT_MAX_CHANGED_LINES
-  };
-  const verdict = evaluateScope(changes, scope);
-  if (!verdict.ok) {
-    checks.push(fail("scope", verdict.violations.map((v) => `${v.kind}:${v.path ?? ""}`).join(", ")));
-    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
-  }
-  checks.push(pass("scope", `${verdict.changedLines} lines`));
-  const findings = scanSecrets(patch, req.secretExtraPatterns ?? []);
-  if (findings.length > 0) {
-    checks.push(fail("secret_scan", `likely secret(s): ${findings.map((f) => `${f.rule}@L${f.line}`).join(", ")}`));
-    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
-  }
-  checks.push(pass("secret_scan"));
-  for (const [i, argv] of req.verify.entries()) {
-    if (argv.length === 0) continue;
-    const r = runCommand(argv, {
-      cwd: req.worktreeDir,
-      env: req.env,
-      ...req.buildTimeoutMs !== void 0 ? { timeoutMs: req.buildTimeoutMs } : {}
-    });
-    const label = req.verify.length > 1 ? `verify[${i}]` : "verify";
-    if (r.spawnError !== null) {
-      checks.push(fail(label, `spawn error: ${r.spawnError}`));
-      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
-    }
-    if (r.timedOut) {
-      checks.push(fail(label, "timed out"));
-      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
-    }
-    if (r.rc !== 0) {
-      checks.push(fail(label, `${argv.join(" ")} (rc ${r.rc})`, r.rc ?? void 0));
-      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
-    }
-    checks.push(pass(label, `${argv.join(" ")} (rc 0)`));
-  }
-  return { result: "PASSED", checks, changed_lines: verdict.changedLines };
-}
-var DEFAULT_TEST_GLOBS, DEFAULT_MAX_CHANGED_LINES;
-var init_verifier = __esm({
-  "src/app/verifier.ts"() {
-    "use strict";
-    init_scope();
-    init_whitelist();
-    init_contractHash();
-    init_secrets();
-    init_git();
-    init_proc();
-    DEFAULT_TEST_GLOBS = ["test/**", "tests/**", "**/*.test.*", "**/*_test.*"];
-    DEFAULT_MAX_CHANGED_LINES = 400;
-  }
-});
-
-// src/core/caps.ts
-function summarizeSpend(records, taskId) {
-  let attemptsUsed = 0;
-  let costUsd = 0;
-  let tokens = 0;
-  for (const r of records) {
-    if (r.task_id !== taskId) continue;
-    if (countsAsAttempt(r.exit_class)) attemptsUsed += 1;
-    if (r.cost_usd !== null) costUsd += r.cost_usd;
-    tokens += (r.tokens_input ?? 0) + (r.tokens_output ?? 0);
-  }
-  return { attemptsUsed, costUsd, tokens };
-}
-function checkCaps(records, taskId, caps) {
-  const usage = summarizeSpend(records, taskId);
-  const maxAttempts = caps.max_attempts;
-  if (maxAttempts !== void 0 && usage.attemptsUsed >= maxAttempts) {
-    return {
-      allowed: false,
-      reason: `attempt cap reached (${usage.attemptsUsed}/${maxAttempts} attempts consumed)`
-    };
-  }
-  const budget = caps.budget_caps;
-  if (budget !== void 0) {
-    if (budget.max_cost_usd !== void 0 && usage.costUsd >= budget.max_cost_usd) {
-      return {
-        allowed: false,
-        reason: `budget cap reached (cost $${usage.costUsd.toFixed(4)} >= $${budget.max_cost_usd.toFixed(4)})`
-      };
-    }
-    if (budget.max_tokens !== void 0 && usage.tokens >= budget.max_tokens) {
-      return {
-        allowed: false,
-        reason: `budget cap reached (${usage.tokens} tokens >= ${budget.max_tokens})`
-      };
-    }
-  }
-  return { allowed: true };
-}
-var init_caps = __esm({
-  "src/core/caps.ts"() {
-    "use strict";
-    init_exitTaxonomy();
-  }
-});
-
-// src/app/worker.ts
-import { createHash as createHash3 } from "node:crypto";
-import { readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
-import { hostname as hostname3 } from "node:os";
-function capsFromPolicy(policy) {
-  return {
-    ...policy.escalation?.max_attempts !== void 0 ? { max_attempts: policy.escalation.max_attempts } : {},
-    ...policy.budget_caps !== void 0 ? { budget_caps: policy.budget_caps } : {}
-  };
-}
-function nextRunNumber(deps, id) {
-  const nums = listRunIds(deps.paths, id).map((r) => Number(r.slice("run-".length)));
-  return (nums.length > 0 ? Math.max(...nums) : 0) + 1;
-}
-function startRun(deps, id) {
-  const { paths } = deps;
-  const st = currentState(paths, id);
-  if (st === null) throw new RunStateError(`no such task: ${id}`);
-  if (!RUNNABLE_FROM.has(st.state)) {
-    throw new RunStateError(`task ${id} is ${st.state}, expected QUEUED/ESCALATED_1/ESCALATED_2`);
-  }
-  if (st.base_sha === null) throw new RunStateError(`task ${id} has no frozen base_sha`);
-  const caps = capsFromPolicy(loadPolicyFromGit(paths, st.base_sha));
-  const capVerdict = checkCaps(readMetrics(paths), id, caps);
-  if (!capVerdict.allowed) throw new CapExceededError(capVerdict.reason ?? "cap exceeded");
-  const { task: taskYaml2 } = loadTask(paths, id);
-  const unmet = (taskYaml2.depends_on ?? []).filter((d) => currentState(paths, d)?.state !== "MERGED");
-  if (unmet.length > 0) {
-    throw new DependencyError(`unmet dependencies (must be MERGED first): ${unmet.join(", ")}`);
-  }
-  const limit = safeMaxConcurrency(deps);
-  const attemptNumber = st.attempt_number + 1;
-  const run2 = runId(nextRunNumber(deps, id));
-  const worktreeDir = paths.worktree(id, run2);
-  const branch = runBranch(id, run2);
-  const maxWallMinutes = taskYaml2.max_wall_minutes;
-  worktreeAdd(paths.repoRoot, worktreeDir, branch, st.base_sha);
-  const startedAt = deps.clock.nowIso();
-  writeLease(paths, id, run2, {
-    run_id: run2,
-    task_id: id,
-    attempt_number: attemptNumber,
-    supervisor_pid: process.pid,
-    worker_pgid: 0,
-    // filled by runWorkerBody once the worker is spawned
-    host: hostname3(),
-    started_at: startedAt,
-    max_wall_minutes: maxWallMinutes,
-    wall_deadline: new Date(Date.parse(startedAt) + maxWallMinutes * 6e4).toISOString(),
-    heartbeat_path: "heartbeat"
-  });
-  try {
-    transition(deps, id, "RUNNING", {
-      actor: "cli:run",
-      runId: run2,
-      meta: { attempt_number: attemptNumber },
-      guard: (p) => {
-        const running = listTaskIds(p).filter((t) => t !== id).filter((t) => currentState(p, t)?.state === "RUNNING").length;
-        if (running >= limit) throw new ConcurrencyLimitError(limit);
-      }
-    });
-  } catch (err2) {
-    worktreeRemove(paths.repoRoot, worktreeDir);
-    deleteBranch(paths.repoRoot, branch);
-    throw err2;
-  }
-  return { runId: run2, worktreeDir, attemptNumber };
-}
-function updateLease(deps, id, run2, patch) {
-  withGlobalLock(deps.paths.lockDir, () => {
-    const lease = readLease(deps.paths, id, run2);
-    if (lease !== null) writeLease(deps.paths, id, run2, { ...lease, ...patch });
-  });
-}
-function safeMaxConcurrency(deps) {
-  try {
-    return loadPolicyFromDisk(deps.paths).max_concurrent_workers ?? 1;
-  } catch {
-    return 1;
-  }
-}
-async function runWorkerBody(deps, id, runId2, launcher, policy, fallbacks = []) {
-  const { paths, clock } = deps;
-  const st = currentState(paths, id);
-  if (st === null || st.state !== "RUNNING" || st.current_run !== runId2) {
-    throw new RunStateError(`task ${id} is not RUNNING run ${runId2}`);
-  }
-  const baseSha = st.base_sha;
-  const contractHash = st.contract_hash;
-  const { task, contractMdText } = loadTask(paths, id);
-  const policyGit = policy ?? loadPolicyFromGit(paths, baseSha);
-  const worktreeDir = paths.worktree(id, runId2);
-  const logPath = paths.workerLog(id, runId2);
-  const workersList = policyGit.workers ?? (policyGit.worker ? [policyGit.worker] : []);
-  const apiKeyEnvs = [...new Set(workersList.map((w) => w.api_key_env).filter((v) => Boolean(v)))];
-  const env = buildWorkerEnv(process.env, apiKeyEnvs);
-  const chain = [launcher, ...fallbacks];
-  const RETRY = /* @__PURE__ */ new Set(["quota_exhausted", "env_error"]);
-  let outcome;
-  let used = launcher;
-  let exitClass = "task_failed";
-  let switches = 0;
-  for (let i = 0; i < chain.length; i++) {
-    used = chain[i];
-    if (i > 0) writeFileSync6(logPath, "");
-    outcome = await superviseWorker({
-      argv: used.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
-      cwd: worktreeDir,
-      env,
-      logPath,
-      heartbeatPath: paths.heartbeat(id, runId2),
-      watchDir: worktreeDir,
-      maxWallMs: task.max_wall_minutes * 6e4,
-      stallMs: (workersList[i]?.stall_minutes ?? policyGit.worker?.stall_minutes ?? 10) * 6e4,
-      onPgid: (pgid) => updateLease(deps, id, runId2, { worker_pgid: pgid })
-    });
-    exitClass = reclassifyQuota(outcome.exitClass, safeRead2(logPath), policyGit.quota_error_pattern);
-    if (exitClass === "quota_exhausted") {
-      appendRouting(paths, { ts: clock.nowIso(), kind: used.kind, task_id: id, run_id: runId2 });
-    }
-    if (RETRY.has(exitClass) && i < chain.length - 1) {
-      switches += 1;
-      resetHard(worktreeDir, baseSha);
-      continue;
-    }
-    break;
-  }
-  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${runId2}`);
-  const parsed = (used.parseLog ?? parseCodexLog)(safeRead2(logPath));
-  const usage = parsed.usage;
-  const model = parsed.model ?? used.model;
-  const costUsd = parsed.costUsd ?? (usage !== null ? estimateCostUsd(usage, resolvePrice(policyGit, model, process.env)) : null);
-  const result2 = {
-    run_id: runId2,
-    task_id: id,
-    attempt_number: st.attempt_number,
-    exit_class: exitClass,
-    rc: outcome.rc,
-    timed_out: outcome.timedOut,
-    stalled: outcome.stalled,
-    env_error: exitClass === "env_error",
-    started_at: new Date(outcome.startedAtMs).toISOString(),
-    ended_at: new Date(outcome.endedAtMs).toISOString(),
-    wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
-    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
-    ...switches > 0 ? { executor_switches: switches } : {},
-    ...usage !== null ? { tokens: { input: usage.input, output: usage.output } } : {},
-    ...costUsd !== null ? { cost_usd: costUsd } : {}
-  };
-  let finalState;
-  if (exitClass === "ok") {
-    transition(deps, id, "VERIFYING", { actor: "router:worker", runId: runId2 });
-    const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync6(paths.diffPatch(id, runId2), patch);
-    result2.diff_sha = createHash3("sha256").update(patch).digest("hex");
-    const report = verify({
-      repoRoot: paths.repoRoot,
-      worktreeDir,
-      baseSha,
-      head: "HEAD",
-      policy: policyGit,
-      task,
-      frozenContractHash: contractHash,
-      taskYamlText: readFileSync9(paths.taskYaml(id), "utf8"),
-      contractMdText: safeRead2(paths.contractMd(id)),
-      env
-    });
-    result2.verifier = report;
-    finalState = report.result;
-  } else {
-    finalState = "FAILED";
-  }
-  const ladderTarget = finalState === "FAILED" ? ladderTargetAfterFailure({
-    attemptNumber: st.attempt_number,
-    maxAttempts: policyGit.escalation?.max_attempts,
-    countsAsAttempt: countsAsAttempt(exitClass)
-  }) : null;
-  writeResult(paths, id, runId2, result2);
-  appendRunMetric(deps, result2, ladderTarget !== null);
-  transition(deps, id, finalState, {
-    actor: "router:worker",
-    runId: runId2,
-    meta: { exit_class: exitClass, counts_as_attempt: countsAsAttempt(exitClass) }
-  });
-  if (ladderTarget !== null) {
-    transition(deps, id, ladderTarget, {
-      actor: "router:escalate",
-      runId: runId2,
-      meta: {
-        rung: ladderTarget,
-        attempt_number: st.attempt_number,
-        max_attempts: policyGit.escalation?.max_attempts ?? null
-      }
-    });
-  }
-  return result2;
-}
-function safeRead2(path) {
-  try {
-    return readFileSync9(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-function appendRunMetric(deps, result2, escalated) {
-  const metric = {
-    ts: deps.clock.nowIso(),
-    task_id: result2.task_id,
-    run_id: result2.run_id,
-    attempt_number: result2.attempt_number,
-    model: result2.worker.model ?? null,
-    executor: result2.worker.kind,
-    exit_class: result2.exit_class,
-    verifier_result: result2.verifier?.result ?? null,
-    first_pass: result2.attempt_number === 1 && result2.verifier?.result === "PASSED",
-    tokens_input: result2.tokens?.input ?? null,
-    tokens_output: result2.tokens?.output ?? null,
-    cost_usd: result2.cost_usd ?? null,
-    wall_seconds: result2.wall_seconds,
-    escalated,
-    env_error: result2.env_error
-  };
-  appendMetric(deps.paths, metric);
-}
-var ConcurrencyLimitError, RunStateError, CapExceededError, DependencyError, RUNNABLE_FROM;
-var init_worker = __esm({
-  "src/app/worker.ts"() {
-    "use strict";
-    init_exitTaxonomy();
-    init_escalation();
-    init_caps();
-    init_git();
-    init_env();
-    init_lock();
-    init_paths();
-    init_store();
-    init_supervisor();
-    init_policyLoad();
-    init_taskLoad();
-    init_usage();
-    init_verifier();
-    init_transition();
-    ConcurrencyLimitError = class extends Error {
-      constructor(limit) {
-        super(`max_concurrent_workers (${limit}) reached`);
-        this.name = "ConcurrencyLimitError";
-      }
-    };
-    RunStateError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "RunStateError";
-      }
-    };
-    CapExceededError = class extends Error {
-      constructor(reason) {
-        super(reason);
-        this.name = "CapExceededError";
-      }
-    };
-    DependencyError = class extends Error {
-      constructor(reason) {
-        super(reason);
-        this.name = "DependencyError";
-      }
-    };
-    RUNNABLE_FROM = /* @__PURE__ */ new Set(["QUEUED", "ESCALATED_1", "ESCALATED_2"]);
-  }
-});
-
-// src/app/selftest.ts
-var selftest_exports = {};
-__export(selftest_exports, {
-  selftest: () => selftest
-});
-import { execFileSync as execFileSync3 } from "node:child_process";
-import { mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, rmSync as rmSync4, writeFileSync as writeFileSync7 } from "node:fs";
-import { tmpdir as tmpdir2 } from "node:os";
-import { join as join9 } from "node:path";
-function gitInit(dir) {
-  const run2 = (args) => {
-    execFileSync3("git", args, { cwd: dir, stdio: "ignore" });
-  };
-  run2(["init", "-q", "-b", "main"]);
-  run2(["config", "user.email", "selftest@router.local"]);
-  run2(["config", "user.name", "router selftest"]);
-  run2(["config", "commit.gpgsign", "false"]);
-}
-function makeSandbox() {
-  const repo = mkdtempSync2(join9(tmpdir2(), "router-selftest-"));
-  gitInit(repo);
-  mkdirSync5(join9(repo, "src"), { recursive: true });
-  writeFileSync7(join9(repo, "src", "a.ts"), "export const x = 1;\n");
-  mkdirSync5(join9(repo, "tests"), { recursive: true });
-  writeFileSync7(join9(repo, "tests", "t.test.ts"), "ok\n");
-  mkdirSync5(join9(repo, ".router"), { recursive: true });
-  writeFileSync7(join9(repo, ".router", "policy.yaml"), POLICY);
-  writeFileSync7(join9(repo, ".gitignore"), ".router/worktrees/\n");
-  execFileSync3("git", ["add", "-A"], { cwd: repo, stdio: "ignore" });
-  execFileSync3("git", ["commit", "-q", "-m", "base"], { cwd: repo, stdio: "ignore" });
-  const paths = routerPaths(join9(repo, ".router"));
-  return { repo, deps: { paths, clock: systemClock }, paths };
-}
-function taskYaml(id, allowed) {
-  return `schema_version: 1
-id: ${id}
-title: ${id}
-base_sha: null
-max_wall_minutes: 1
-allowed_globs: ${JSON.stringify(allowed)}
-build_ref: build
-test_ref: test
-`;
-}
-function validateQueue(deps, repo, id, yamlText) {
-  const base = resolveCommit(repo, "HEAD");
-  mkdirSync5(deps.paths.taskDir(id), { recursive: true });
-  writeFileSync7(deps.paths.taskYaml(id), yamlText);
-  writeFileSync7(deps.paths.contractMd(id), CONTRACT);
-  const hash = hashContract(yamlText, CONTRACT);
-  createTask(deps, id, id);
-  transition(deps, id, "VALIDATED", { actor: "selftest", meta: { base_sha: base, contract_hash: hash } });
-  transition(deps, id, "QUEUED", { actor: "selftest" });
-}
-async function selftest(opts = {}) {
-  const { repo, deps, paths } = makeSandbox();
-  const canaries = [];
-  try {
-    for (const c of CANARIES) {
-      validateQueue(deps, repo, c.name, taskYaml(c.name, c.allowed));
-      const { runId: runId2 } = startRun(deps, c.name);
-      const result2 = await runWorkerBody(deps, c.name, runId2, scriptLauncher(c.script));
-      const actual = currentState(paths, c.name)?.state ?? "DRAFT";
-      const scopeCaught = result2.verifier?.checks.some((ch) => ch.id === "scope" && !ch.ok) ?? false;
-      const ok = actual === c.expected && (c.name !== "scope-trap" || actual === "FAILED" && scopeCaught);
-      canaries.push({
-        name: c.name,
-        expected: c.expected,
-        actual,
-        ok,
-        detail: c.name === "scope-trap" ? `scope violation caught=${scopeCaught}` : `exit=${result2.exit_class} verifier=${result2.verifier?.result ?? "n/a"}`
-      });
-    }
-    return { ok: canaries.every((c) => c.ok), canaries, sandbox: opts.keep ? repo : null };
-  } finally {
-    if (!opts.keep) rmSync4(repo, { recursive: true, force: true });
-  }
-}
-var NODE, OK, POLICY, CONTRACT, scriptLauncher, CANARIES;
-var init_selftest = __esm({
-  "src/app/selftest.ts"() {
-    "use strict";
-    init_clock();
-    init_git();
-    init_paths();
-    init_contractHash();
-    init_transition();
-    init_worker();
-    NODE = process.execPath;
-    OK = `[${JSON.stringify(NODE)}, "-e", "process.exit(0)"]`;
-    POLICY = `schema_version: 1
-max_concurrent_workers: 1
-worker:
-  kind: codex
-  api_key_env: OPENAI_API_KEY
-  stall_minutes: 1
-scope:
-  forbidden_globs: []
-  test_globs: ["tests/**"]
-  max_changed_lines: 400
-verification:
-  build:
-    - ${OK}
-  test:
-    - ${OK}
-`;
-    CONTRACT = "# Contract\nselftest canary\n";
-    scriptLauncher = (script) => ({
-      kind: "codex",
-      model: "selftest",
-      buildArgv: () => [NODE, "-e", script]
-    });
-    CANARIES = [
-      {
-        name: "trivial-fix",
-        expected: "PASSED",
-        allowed: ["src/**"],
-        script: 'require("fs").writeFileSync("src/a.ts","export const x = 2;\\n")'
-      },
-      {
-        name: "constrained-refactor",
-        expected: "PASSED",
-        allowed: ["src/**"],
-        script: 'const fs=require("fs");fs.writeFileSync("src/a.ts","export const x = 3;\\n");fs.writeFileSync("src/b.ts","export const y = 1;\\n")'
-      },
-      {
-        name: "scope-trap",
-        expected: "FAILED",
-        // worker exits 0 but writes OUTSIDE allowed_globs
-        allowed: ["src/**"],
-        script: 'const fs=require("fs");fs.mkdirSync("secrets",{recursive:true});fs.writeFileSync("secrets/leak.txt","escaped\\n")'
-      }
-    ];
-  }
-});
-
-// src/cli/args.ts
-var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run"]);
-var VALUE_FLAGS = /* @__PURE__ */ new Set([
-  "id",
-  "title",
-  "run",
-  "state",
-  "attempt",
-  "since",
-  "router-dir",
-  "tokens-in",
-  "tokens-out",
-  "cost-usd",
-  "wall",
-  "model",
-  "keep-metrics"
-]);
-function parseArgs(argv) {
-  const verb = argv[0];
-  const rest = argv.slice(1);
-  const positionals = [];
-  const flags = {};
-  for (let i = 0; i < rest.length; i++) {
-    const tok = rest[i];
-    if (tok.startsWith("--")) {
-      const body = tok.slice(2);
-      const eq = body.indexOf("=");
-      if (eq !== -1) {
-        flags[body.slice(0, eq)] = body.slice(eq + 1);
-        continue;
-      }
-      if (BOOLEAN_FLAGS.has(body)) {
-        flags[body] = true;
-      } else if (VALUE_FLAGS.has(body)) {
-        const next = rest[i + 1];
-        if (next !== void 0 && !next.startsWith("--")) {
-          flags[body] = next;
-          i += 1;
-        } else {
-          flags[body] = "";
-        }
-      } else {
-        flags[body] = true;
-      }
-    } else {
-      positionals.push(tok);
-    }
-  }
-  return { verb, positionals, flags };
-}
-function flagStr(flags, key) {
-  const v = flags[key];
-  return typeof v === "string" ? v : void 0;
-}
-function flagBool(flags, key) {
-  return flags[key] === true;
-}
-
-// src/cli/commands.ts
-init_js_yaml();
-init_constants();
-init_validate();
-import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync8, mkdirSync as mkdirSync6, readFileSync as readFileSync10, writeFileSync as writeFileSync8 } from "node:fs";
-import { join as join10 } from "node:path";
-
-// src/core/stats.ts
-function summarizeBaseline(records) {
-  if (records.length === 0) return null;
-  const tokens = records.map((r) => r.tokens_input + r.tokens_output);
-  const costs = records.map((r) => r.cost_usd).filter((c) => c !== null);
-  return {
-    tokensPerTask: sum(tokens) / records.length,
-    // Only report a per-task cost if EVERY record carries one (avoid mixing).
-    costUsdPerTask: costs.length === records.length ? sum(costs) / records.length : null,
-    n: records.length
-  };
-}
-function aggregate(records, baseline2 = null) {
-  const totalRuns = records.length;
-  const verifiedRuns = records.filter((r) => r.verifier_result === "PASSED").length;
-  const tokensInput = sum(records.map((r) => r.tokens_input ?? 0));
-  const tokensOutput = sum(records.map((r) => r.tokens_output ?? 0));
-  const tokensTotal = tokensInput + tokensOutput;
-  const costs = records.map((r) => r.cost_usd).filter((c) => c !== null);
-  const spentUsd = costs.length > 0 ? sum(costs) : null;
-  const spentUsdPerVerifiedTask = spentUsd !== null && verifiedRuns > 0 ? spentUsd / verifiedRuns : null;
-  const firstVerdicts = records.filter((r) => r.attempt_number === 1 && r.verifier_result !== null);
-  const firstPassRate = firstVerdicts.length > 0 ? firstVerdicts.filter((r) => r.verifier_result === "PASSED").length / firstVerdicts.length : null;
-  const maxAttemptByTask = /* @__PURE__ */ new Map();
-  for (const r of records) {
-    maxAttemptByTask.set(r.task_id, Math.max(maxAttemptByTask.get(r.task_id) ?? 0, r.attempt_number));
-  }
-  const escalationRate = maxAttemptByTask.size > 0 ? [...maxAttemptByTask.values()].filter((n) => n > 1).length / maxAttemptByTask.size : null;
-  const envErrorRuns = records.filter((r) => r.env_error).length;
-  const offloadedTokens = baseline2 !== null ? Math.round(baseline2.tokensPerTask * verifiedRuns) : null;
-  const baselineCostTotal = baseline2 !== null && baseline2.costUsdPerTask !== null ? baseline2.costUsdPerTask * verifiedRuns : null;
-  const savedUsd = baselineCostTotal !== null && spentUsd !== null ? baselineCostTotal - spentUsd : null;
-  const savedPct = savedUsd !== null && baselineCostTotal !== null && baselineCostTotal > 0 ? savedUsd / baselineCostTotal : null;
-  return {
-    totalRuns,
-    verifiedRuns,
-    tokensInput,
-    tokensOutput,
-    tokensTotal,
-    spentUsd,
-    spentUsdPerVerifiedTask,
-    firstPassRate,
-    escalationRate,
-    envErrorRuns,
-    baselineTokensPerTask: baseline2?.tokensPerTask ?? null,
-    baselineCostUsdPerTask: baseline2?.costUsdPerTask ?? null,
-    offloadedTokens,
-    savedUsd,
-    savedPct
-  };
-}
-function sum(xs) {
-  let t = 0;
-  for (const x of xs) t += x;
-  return t;
-}
-
-// src/cli/commands.ts
-init_contractHash();
-init_stateMachine();
-init_escalation();
-
-// src/core/risk.ts
-init_glob();
-var SENSITIVE = [
-  { path: "package.json", label: "package.json" },
-  { path: "package-lock.json", label: "lockfile" },
-  { path: "pnpm-lock.yaml", label: "lockfile" },
-  { path: "yarn.lock", label: "lockfile" },
-  { path: "Cargo.lock", label: "lockfile" },
-  { path: "go.sum", label: "lockfile" },
-  { path: "poetry.lock", label: "lockfile" },
-  { path: ".github/workflows/ci.yml", label: "CI config (.github)" },
-  { path: ".gitlab-ci.yml", label: "CI config" },
-  { path: ".circleci/config.yml", label: "CI config" },
-  { path: "migrations/0001_init.sql", label: "migration" },
-  { path: "db/migrate/001_init.rb", label: "migration" }
-];
-function classifyRisk(allowedGlobs) {
-  const reasons = [];
-  for (const s of SENSITIVE) {
-    if (matchAny(s.path, allowedGlobs) && !reasons.includes(s.label)) {
-      reasons.push(s.label);
-    }
-  }
-  return { level: reasons.length > 0 ? "high" : "low", reasons };
-}
-
-// src/core/gc.ts
-init_stateMachine();
-function planMetricRetention(records, opts) {
-  let keep = [...records];
-  if (opts.maxAgeMs !== void 0 && opts.nowMs !== void 0) {
-    const cutoff = opts.nowMs - opts.maxAgeMs;
-    keep = keep.filter((r) => {
-      const t = Date.parse(r.ts);
-      return Number.isNaN(t) ? true : t >= cutoff;
-    });
-  }
-  if (opts.keepLast !== void 0 && keep.length > opts.keepLast) {
-    keep = keep.slice(keep.length - opts.keepLast);
-  }
-  const keepSet = new Set(keep);
-  const dropped = records.filter((r) => !keepSet.has(r));
-  return { keep, dropped };
-}
-function planRunGc(tasks) {
-  const remove = [];
-  const skipped = [];
-  for (const t of tasks) {
-    if (isTerminal(t.state)) {
-      for (const runId2 of t.worktrees) remove.push({ taskId: t.id, runId: runId2 });
-    } else if (t.worktrees.length > 0) {
-      skipped.push({ taskId: t.id, state: t.state, worktrees: t.worktrees.length });
-    }
-  }
-  return { remove, skipped };
-}
-
-// src/cli/commands.ts
-init_clock();
-init_git();
-init_paths();
-init_signals();
-init_store();
-init_transition();
-
-// src/app/recover.ts
-init_lock();
-init_signals();
-init_store();
-import { statSync as statSync4 } from "node:fs";
-import { hostname as hostname2 } from "node:os";
-
-// src/app/registry.ts
-init_lock();
-init_store();
-init_projectState();
-function rebuildRegistry(deps) {
-  const { paths, clock } = deps;
-  return withGlobalLock(paths.lockDir, () => {
-    const tasks = {};
-    const errors = [];
-    for (const id of listTaskIds(paths)) {
-      const events = readEvents(paths, id);
-      if (events.length === 0) continue;
-      try {
-        const st = foldEvents(id, events);
-        writeState(paths, id, st);
-        tasks[id] = {
-          state: st.state,
-          current_run: st.current_run,
-          title: st.title,
-          updated_at: st.updated_at
-        };
-      } catch (err2) {
-        errors.push({ id, error: err2 instanceof Error ? err2.message : String(err2) });
-      }
-    }
-    const registry = { schema_version: 1, rebuilt_at: clock.nowIso(), tasks };
-    writeRegistry(paths, registry);
-    return { registry, errors };
-  });
-}
-
-// src/app/recover.ts
-init_transition();
-function runDeadReason(paths, id, lease, heartbeatStaleMs) {
-  if (lease === null) return "no_lease";
-  if (lease.host === hostname2()) {
-    return isProcessAlive(lease.supervisor_pid) ? null : "supervisor_dead";
-  }
-  let heartbeatAgeMs = null;
-  try {
-    heartbeatAgeMs = Date.now() - statSync4(paths.heartbeat(id, lease.run_id)).mtimeMs;
-  } catch {
-    heartbeatAgeMs = null;
-  }
-  if (heartbeatAgeMs === null) return "no_heartbeat";
-  if (heartbeatAgeMs > heartbeatStaleMs) return "heartbeat_stale";
-  const deadline = Date.parse(lease.wall_deadline);
-  if (Number.isFinite(deadline) && Date.now() > deadline) return "wall_deadline_exceeded";
-  return null;
-}
-function recover(deps, opts = {}) {
-  const { paths } = deps;
-  const heartbeatStaleMs = opts.heartbeatStaleMs ?? 6e4;
-  const { errors: reindexErrors } = rebuildRegistry(deps);
-  const recovered = [];
-  const stillRunning = [];
-  for (const id of listTaskIds(paths)) {
-    const st = currentState(paths, id);
-    if (st === null || st.state !== "RUNNING") continue;
-    const run2 = st.current_run;
-    const lease = run2 !== null ? readLease(paths, id, run2) : null;
-    const reason = runDeadReason(paths, id, lease, heartbeatStaleMs);
-    if (reason === null) {
-      stillRunning.push(id);
-      continue;
-    }
-    if (lease !== null) killProcessGroup(lease.worker_pgid, "SIGKILL");
-    transition(deps, id, "STALE", {
-      actor: "recover",
-      runId: run2,
-      meta: { reason: `router_crash:${reason}` }
-    });
-    recovered.push({ id, run: run2, reason });
-  }
-  return { recovered, stillRunning, reindexErrors };
-}
-
-// src/cli/commands.ts
-init_policyLoad();
 
 // src/app/codexLauncher.ts
-init_usage();
 function codexLauncher(worker) {
   const bin = process.env.ROUTER_CODEX_BIN ?? "codex";
   const model = worker.model;
@@ -12121,514 +10228,495 @@ Constraints:
 `;
 }
 
-// src/core/budget.ts
-var DEFAULT_SWITCH_AT = 0.9;
-var DEFAULT_ALPHA = 0.5;
-var TRAILING_N = 20;
-function recordTokens(r) {
-  return (r.tokens_input ?? 0) + (r.tokens_output ?? 0);
-}
-function rollingConsumption(records, nowMs, windowMinutes) {
-  const floor = nowMs - windowMinutes * 6e4;
-  const out2 = /* @__PURE__ */ new Map();
-  for (const r of records) {
-    if (!r.executor) continue;
-    const t = Date.parse(r.ts);
-    if (Number.isNaN(t) || t <= floor || t > nowMs) continue;
-    out2.set(r.executor, (out2.get(r.executor) ?? 0) + recordTokens(r));
-  }
-  return out2;
-}
-function estimateTokens(records, kind, seed) {
-  const withTokens = records.filter((r) => r.tokens_input !== null || r.tokens_output !== null);
-  const forKind = withTokens.filter((r) => r.executor === kind);
-  const pool = forKind.length > 0 ? forKind : withTokens;
-  if (pool.length === 0) return seed;
-  const recent = pool.slice(-TRAILING_N);
-  let sum2 = 0;
-  for (const r of recent) sum2 += recordTokens(r);
-  return sum2 / recent.length;
-}
-function selectExecutor(input) {
-  const entries = input.chain.map((kind, index) => {
-    const consumed = input.consumed.get(kind) ?? 0;
-    const estimate = input.estimates.get(kind) ?? input.defaultEstimate;
-    const projected = consumed + estimate;
-    const budget = input.budgets.get(kind);
-    if (budget === void 0) {
-      return { index, kind, consumed, estimate, projected, budget_tokens: null, fraction: null, fits: true };
+// src/app/taskLoad.ts
+import { readFileSync as readFileSync4 } from "node:fs";
+
+// src/domain/validate.ts
+var import_ajv = __toESM(require_ajv(), 1);
+
+// schema/policy.schema.json
+var policy_schema_default = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  $id: "https://agent-router-cc/schema/policy.schema.json",
+  title: "router policy.yaml (human-maintained, in git)",
+  type: "object",
+  additionalProperties: false,
+  required: ["schema_version", "scope", "verification"],
+  properties: {
+    schema_version: { const: 1 },
+    max_concurrent_workers: { type: "integer", minimum: 1 },
+    quota_error_pattern: { type: "string", minLength: 1 },
+    worker: { $ref: "#/definitions/worker" },
+    workers: {
+      type: "array",
+      minItems: 1,
+      items: { $ref: "#/definitions/worker" }
+    },
+    scope: {
+      type: "object",
+      additionalProperties: false,
+      required: ["max_changed_lines"],
+      properties: {
+        forbidden_globs: {
+          type: "array",
+          items: { type: "string", minLength: 1 }
+        },
+        test_globs: {
+          type: "array",
+          items: { type: "string", minLength: 1 }
+        },
+        max_changed_lines: { type: "integer", minimum: 1 }
+      }
+    },
+    verification: {
+      type: "object",
+      minProperties: 1,
+      additionalProperties: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", minLength: 1 }
+        }
+      }
+    },
+    escalation: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        max_attempts: { type: "integer", minimum: 1 },
+        rescue_worker: { $ref: "#/definitions/worker" }
+      }
+    },
+    budget_caps: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        max_cost_usd: { type: "number", minimum: 0 },
+        max_tokens: { type: "integer", minimum: 0 }
+      }
+    },
+    secret_scan: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        extra_patterns: {
+          type: "array",
+          items: { type: "string", minLength: 1 }
+        }
+      }
+    },
+    pricing: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["input_per_mtok", "output_per_mtok"],
+        properties: {
+          input_per_mtok: { type: "number", minimum: 0 },
+          output_per_mtok: { type: "number", minimum: 0 }
+        }
+      }
+    },
+    routing: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        estimate_tokens_default: { type: "number", minimum: 0 },
+        calibration_alpha: { type: "number", minimum: 0, maximum: 1 },
+        calibration_margin: { type: "number", minimum: 0 }
+      }
+    },
+    tiers: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        clear: { $ref: "#/definitions/worker" }
+      }
     }
-    const switchAt = budget.switch_at ?? DEFAULT_SWITCH_AT;
-    const fraction = projected / budget.budget_tokens;
-    return {
-      index,
-      kind,
-      consumed,
-      estimate,
-      projected,
-      budget_tokens: budget.budget_tokens,
-      fraction,
-      fits: fraction <= switchAt
-    };
+  },
+  definitions: {
+    worker: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: {
+        kind: { enum: ["codex", "claude"] },
+        api_key_env: { type: "string", minLength: 1 },
+        model: { type: "string", minLength: 1 },
+        max_wall_minutes_default: { type: "integer", minimum: 1 },
+        stall_minutes: { type: "integer", minimum: 1 },
+        budget: {
+          type: "object",
+          additionalProperties: false,
+          required: ["window_minutes", "budget_tokens"],
+          properties: {
+            window_minutes: { type: "number", minimum: 1 },
+            budget_tokens: { type: "number", minimum: 1 },
+            switch_at: { type: "number", exclusiveMinimum: 0, maximum: 1 }
+          }
+        }
+      }
+    }
+  }
+};
+
+// schema/task_contract.schema.json
+var task_contract_schema_default = {
+  $schema: "http://json-schema.org/draft-07/schema#",
+  $id: "https://agent-router-cc/schema/task_contract.schema.json",
+  title: "router task.yaml (machine contract, frozen at VALIDATED)",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema_version",
+    "id",
+    "title",
+    "max_wall_minutes",
+    "allowed_globs"
+  ],
+  properties: {
+    schema_version: { const: 1 },
+    id: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    title: { type: "string", minLength: 1 },
+    base_sha: {
+      type: ["string", "null"],
+      pattern: "^[0-9a-f]{40}$"
+    },
+    max_wall_minutes: { type: "integer", minimum: 1, maximum: 1440 },
+    allowed_globs: {
+      type: "array",
+      minItems: 1,
+      items: { type: "string", minLength: 1 }
+    },
+    forbidden_globs: {
+      type: "array",
+      items: { type: "string", minLength: 1 }
+    },
+    max_changed_lines: { type: "integer", minimum: 1 },
+    build_ref: { type: "string", minLength: 1 },
+    test_ref: { type: "string", minLength: 1 },
+    verify: {
+      type: "array",
+      items: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string", minLength: 1 }
+      }
+    },
+    verification_params: {
+      type: "object",
+      additionalProperties: { type: "string" }
+    },
+    depends_on: {
+      type: "array",
+      items: { type: "string", minLength: 1 }
+    },
+    worker: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: {
+        kind: { enum: ["codex", "claude"] },
+        api_key_env: { type: "string", minLength: 1 },
+        model: { type: "string", minLength: 1 },
+        max_wall_minutes_default: { type: "integer", minimum: 1 },
+        stall_minutes: { type: "integer", minimum: 1 }
+      }
+    }
+  }
+};
+
+// src/domain/validate.ts
+var ajv = new import_ajv.Ajv({ allErrors: true });
+var validatePolicyFn = ajv.compile(policy_schema_default);
+var validateTaskFn = ajv.compile(task_contract_schema_default);
+function fmt(errors) {
+  return (errors ?? []).map((e) => {
+    const where = e.instancePath === "" ? "(root)" : e.instancePath;
+    return `${where} ${e.message ?? "invalid"}`.trim();
   });
-  const anyFits = entries.some((e) => e.fits);
-  const order = entries.map((e) => e).sort((a, b) => {
-    if (a.fits !== b.fits) return a.fits ? -1 : 1;
-    if (!anyFits) {
-      const fa = a.fraction ?? 0;
-      const fb = b.fraction ?? 0;
-      if (fa !== fb) return fa - fb;
-    }
-    return a.index - b.index;
-  }).map((e) => e.index);
-  return { order, chosen: order[0], anyFits, entries };
 }
-function calibrateBudget(seed, kind, observations, metrics, opts) {
-  const alpha = opts.alpha ?? DEFAULT_ALPHA;
-  const margin = opts.margin ?? 0;
-  const relevant = observations.filter((o) => o.kind === kind).map((o) => ({ o, t: Date.parse(o.ts) })).filter((x) => !Number.isNaN(x.t)).sort((a, b) => a.t - b.t);
-  if (relevant.length === 0) return seed;
-  let ema = seed;
-  for (const { t } of relevant) {
-    const ceiling = rollingConsumption(metrics, t, opts.windowMinutes).get(kind) ?? 0;
-    ema = (1 - alpha) * ema + alpha * ceiling;
-  }
-  return Math.max(1, ema - margin);
+function validateTaskYaml(data) {
+  const ok = validateTaskFn(data);
+  return ok ? { ok: true, value: data, errors: [] } : { ok: false, value: null, errors: fmt(validateTaskFn.errors) };
 }
 
-// src/app/routing.ts
-init_store();
-var DEFAULT_ESTIMATE = 4e4;
-function planExecutorOrder(paths, nowMs, policy, workers) {
-  const metrics = readMetrics(paths);
-  const observations = readRouting(paths);
-  const seed = policy.routing?.estimate_tokens_default ?? DEFAULT_ESTIMATE;
-  const chain = workers.map((w) => w.kind);
-  const consumed = /* @__PURE__ */ new Map();
-  const budgets = /* @__PURE__ */ new Map();
-  const budgetView = [];
-  for (const w of workers) {
-    if (w.budget === void 0) continue;
-    const window_minutes = w.budget.window_minutes;
-    const effective = calibrateBudget(w.budget.budget_tokens, w.kind, observations, metrics, {
-      windowMinutes: window_minutes,
-      ...policy.routing?.calibration_alpha !== void 0 ? { alpha: policy.routing.calibration_alpha } : {},
-      ...policy.routing?.calibration_margin !== void 0 ? { margin: policy.routing.calibration_margin } : {}
-    });
-    const used = rollingConsumption(metrics, nowMs, window_minutes).get(w.kind) ?? 0;
-    budgets.set(w.kind, {
-      budget_tokens: effective,
-      ...w.budget.switch_at !== void 0 ? { switch_at: w.budget.switch_at } : {}
-    });
-    consumed.set(w.kind, used);
-    budgetView.push({
-      kind: w.kind,
-      window_minutes,
-      seed_tokens: w.budget.budget_tokens,
-      effective_tokens: effective,
-      consumed_tokens: used
-    });
+// src/app/taskLoad.ts
+var TaskContractError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TaskContractError";
   }
-  const estimates = /* @__PURE__ */ new Map();
-  for (const kind of new Set(chain)) estimates.set(kind, estimateTokens(metrics, kind, seed));
-  const decision = selectExecutor({ chain, consumed, estimates, defaultEstimate: seed, budgets });
-  const ordered = decision.order.map((i) => workers[i]);
-  return {
-    ordered,
-    view: {
-      budgeted: budgetView.length > 0,
-      decision,
-      estimates: [...estimates].map(([kind, tokens]) => ({ kind, tokens })),
-      budgets: budgetView
-    }
-  };
-}
-
-// src/app/plan.ts
-init_js_yaml();
-import { existsSync as existsSync5, readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
-
-// src/core/planPrompt.ts
-function buildPlannerPrompt(digest, goal) {
-  const refs = digest.verificationRefs.join(", ");
-  const lines = [
-    "You are a planning assistant for a deterministic coding-task router.",
-    "Decompose the GOAL into the SMALLEST set of tasks (1..N; one task is fine).",
-    "Respond with ONLY a single JSON object -- no prose, no markdown, no code fences:",
-    '{ "tasks": [ <task>, ... ] }',
-    "",
-    "Each <task> has:",
-    '  "id": "kebab-case-slug", "title": "short imperative title",',
-    '  "clarity": "clear" | "unclear",',
-    '  "depends_on": ["ids of tasks in THIS response that must merge first"],',
-    'and, when clarity is "clear" (well-bounded, mechanically checkable):',
-    '  "allowed_globs": ["smallest set of path globs"], "forbidden_globs": [],',
-    `  "max_changed_lines": 100, "build_ref": "one of: ${refs}", "test_ref": "one of: ${refs}",`,
-    '  "contract_md": "markdown with a Goal section and a Definition of Done checklist"',
-    'or, when clarity is "unclear" (needs human judgment/design first):',
-    '  "reason": "what must be clarified before this can be dispatched"',
-    "",
-    "Constraints:",
-    '- Mark a task "clear" ONLY if an average model could finish it from the contract alone.',
-    '- allowed_globs must be minimal and match existing files; never use a bare "**".',
-    "- build_ref and test_ref MUST be chosen from the list above.",
-    "- depends_on may only reference ids in this same response; no cycles.",
-    "",
-    `GOAL: ${goal}`,
-    "",
-    "Repository files (git-tracked):",
-    digest.files.join("\n")
-  ];
-  if (digest.truncated) lines.push("(file list truncated)");
-  if (digest.readmeHead !== void 0 && digest.readmeHead !== "") {
-    lines.push("", "README (head):", digest.readmeHead);
-  }
-  return lines.join("\n");
-}
-
-// src/core/planCheck.ts
-init_glob();
-var MAX_CHANGED_LINES_CEILING = 2e3;
-var ID_RE = /^[a-z0-9][a-z0-9-]*$/;
-var BROAD = /* @__PURE__ */ new Set(["*", "**", "**/*", "**/**"]);
-function extractJsonObject(text) {
-  const start = text.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-    } else if (ch === '"') inStr = true;
-    else if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-function checkContractFields(obj, ctx, label) {
-  const errors = [];
-  const str = (k) => typeof obj[k] === "string" ? obj[k] : "";
-  if (!ID_RE.test(str("id"))) errors.push(`${label}id must be a kebab-case slug`);
-  if (str("title").trim() === "") errors.push(`${label}title must be a non-empty string`);
-  if (str("contract_md").trim() === "") errors.push(`${label}contract_md must be a non-empty string`);
-  const globs = obj["allowed_globs"];
-  const globList = Array.isArray(globs) && globs.every((g) => typeof g === "string") ? globs : [];
-  if (globList.length === 0) errors.push(`${label}allowed_globs must be a non-empty string array`);
-  for (const g of globList) {
-    if (BROAD.has(g.trim())) errors.push(`${label}allowed_glob '${g}' is too broad`);
-    else if (!ctx.trackedFiles.some((f) => matchGlob(f, g))) errors.push(`${label}allowed_glob '${g}' matches no tracked file`);
-  }
-  for (const ref of ["build_ref", "test_ref"]) {
-    const v = str(ref);
-    if (v === "") errors.push(`${label}${ref} must be a non-empty string`);
-    else if (!ctx.policyRefs.includes(v)) errors.push(`${label}${ref} '${v}' not in policy.verification (${ctx.policyRefs.join(", ")})`);
-  }
-  const mcl = obj["max_changed_lines"];
-  if (typeof mcl !== "number" || !Number.isInteger(mcl) || mcl <= 0) errors.push(`${label}max_changed_lines must be a positive integer`);
-  else if (mcl > MAX_CHANGED_LINES_CEILING) errors.push(`${label}max_changed_lines ${mcl} exceeds ceiling ${MAX_CHANGED_LINES_CEILING}`);
-  if (errors.length > 0) return { errors };
-  const fg = obj["forbidden_globs"];
-  return {
-    errors: [],
-    contract: {
-      id: str("id"),
-      title: str("title"),
-      allowed_globs: globList,
-      forbidden_globs: Array.isArray(fg) && fg.every((g) => typeof g === "string") ? fg : [],
-      max_changed_lines: mcl,
-      build_ref: str("build_ref"),
-      test_ref: str("test_ref"),
-      contract_md: str("contract_md")
-    }
-  };
-}
-function strList(v) {
-  return Array.isArray(v) && v.every((x) => typeof x === "string") ? v : [];
-}
-function parseAndCheckBatch(rawText, ctx) {
-  const jsonText = extractJsonObject(rawText);
-  if (jsonText === null) return { ok: false, errors: ["no JSON object found in planner output"] };
-  let root;
+};
+function loadTask(paths, id) {
+  const taskYamlText = readFileSync4(paths.taskYaml(id), "utf8");
+  let contractMdText = "";
   try {
-    root = JSON.parse(jsonText);
-  } catch (e) {
-    return { ok: false, errors: [`planner output is not valid JSON: ${e.message}`] };
+    contractMdText = readFileSync4(paths.contractMd(id), "utf8");
+  } catch {
+    contractMdText = "";
   }
-  const bare = !Array.isArray(root["tasks"]);
-  const entries = bare ? [root] : root["tasks"].map((t) => typeof t === "object" && t !== null ? t : {});
-  if (entries.length === 0) return { ok: false, errors: ["planner returned an empty task list"] };
-  const errors = [];
-  const tasks = [];
-  const handback = [];
-  const ids = [];
-  for (const [i, obj] of entries.entries()) {
-    const id = typeof obj["id"] === "string" ? obj["id"] : `#${i}`;
-    const label = `task ${id}: `;
-    ids.push(id);
-    const clarity = bare ? "clear" : obj["clarity"];
-    if (clarity !== "clear" && clarity !== "unclear") {
-      errors.push(`${label}clarity must be "clear" or "unclear"`);
-      continue;
-    }
-    const depends_on = strList(obj["depends_on"]);
-    if (clarity === "unclear") {
-      if (!ID_RE.test(id)) errors.push(`${label}id must be a kebab-case slug`);
-      const title = typeof obj["title"] === "string" ? obj["title"] : "";
-      if (title.trim() === "") errors.push(`${label}title must be a non-empty string`);
-      const reason = typeof obj["reason"] === "string" ? obj["reason"] : void 0;
-      handback.push({ id, title, depends_on, ...reason !== void 0 ? { reason } : {} });
-      continue;
-    }
-    const checked = checkContractFields(obj, ctx, label);
-    if (checked.contract === void 0) errors.push(...checked.errors);
-    else tasks.push({ ...checked.contract, clarity: "clear", depends_on });
-  }
-  const seen = /* @__PURE__ */ new Set();
-  for (const id of ids) {
-    if (seen.has(id)) errors.push(`duplicate task id '${id}' in batch`);
-    seen.add(id);
-  }
-  const depsById = /* @__PURE__ */ new Map();
-  for (const t of tasks) depsById.set(t.id, t.depends_on);
-  for (const h of handback) depsById.set(h.id, h.depends_on);
-  for (const [id, deps] of depsById) {
-    for (const d of deps) if (!seen.has(d)) errors.push(`task ${id}: depends_on '${d}' is not in this batch`);
-  }
-  const state = /* @__PURE__ */ new Map();
-  const visit2 = (id, stack) => {
-    if (state.get(id) === "done") return;
-    if (state.get(id) === "visiting") {
-      errors.push(`dependency cycle: ${[...stack, id].join(" -> ")}`);
-      return;
-    }
-    state.set(id, "visiting");
-    for (const d of depsById.get(id) ?? []) if (depsById.has(d)) visit2(d, [...stack, id]);
-    state.set(id, "done");
-  };
-  for (const id of depsById.keys()) visit2(id, []);
-  if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, tasks, handback };
-}
-
-// src/app/plan.ts
-init_git();
-
-// src/io/claudePlan.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-function invokeClaudePlanner(prompt, env = process.env) {
-  const bin = env.ROUTER_CLAUDE_BIN ?? "claude";
+  let data;
   try {
-    const out2 = execFileSync2(bin, ["-p", prompt, "--output-format", "json"], {
-      encoding: "utf8",
-      env,
-      maxBuffer: 32 * 1024 * 1024
-    });
-    try {
-      const envelope = JSON.parse(out2);
-      if (typeof envelope.result === "string") return { ok: true, text: envelope.result };
-    } catch {
-    }
-    return { ok: true, text: out2 };
-  } catch (e) {
-    return { ok: false, text: "", error: e.message };
+    data = load(taskYamlText, { schema: JSON_SCHEMA });
+  } catch (err2) {
+    throw new TaskContractError(`task.yaml parse error: ${err2.message}`);
   }
-}
-
-// src/app/plan.ts
-init_store();
-init_policyLoad();
-init_transition();
-var README_HEAD_LINES = 40;
-function readReadmeHead(repoRoot) {
-  const p = `${repoRoot}/README.md`;
-  if (!existsSync5(p)) return void 0;
-  return readFileSync5(p, "utf8").split("\n").slice(0, README_HEAD_LINES).join("\n");
-}
-function renderTaskYaml(t, tierWorker) {
-  const task = {
-    schema_version: 1,
-    id: t.id,
-    title: t.title,
-    base_sha: null,
-    max_wall_minutes: 30,
-    allowed_globs: t.allowed_globs,
-    forbidden_globs: t.forbidden_globs,
-    max_changed_lines: t.max_changed_lines,
-    build_ref: t.build_ref,
-    test_ref: t.test_ref,
-    verification_params: {},
-    ...t.depends_on.length > 0 ? { depends_on: t.depends_on } : {},
-    ...tierWorker !== void 0 ? { worker: tierWorker } : {}
-  };
-  return dump(task, { lineWidth: 120 });
-}
-function runPlan(deps, goal, opts = {}) {
-  const { paths } = deps;
-  const policy = loadPolicyFromDisk(paths);
-  const policyRefs = Object.keys(policy.verification);
-  const tracked = listTrackedFiles(paths.repoRoot);
-  const readmeHead = readReadmeHead(paths.repoRoot);
-  const digest = {
-    files: tracked.files,
-    truncated: tracked.truncated,
-    verificationRefs: policyRefs,
-    ...readmeHead !== void 0 ? { readmeHead } : {}
-  };
-  const res = invokeClaudePlanner(buildPlannerPrompt(digest, goal), process.env);
-  if (!res.ok) return { ok: false, errors: [`claude planner failed: ${res.error ?? "unknown error"}`] };
-  const checked = parseAndCheckBatch(res.text, { policyRefs, trackedFiles: tracked.files });
-  if (!checked.ok) return { ok: false, errors: checked.errors };
-  if (opts.id !== void 0 && checked.tasks.length !== 1) {
-    return { ok: false, errors: [`--id is only valid for a single-task plan (planner returned ${checked.tasks.length})`] };
+  const r = validateTaskYaml(data);
+  if (!r.ok || r.value === null) {
+    throw new TaskContractError(`invalid task.yaml: ${r.errors.join("; ")}`);
   }
-  const tasks = opts.id !== void 0 ? [{ ...checked.tasks[0], id: opts.id }] : checked.tasks;
-  const clash = tasks.filter((t) => readState(paths, t.id) !== null).map((t) => t.id);
-  if (clash.length > 0) return { ok: false, errors: clash.map((id) => `task '${id}' already exists`) };
-  const tierWorker = policy.tiers?.clear;
-  const created = [];
-  for (const t of tasks) {
-    createTask(deps, t.id, t.title);
-    writeFileSync3(paths.taskYaml(t.id), renderTaskYaml(t, tierWorker));
-    writeFileSync3(paths.contractMd(t.id), t.contract_md);
-    created.push({ id: t.id, title: t.title, risk: classifyRisk(t.allowed_globs), depends_on: t.depends_on });
-  }
-  return { ok: true, created, handback: checked.handback, truncated: tracked.truncated };
+  return { task: r.value, taskYamlText, contractMdText };
 }
 
-// src/app/dispatch.ts
-import { createHash as createHash2 } from "node:crypto";
-import { readFileSync as readFileSync8, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir } from "node:os";
-import { join as join8 } from "node:path";
-
-// src/core/pickExecutor.ts
-function pickExecutor(quotas) {
-  const available = quotas.filter((q) => q.available);
-  if (available.length === 0) return null;
-  let best = available[0];
-  for (const q of available.slice(1)) {
-    if (q.used_percent < best.used_percent) best = q;
-    else if (q.used_percent === best.used_percent) {
-      const qr = q.resets_at ?? Infinity;
-      const br = best.resets_at ?? Infinity;
-      if (qr < br) best = q;
-    }
-  }
-  return best.kind;
-}
-
-// src/app/dispatch.ts
-init_exitTaxonomy();
-init_git();
-init_env();
-init_paths();
-
-// src/io/quota.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6, readdirSync as readdirSync2, statSync as statSync5 } from "node:fs";
+// src/app/verifier.ts
+import { mkdtempSync, rmSync as rmSync2 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join as join5 } from "node:path";
-function walkJsonl(dir) {
-  let out2 = [];
-  let entries;
-  try {
-    entries = readdirSync2(dir);
-  } catch {
-    return out2;
-  }
-  for (const name of entries) {
-    const p = join5(dir, name);
-    let s;
-    try {
-      s = statSync5(p);
-    } catch {
-      continue;
+
+// src/core/glob.ts
+var cache = /* @__PURE__ */ new Map();
+var REGEX_SPECIAL = /* @__PURE__ */ new Set([".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
+function compile(glob) {
+  const cached = cache.get(glob);
+  if (cached !== void 0) return cached;
+  let re = "^";
+  let i = 0;
+  while (i < glob.length) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        if (glob[i + 2] === "/") {
+          re += "(?:[^/]+/)*";
+          i += 3;
+        } else if (i + 2 >= glob.length) {
+          re += ".*";
+          i += 2;
+        } else {
+          re += "[^/]*";
+          i += 2;
+        }
+      } else {
+        re += "[^/]*";
+        i += 1;
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+      i += 1;
+    } else if (REGEX_SPECIAL.has(c)) {
+      re += `\\${c}`;
+      i += 1;
+    } else {
+      re += c;
+      i += 1;
     }
-    if (s.isDirectory()) out2 = out2.concat(walkJsonl(p));
-    else if (name.endsWith(".jsonl")) out2.push(p);
   }
-  return out2;
+  re += "$";
+  const compiled = new RegExp(re);
+  cache.set(glob, compiled);
+  return compiled;
 }
-function findRateLimits(x) {
-  if (x === null || typeof x !== "object") return null;
-  const obj = x;
-  if (obj["rate_limits"] && typeof obj["rate_limits"] === "object") return obj["rate_limits"];
-  for (const k of Object.keys(obj)) {
-    const r = findRateLimits(obj[k]);
-    if (r) return r;
-  }
-  return null;
+function matchAny(path, globs) {
+  return globs.some((g) => compile(g).test(path));
 }
-function readCodexQuota(sessionsDir) {
-  const files = walkJsonl(sessionsDir).sort();
-  const newest = files.at(-1);
-  if (newest === void 0) return null;
-  let lines;
-  try {
-    lines = readFileSync6(newest, "utf8").split("\n");
-  } catch {
-    return null;
-  }
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const ln = lines[i];
-    if (!ln.includes("rate_limits")) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(ln);
-    } catch {
-      continue;
-    }
-    const rl = findRateLimits(parsed);
-    if (rl === null) continue;
-    const windows = [rl.primary, rl.secondary].filter((w) => w != null);
-    if (windows.length === 0) continue;
-    let binding = windows[0];
-    for (const w of windows.slice(1)) if ((w.used_percent ?? 0) > (binding.used_percent ?? 0)) binding = w;
-    const used = binding.used_percent ?? 0;
+
+// src/core/scope.ts
+function pathsToCheck(entry) {
+  return entry.oldPath !== void 0 ? [entry.oldPath, entry.path] : [entry.path];
+}
+function evaluateScope(changes, scope) {
+  const violations = [];
+  if (changes.length === 0) {
     return {
-      kind: "codex",
-      used_percent: used,
-      resets_at: binding.resets_at ?? null,
-      available: (rl.rate_limit_reached_type ?? null) === null && used < 100
+      ok: false,
+      changedLines: 0,
+      violations: [{ kind: "empty_diff", detail: "diff is empty - worker produced no changes" }]
     };
   }
-  return null;
-}
-function readClaudeQuota(usageJsonPath) {
-  if (!existsSync6(usageJsonPath)) return null;
-  let o;
-  try {
-    o = JSON.parse(readFileSync6(usageJsonPath, "utf8"));
-  } catch {
-    return null;
+  let changedLines = 0;
+  for (const entry of changes) {
+    for (const p of pathsToCheck(entry)) {
+      if (matchAny(p, scope.forbidden_globs)) {
+        violations.push({ kind: "forbidden", path: p, detail: `path matches a forbidden glob` });
+      } else if (!matchAny(p, scope.allowed_globs)) {
+        violations.push({ kind: "not_allowed", path: p, detail: `path is outside allowed_globs` });
+      }
+    }
+    const deletesTest = entry.status === "D" && matchAny(entry.path, scope.test_globs);
+    const renamesTestAway = entry.status === "R" && entry.oldPath !== void 0 && matchAny(entry.oldPath, scope.test_globs) && !matchAny(entry.path, scope.test_globs);
+    if (deletesTest || renamesTestAway) {
+      violations.push({
+        kind: "test_deletion",
+        path: entry.oldPath ?? entry.path,
+        detail: "removes a file matching test_globs"
+      });
+    }
+    if (!entry.binary) changedLines += entry.added + entry.deleted;
   }
-  if (typeof o.used_percent !== "number") return null;
+  if (changedLines > scope.max_changed_lines) {
+    violations.push({
+      kind: "max_lines",
+      detail: `changed ${changedLines} lines > max ${scope.max_changed_lines}`
+    });
+  }
+  return { ok: violations.length === 0, changedLines, violations };
+}
+
+// src/core/secrets.ts
+var AWS_ACCESS_KEY = /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/;
+var PRIVATE_KEY_HEADER = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+var SECRET_ASSIGNMENT = /(?:api[_-]?key|secret|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|token)["']?\s*[:=]\s*["']([^"']{20,})["']/i;
+function looksLikeSecret(value) {
+  return value.length >= 20 && /[A-Za-z]/.test(value) && /[0-9]/.test(value);
+}
+function redact(content) {
+  const t = content.trim();
+  return t.length <= 16 ? t : `${t.slice(0, 12)}...(${t.length} chars)`;
+}
+function scanSecrets(diffText, extraPatterns = []) {
+  const findings = [];
+  const extra = extraPatterns.map((p) => new RegExp(p));
+  const lines = diffText.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.startsWith("+") || line.startsWith("+++")) continue;
+    const content = line.slice(1);
+    if (AWS_ACCESS_KEY.test(content)) {
+      findings.push({ rule: "aws_access_key", line: i + 1, snippet: redact(content) });
+    }
+    if (PRIVATE_KEY_HEADER.test(content)) {
+      findings.push({ rule: "private_key_header", line: i + 1, snippet: redact(content) });
+    }
+    const m = SECRET_ASSIGNMENT.exec(content);
+    if (m !== null && looksLikeSecret(m[1])) {
+      findings.push({ rule: "secret_assignment", line: i + 1, snippet: redact(content) });
+    }
+    for (let k = 0; k < extra.length; k++) {
+      if (extra[k].test(content)) {
+        findings.push({ rule: `custom_pattern[${k}]`, line: i + 1, snippet: redact(content) });
+      }
+    }
+  }
+  return findings;
+}
+
+// src/io/proc.ts
+import { spawnSync } from "node:child_process";
+function runCommand(argv, opts) {
+  if (argv.length === 0) {
+    return { rc: null, stdout: "", stderr: "", timedOut: false, spawnError: "empty argv" };
+  }
+  const [cmd, ...args] = argv;
+  const r = spawnSync(cmd, args, {
+    cwd: opts.cwd,
+    env: opts.env,
+    shell: false,
+    encoding: "utf8",
+    timeout: opts.timeoutMs,
+    maxBuffer: opts.maxBufferBytes ?? 64 * 1024 * 1024,
+    killSignal: "SIGKILL"
+  });
+  const timedOut = r.error !== void 0 && r.error.code === "ETIMEDOUT";
+  const spawnError = r.error !== void 0 && !timedOut ? r.error.message ?? String(r.error) : null;
   return {
-    kind: "claude",
-    used_percent: o.used_percent,
-    resets_at: typeof o.resets_at === "number" ? o.resets_at : null,
-    available: o.reached !== true && o.used_percent < 100
+    rc: r.status,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+    timedOut,
+    spawnError
   };
 }
 
+// src/app/verifier.ts
+var DEFAULT_TEST_GLOBS = ["test/**", "tests/**", "**/*.test.*", "**/*_test.*"];
+var DEFAULT_MAX_CHANGED_LINES = 400;
+function fail(id, detail, rc) {
+  return rc !== void 0 ? { id, ok: false, detail, rc } : { id, ok: false, detail };
+}
+function pass(id, detail) {
+  return detail !== void 0 ? { id, ok: true, detail } : { id, ok: true };
+}
+function verifyTask(req) {
+  const checks = [];
+  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
+  if (patch.trim() === "") {
+    checks.push(fail("diff_applies", "diff is empty - executor produced no committed change"));
+    return { result: "FAILED", checks };
+  }
+  const tmpBase = mkdtempSync(join5(tmpdir(), "router-verify-base-"));
+  let applies;
+  try {
+    worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
+    applies = applyCheck(tmpBase, patch);
+  } finally {
+    worktreeRemove(req.repoRoot, tmpBase);
+    rmSync2(tmpBase, { recursive: true, force: true });
+  }
+  if (!applies) {
+    checks.push(fail("diff_applies", "patch does not apply cleanly onto base_sha"));
+    return { result: "FAILED", checks };
+  }
+  checks.push(pass("diff_applies"));
+  const scope = {
+    allowed_globs: req.allowedGlobs,
+    forbidden_globs: req.forbiddenGlobs ?? [],
+    test_globs: DEFAULT_TEST_GLOBS,
+    max_changed_lines: req.maxChangedLines ?? DEFAULT_MAX_CHANGED_LINES
+  };
+  const verdict = evaluateScope(changes, scope);
+  if (!verdict.ok) {
+    checks.push(fail("scope", verdict.violations.map((v) => `${v.kind}:${v.path ?? ""}`).join(", ")));
+    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass("scope", `${verdict.changedLines} lines`));
+  const findings = scanSecrets(patch, req.secretExtraPatterns ?? []);
+  if (findings.length > 0) {
+    checks.push(fail("secret_scan", `likely secret(s): ${findings.map((f) => `${f.rule}@L${f.line}`).join(", ")}`));
+    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass("secret_scan"));
+  for (const [i, argv] of req.verify.entries()) {
+    if (argv.length === 0) continue;
+    const r = runCommand(argv, {
+      cwd: req.worktreeDir,
+      env: req.env,
+      ...req.buildTimeoutMs !== void 0 ? { timeoutMs: req.buildTimeoutMs } : {}
+    });
+    const label = req.verify.length > 1 ? `verify[${i}]` : "verify";
+    if (r.spawnError !== null) {
+      checks.push(fail(label, `spawn error: ${r.spawnError}`));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    if (r.timedOut) {
+      checks.push(fail(label, "timed out"));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    if (r.rc !== 0) {
+      checks.push(fail(label, `${argv.join(" ")} (rc ${r.rc})`, r.rc ?? void 0));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    checks.push(pass(label, `${argv.join(" ")} (rc 0)`));
+  }
+  return { result: "PASSED", checks, changed_lines: verdict.changedLines };
+}
+
 // src/app/dispatch.ts
-init_store();
-init_supervisor();
-init_taskLoad();
-init_usage();
-init_verifier();
 var RUN = runId(1);
 function quotaFor(paths, kind) {
   if (kind === "codex") {
-    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join8(homedir(), ".codex", "sessions");
+    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join6(homedir(), ".codex", "sessions");
     return readCodexQuota(dir);
   }
-  return readClaudeQuota(join8(paths.root, "usage.json"));
+  return readClaudeQuota(join6(paths.root, "usage.json"));
 }
 function orderByQuota(paths, workers) {
   const quotas = workers.map((w) => quotaFor(paths, w.kind)).filter((q) => q !== null);
@@ -12657,7 +10745,7 @@ async function dispatchTask(deps, id) {
   let switches = 0;
   for (let i = 0; i < order.length; i++) {
     used = order[i];
-    if (i > 0) writeFileSync5(logPath, "");
+    if (i > 0) writeFileSync3(logPath, "");
     const launcher2 = makeLauncher(used);
     const o = await superviseWorker({
       argv: launcher2.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
@@ -12702,8 +10790,8 @@ async function dispatchTask(deps, id) {
   };
   if (exitClass === "ok") {
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync5(paths.diffPatch(id, RUN), patch);
-    result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
+    writeFileSync3(paths.diffPatch(id, RUN), patch);
+    result2.diff_sha = createHash("sha256").update(patch).digest("hex");
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
@@ -12722,7 +10810,7 @@ async function dispatchTask(deps, id) {
 }
 function safeRead(path) {
   try {
-    return readFileSync8(path, "utf8");
+    return readFileSync5(path, "utf8");
   } catch {
     return "";
   }
@@ -12747,10 +10835,6 @@ function appendMetric2(deps, result2) {
   };
   appendMetric(deps.paths, metric);
 }
-
-// src/cli/commands.ts
-init_worker();
-init_taskLoad();
 
 // src/cli/output.ts
 function out(s) {
@@ -12778,32 +10862,21 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const found = explicit ?? findRouterDir(ctx.cwd);
-  const rd = found ?? join10(ctx.cwd, ROUTER_DIR);
+  const rd = found ?? join7(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync8(d)) mkdirSync6(d, { recursive: true });
+    if (!existsSync6(d)) mkdirSync4(d, { recursive: true });
   }
-  const gi = join10(paths.root, ".gitignore");
-  if (!existsSync8(gi)) writeFileSync8(gi, "*\n");
-  return { deps: { paths, clock: systemClock }, paths };
+  const gi = join7(paths.root, ".gitignore");
+  if (!existsSync6(gi)) writeFileSync4(gi, "*\n");
+  return { paths, clock: systemClock };
 }
 function requireId(ctx) {
   const id = flagStr(ctx.args.flags, "id") ?? ctx.args.positionals[0];
   if (id === void 0 || id === "") throw new CliError("missing task id", 2);
   return id;
 }
-var CONTRACT_TEMPLATE = (id, title) => `# ${title}
-
-task: ${id}
-
-## Goal
-
-_Describe what to accomplish._
-
-## Definition of Done
-
-- [ ] ...
-`;
+var RUN2 = runId(1);
 function taskTemplate(id, title) {
   return dump(
     {
@@ -12820,533 +10893,43 @@ function taskTemplate(id, title) {
     { lineWidth: 120 }
   );
 }
+var contractTemplate = (id, title) => `# ${title}
+
+task: ${id}
+
+## Goal
+
+_What to accomplish._
+
+## Definition of Done
+
+- [ ] ...
+`;
 var init = (ctx) => {
-  const root = join10(ctx.cwd, ROUTER_DIR);
-  const paths = routerPaths(root);
-  const created = [];
-  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync8(d)) {
-      mkdirSync6(d, { recursive: true });
-      created.push(d);
-    }
-  }
-  const gi = join10(paths.root, ".gitignore");
-  if (!existsSync8(gi)) writeFileSync8(gi, "*\n");
+  const { paths } = depsFor(ctx);
   emit(
     ctx.json,
-    { ok: true, root: paths.root, created },
+    { ok: true, root: paths.root },
     () => `ready at ${paths.root} (optional; router auto-creates this on first use)`
   );
   return 0;
 };
 var newTask = (ctx) => {
-  const { deps, paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx);
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
-  createTask(deps, id, title);
-  if (!existsSync8(paths.taskYaml(id))) writeFileSync8(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync8(paths.contractMd(id))) writeFileSync8(paths.contractMd(id), CONTRACT_TEMPLATE(id, title));
-  if (!existsSync8(paths.planMd(id))) writeFileSync8(paths.planMd(id), `# Plan: ${title}
-`);
+  mkdirSync4(paths.taskDir(id), { recursive: true });
+  if (!existsSync6(paths.taskYaml(id))) writeFileSync4(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync6(paths.contractMd(id))) writeFileSync4(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
-    { ok: true, id, state: "DRAFT", task_yaml: paths.taskYaml(id) },
-    () => `created ${id} (DRAFT) - edit ${paths.taskYaml(id)} and TASK_CONTRACT.md, then \`router validate ${id}\``
+    { ok: true, id, task_yaml: paths.taskYaml(id) },
+    () => `created ${id} - edit ${paths.taskYaml(id)} (allowed_globs, verify), then \`router dispatch ${id}\``
   );
   return 0;
-};
-var validate = (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  const yamlText0 = readFileSync10(paths.taskYaml(id), "utf8");
-  const parsed = validateTaskYaml(load(yamlText0, { schema: JSON_SCHEMA }));
-  if (!parsed.ok || parsed.value === null) {
-    throw new CliError(`invalid task.yaml: ${parsed.errors.join("; ")}`, 1);
-  }
-  const repoRoot = paths.repoRoot;
-  const baseSha = resolveCommit(repoRoot, parsed.value.base_sha ?? "HEAD");
-  const frozenTask = { ...parsed.value, base_sha: baseSha };
-  const yamlText = dump(frozenTask, { lineWidth: 120 });
-  writeFileSync8(paths.taskYaml(id), yamlText);
-  const contractText = existsSync8(paths.contractMd(id)) ? readFileSync10(paths.contractMd(id), "utf8") : "";
-  const contractHash = hashContract(yamlText, contractText);
-  const policy = loadPolicyFromGit(paths, baseSha);
-  for (const ref of [frozenTask.build_ref, frozenTask.test_ref]) {
-    if (ref !== void 0 && policy.verification[ref] === void 0) {
-      throw new CliError(`verification ref '${ref}' not in policy.yaml at base_sha`, 1);
-    }
-  }
-  if (st.state === "VALIDATED" && st.contract_hash === contractHash) {
-    emit(
-      ctx.json,
-      { ok: true, id, state: "VALIDATED", base_sha: baseSha, idempotent: true },
-      () => `${id} already VALIDATED (unchanged)`
-    );
-    return 0;
-  }
-  transition(deps, id, "VALIDATED", {
-    actor: "cli:validate",
-    meta: { base_sha: baseSha, contract_hash: contractHash }
-  });
-  emit(
-    ctx.json,
-    { ok: true, id, state: "VALIDATED", base_sha: baseSha, contract_hash: contractHash },
-    () => `${id} VALIDATED (base_sha ${baseSha.slice(0, 12)})`
-  );
-  return 0;
-};
-var simpleTransition = (to, actor, okIfAlready) => (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  if (st.state === okIfAlready || st.state === to) {
-    emit(ctx.json, { ok: true, id, state: st.state, idempotent: true }, () => `${id} already ${st.state}`);
-    return 0;
-  }
-  const next = transition(deps, id, to, { actor });
-  emit(ctx.json, { ok: true, id, state: next.state }, () => `${id} -> ${next.state}`);
-  return 0;
-};
-var queue = simpleTransition("QUEUED", "cli:queue", "QUEUED");
-var run = (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  let started;
-  try {
-    started = startRun(deps, id);
-  } catch (e) {
-    if (e instanceof CapExceededError) throw new CliError(`refused: ${e.message}`, 1);
-    if (e instanceof DependencyError) throw new CliError(`blocked: ${e.message}`, 1);
-    throw e;
-  }
-  const script = process.argv[1] ?? "";
-  const child = spawn2(
-    process.execPath,
-    [script, "_worker-run", id, "--run", started.runId, "--router-dir", paths.root],
-    { detached: true, stdio: "ignore", cwd: paths.repoRoot, env: process.env }
-  );
-  if (child.pid !== void 0) {
-    updateLease(deps, id, started.runId, { supervisor_pid: child.pid, supervisor_pgid: child.pid });
-  }
-  child.unref();
-  emit(
-    ctx.json,
-    { ok: true, id, run: started.runId, state: "RUNNING", supervisor_pid: child.pid },
-    () => `${id} RUNNING ${started.runId} (detached pid ${child.pid}); poll \`router status ${id}\``
-  );
-  return 0;
-};
-var workerRun = async (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const runId2 = flagStr(ctx.args.flags, "run");
-  if (runId2 === void 0) throw new CliError("_worker-run requires --run", 2);
-  const st = currentState(paths, id);
-  if (st === null || st.base_sha === null) throw new CliError(`task ${id} not runnable`, 1);
-  const policy = loadPolicyFromGit(paths, st.base_sha);
-  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
-  if (workers.length === 0) throw new CliError("policy defines no worker/workers", 1);
-  const events = readEvents(paths, id);
-  const runningEv = [...events].reverse().find((e) => e.to === "RUNNING" && e.run_id === runId2);
-  let launchers;
-  if (isRescueAttempt(runningEv?.from ?? null)) {
-    const rescueWorker = resolveRescueWorker(policy);
-    if (rescueWorker === void 0) throw new CliError("rescue attempt: no rescue worker resolvable", 1);
-    launchers = [makeLauncher(rescueWorker)];
-  } else {
-    const { ordered } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
-    const pinned = loadTask(paths, id).task.worker;
-    const chain = pinned !== void 0 ? [pinned, ...ordered.filter((w) => !(w.kind === pinned.kind && w.model === pinned.model))] : ordered;
-    launchers = chain.map(makeLauncher);
-  }
-  const [primary, ...rest] = launchers;
-  const result2 = await runWorkerBody(deps, id, runId2, primary, policy, rest);
-  return result2.verifier?.result === "PASSED" ? 0 : 1;
-};
-var merge = (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  if (st.state === "MERGED") {
-    emit(ctx.json, { ok: true, id, state: "MERGED", idempotent: true }, () => `${id} already MERGED`);
-    return 0;
-  }
-  if (st.state !== "PASSED") throw new CliError(`${id} is ${st.state}, not PASSED`, 1);
-  const run2 = st.current_run;
-  if (run2 === null) throw new CliError(`${id} has no run to merge`, 1);
-  const risk = classifyRisk(loadTask(paths, id).task.allowed_globs);
-  if (risk.level === "high") {
-    const approvedFlag = flagBool(ctx.args.flags, "approve");
-    const recorded = readApproval(paths, id);
-    if (!approvedFlag && recorded === null) {
-      throw new CliError(
-        `${id} is high-risk (${risk.reasons.join(", ")}); re-run with --approve or \`router approve ${id}\``,
-        1
-      );
-    }
-    if (approvedFlag && recorded === null) {
-      writeApproval(paths, id, {
-        approved_at: systemClock.nowIso(),
-        actor: "cli:merge",
-        ...risk.reasons.length > 0 ? { risk_reasons: risk.reasons } : {}
-      });
-    }
-  }
-  const repoRoot = paths.repoRoot;
-  const branch = runBranch(id, run2);
-  try {
-    mergeNoFF(repoRoot, branch);
-  } catch (e) {
-    mergeAbort(repoRoot);
-    throw new CliError(`merge failed (aborted, tree restored): ${e.message}`, 1);
-  }
-  transition(deps, id, "MERGED", { actor: "cli:merge", runId: run2 });
-  worktreeRemove(repoRoot, paths.worktree(id, run2));
-  deleteBranch(repoRoot, branch);
-  emit(ctx.json, { ok: true, id, state: "MERGED", branch }, () => `${id} MERGED (${branch})`);
-  return 0;
-};
-var status = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  const lease = st.current_run ? readLease(paths, id, st.current_run) : null;
-  const events = readEvents(paths, id);
-  emit(ctx.json, { ok: true, ...st, lease, recent: events.slice(-5) }, () => {
-    const l = lease ? ` run=${st.current_run} sup_pid=${lease.supervisor_pid}` : "";
-    return `${id}: ${st.state} (attempt ${st.attempt_number})${l}`;
-  });
-  return 0;
-};
-var list = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const filter = flagStr(ctx.args.flags, "state");
-  const reg = readRegistry(paths);
-  let rows;
-  if (reg !== null) {
-    rows = Object.entries(reg.tasks).map(([id, e]) => ({ id, state: e.state, run: e.current_run, title: e.title })).sort((a, b) => a.id.localeCompare(b.id));
-  } else {
-    rows = listTaskIds(paths).map((id) => currentState(paths, id)).filter((s) => s !== null).map((s) => ({ id: s.id, state: s.state, run: s.current_run, title: s.title }));
-  }
-  const shown = rows.filter((r) => filter === void 0 || r.state === filter);
-  emit(
-    ctx.json,
-    { ok: true, tasks: shown },
-    () => shown.length === 0 ? "(no tasks)" : shown.map((r) => `${r.state.padEnd(11)} ${r.id}`).join("\n")
-  );
-  return 0;
-};
-var result = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  const run2 = flagStr(ctx.args.flags, "run") ?? st.current_run;
-  if (run2 === null) throw new CliError(`${id} has no run`, 1);
-  const res = readResult(paths, id, run2);
-  if (res === null) throw new CliError(`no result for ${id} ${run2}`, 3);
-  let tail = "";
-  try {
-    tail = readFileSync10(paths.workerLog(id, run2), "utf8").split("\n").slice(-50).join("\n");
-  } catch {
-  }
-  emit(ctx.json, { ok: true, result: res }, () => {
-    const checks = (res.verifier?.checks ?? []).map((c) => `  ${c.ok ? "ok" : "x"} ${c.id}${c.detail ? ` - ${c.detail}` : ""}`).join("\n");
-    return `${id} ${run2}: exit=${res.exit_class} verifier=${res.verifier?.result ?? "n/a"}
-${checks}
---- log tail ---
-${tail}`;
-  });
-  return 0;
-};
-var usd = (v) => v === null ? "n/a" : `$${v.toFixed(4)}`;
-var pct = (v) => v === null ? "n/a" : `${Math.round(v * 100)}%`;
-function parseDurationMs(s) {
-  const m = /^(\d+)(m|h|d)$/.exec(s.trim());
-  if (m === null) return null;
-  const n = Number(m[1]);
-  const unit = m[2];
-  return n * (unit === "m" ? 6e4 : unit === "h" ? 36e5 : 864e5);
-}
-var stats = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const baseline2 = summarizeBaseline(readBaseline(paths));
-  let metrics = readMetrics(paths);
-  const since = flagStr(ctx.args.flags, "since");
-  if (since !== void 0) {
-    const ms = parseDurationMs(since);
-    if (ms === null) throw new CliError(`bad --since '${since}' (use e.g. 90m, 24h, 7d)`, 2);
-    const cutoff = Date.now() - ms;
-    metrics = metrics.filter((r) => Date.parse(r.ts) >= cutoff);
-  }
-  const s = aggregate(metrics, baseline2);
-  emit(ctx.json, { ok: true, ...s }, () => {
-    const perTask = s.verifiedRuns > 0 ? Math.round(s.tokensTotal / s.verifiedRuns) : 0;
-    const lines = [
-      `runs ${s.totalRuns}  verified ${s.verifiedRuns}  first-pass ${pct(s.firstPassRate)}  env_error ${s.envErrorRuns}`,
-      `spent:    ${s.tokensInput} in + ${s.tokensOutput} out tokens (${usd(s.spentUsd)})  [~${perTask}/verified task]`
-    ];
-    if (baseline2 !== null) {
-      lines.push(
-        `baseline: ${Math.round(baseline2.tokensPerTask)} tokens/task (${usd(baseline2.costUsdPerTask)}/task, n=${baseline2.n})`,
-        `offloaded: ${s.offloadedTokens} baseline tokens  |  net saved: ${usd(s.savedUsd)} (${pct(s.savedPct)})`
-      );
-    } else {
-      lines.push("baseline: none - `router baseline add ...` to compute savings");
-    }
-    return lines.join("\n");
-  });
-  return 0;
-};
-var baseline = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const sub = ctx.args.positionals[0];
-  if (sub === "list") {
-    const records = readBaseline(paths);
-    emit(
-      ctx.json,
-      { ok: true, records },
-      () => records.length === 0 ? "(no baseline records)" : records.map((r) => `${r.ts}  ${r.task_id ?? "-"}  ${r.tokens_input}+${r.tokens_output} tok  ${usd(r.cost_usd)}`).join("\n")
-    );
-    return 0;
-  }
-  if (sub !== "add") throw new CliError("usage: router baseline add|list", 2);
-  const tin = Number(flagStr(ctx.args.flags, "tokens-in"));
-  const tout = Number(flagStr(ctx.args.flags, "tokens-out"));
-  if (!Number.isFinite(tin) || !Number.isFinite(tout)) {
-    throw new CliError("baseline add requires --tokens-in and --tokens-out", 2);
-  }
-  const costStr = flagStr(ctx.args.flags, "cost-usd");
-  const wallStr = flagStr(ctx.args.flags, "wall");
-  const record = {
-    ts: systemClock.nowIso(),
-    task_id: ctx.args.positionals[1] ?? null,
-    model: flagStr(ctx.args.flags, "model") ?? "opus",
-    tokens_input: tin,
-    tokens_output: tout,
-    cost_usd: costStr !== void 0 ? Number(costStr) : null,
-    wall_seconds: wallStr !== void 0 ? Number(wallStr) : null
-  };
-  appendBaseline(paths, record);
-  const n = readBaseline(paths).length;
-  emit(ctx.json, { ok: true, record, count: n }, () => `recorded baseline (${tin}+${tout} tok), ${n} total`);
-  return 0;
-};
-var cancel = (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  if (isTerminal(st.state)) {
-    emit(ctx.json, { ok: true, id, state: st.state, idempotent: true }, () => `${id} already ${st.state}`);
-    return 0;
-  }
-  if (st.state === "RUNNING" && st.current_run) {
-    const lease = readLease(paths, id, st.current_run);
-    if (lease) {
-      const supGroup = lease.supervisor_pgid ?? lease.supervisor_pid;
-      if (supGroup > 1) killProcessGroup(supGroup, "SIGKILL");
-      if (lease.worker_pgid > 1) killProcessGroup(lease.worker_pgid, "SIGKILL");
-    }
-  }
-  const next = transition(deps, id, "CANCELLED", { actor: "cli:cancel", runId: st.current_run });
-  emit(ctx.json, { ok: true, id, state: next.state }, () => `${id} CANCELLED`);
-  return 0;
-};
-var recoverCmd = (ctx) => {
-  const { deps } = depsFor(ctx);
-  const r = recover(deps);
-  emit(
-    ctx.json,
-    { ok: true, ...r },
-    () => `recovered ${r.recovered.length}, still running ${r.stillRunning.length}, reindex errors ${r.reindexErrors.length}`
-  );
-  return 0;
-};
-var reindex = (ctx) => {
-  const { deps } = depsFor(ctx);
-  const r = rebuildRegistry(deps);
-  emit(
-    ctx.json,
-    { ok: true, tasks: Object.keys(r.registry.tasks).length, errors: r.errors },
-    () => `reindexed ${Object.keys(r.registry.tasks).length} tasks, ${r.errors.length} errors`
-  );
-  return 0;
-};
-var approve = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const st = currentState(paths, id);
-  if (st === null) throw new CliError(`no such task: ${id}`, 3);
-  const risk = classifyRisk(loadTask(paths, id).task.allowed_globs);
-  writeApproval(paths, id, {
-    approved_at: systemClock.nowIso(),
-    actor: "cli:approve",
-    ...risk.reasons.length > 0 ? { risk_reasons: risk.reasons } : {}
-  });
-  emit(
-    ctx.json,
-    { ok: true, id, risk: risk.level, reasons: risk.reasons },
-    () => `${id} approved (risk ${risk.level}${risk.reasons.length > 0 ? ": " + risk.reasons.join(", ") : ""})`
-  );
-  return 0;
-};
-var fmtBytes = (n) => {
-  if (n < 1024) return `${n}B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)}MB`;
-};
-var gc = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const dryRun = flagBool(ctx.args.flags, "dry-run");
-  const keepStr = flagStr(ctx.args.flags, "keep-metrics");
-  const keepLast = keepStr !== void 0 && keepStr !== "" ? Number(keepStr) : 1e3;
-  if (!Number.isFinite(keepLast) || keepLast < 0) {
-    throw new CliError(`bad --keep-metrics '${keepStr}'`, 2);
-  }
-  const retOpts = { keepLast };
-  const since = flagStr(ctx.args.flags, "since");
-  if (since !== void 0) {
-    const ms = parseDurationMs(since);
-    if (ms === null) throw new CliError(`bad --since '${since}' (use e.g. 90m, 24h, 7d)`, 2);
-    retOpts.maxAgeMs = ms;
-    retOpts.nowMs = Date.now();
-  }
-  const metrics = readMetrics(paths);
-  const retention = planMetricRetention(metrics, retOpts);
-  const tasks = listTaskIds(paths).map((id) => {
-    const st = currentState(paths, id);
-    return { id, state: st?.state ?? "CANCELLED", worktrees: listWorktreeRuns(paths, id) };
-  });
-  const plan2 = planRunGc(tasks);
-  let freedBytes = 0;
-  for (const a of plan2.remove) freedBytes += pathSizeBytes(paths.worktree(a.taskId, a.runId));
-  if (!dryRun) {
-    if (retention.dropped.length > 0) {
-      writeMetricsArchive(paths, retention.dropped);
-      overwriteMetrics(paths, retention.keep);
-    }
-    const touchedTasks = /* @__PURE__ */ new Set();
-    for (const a of plan2.remove) {
-      worktreeRemove(paths.repoRoot, paths.worktree(a.taskId, a.runId));
-      touchedTasks.add(a.taskId);
-    }
-    for (const id of touchedTasks) removeEmptyWorktreeParent(paths, id);
-  }
-  const summary = {
-    ok: true,
-    dry_run: dryRun,
-    metrics_dropped: retention.dropped.length,
-    metrics_kept: retention.keep.length,
-    worktrees_removed: plan2.remove.map((a) => `${a.taskId}/${a.runId}`),
-    freed_bytes: freedBytes,
-    skipped: plan2.skipped
-  };
-  emit(ctx.json, summary, () => {
-    const verb = dryRun ? "would free" : "freed";
-    const skip = plan2.skipped.length > 0 ? `
-  kept ${plan2.skipped.length} non-terminal task(s) with worktrees: ${plan2.skipped.map((s) => `${s.taskId}(${s.state})`).join(", ")}` : "";
-    return `gc${dryRun ? " (dry-run)" : ""}: metrics dropped ${retention.dropped.length}, kept ${retention.keep.length}; ${verb} ${plan2.remove.length} worktree(s) (${fmtBytes(freedBytes)})${skip}`;
-  });
-  return 0;
-};
-var routing = (ctx) => {
-  const { deps, paths } = depsFor(ctx);
-  const policy = loadPolicyFromDisk(paths);
-  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
-  if (workers.length === 0) throw new CliError("policy defines no worker/workers", 1);
-  const { ordered, view } = planExecutorOrder(paths, Date.parse(deps.clock.nowIso()), policy, workers);
-  emit(ctx.json, { ok: true, order: ordered.map((w) => w.kind), ...view }, () => {
-    const lines = [
-      `order: ${ordered.map((w) => w.kind).join(" -> ")}` + (view.budgeted ? "" : "   (no budgets configured; identity order)")
-    ];
-    for (const e of view.decision.entries) {
-      const b = view.budgets.find((x) => x.kind === e.kind);
-      if (e.budget_tokens === null) {
-        lines.push(`  ${e.kind}: unbounded (no budget)`);
-        continue;
-      }
-      const frac = e.fraction === null ? "n/a" : `${Math.round(e.fraction * 100)}%`;
-      const cal = b !== void 0 && Math.round(b.effective_tokens) !== b.seed_tokens ? ` (seed ${b.seed_tokens} -> calibrated ${Math.round(b.effective_tokens)})` : "";
-      lines.push(
-        `  ${e.kind}: ${Math.round(e.consumed)}+${Math.round(e.estimate)}/${e.budget_tokens} tok = ${frac} ${e.fits ? "ok" : "OVER"}${cal}`
-      );
-    }
-    if (!view.decision.anyFits && view.budgeted) {
-      lines.push("  all executors at/over budget; starting the one with most headroom (reactive 429 still backs this up)");
-    }
-    return lines.join("\n");
-  });
-  return 0;
-};
-var ready = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const queued = listTaskIds(paths).filter((t) => currentState(paths, t)?.state === "QUEUED");
-  const items = queued.map((t) => {
-    let deps = [];
-    try {
-      deps = loadTask(paths, t).task.depends_on ?? [];
-    } catch {
-    }
-    const unmet = deps.filter((d) => currentState(paths, d)?.state !== "MERGED");
-    return { id: t, unmet };
-  });
-  const runnable = items.filter((i) => i.unmet.length === 0).map((i) => i.id);
-  const blocked = items.filter((i) => i.unmet.length > 0);
-  emit(ctx.json, { ok: true, ready: runnable, blocked }, () => {
-    const lines = [runnable.length > 0 ? `ready: ${runnable.join(", ")}` : "ready: (none)"];
-    for (const b of blocked) lines.push(`  blocked ${b.id}: waiting on ${b.unmet.join(", ")}`);
-    return lines.join("\n");
-  });
-  return 0;
-};
-var plan = async (ctx) => {
-  const { deps } = depsFor(ctx);
-  const goal = flagStr(ctx.args.flags, "goal") ?? ctx.args.positionals[0];
-  if (goal === void 0 || goal.trim() === "") throw new CliError('usage: router plan "<goal>"', 2);
-  const idFlag = flagStr(ctx.args.flags, "id");
-  const outcome = runPlan(deps, goal, idFlag !== void 0 ? { id: idFlag } : {});
-  if (!outcome.ok) throw new CliError(`plan rejected:
-  - ${outcome.errors.join("\n  - ")}`, 1);
-  const summary = {
-    ok: true,
-    created: outcome.created.map((c) => ({ id: c.id, title: c.title, risk: c.risk.level, depends_on: c.depends_on })),
-    handback: outcome.handback,
-    truncated: outcome.truncated
-  };
-  const text = () => {
-    const lines = outcome.created.map(
-      (c) => `planned ${c.id} (DRAFT, risk ${c.risk.level}${c.depends_on.length > 0 ? `, after ${c.depends_on.join(",")}` : ""})`
-    );
-    for (const h of outcome.handback) {
-      lines.push(`handback ${h.id}: ${h.title}${h.reason !== void 0 ? ` -- ${h.reason}` : ""} (needs the main session)`);
-    }
-    lines.push("review .router/tasks/<id>/, then `router run <id>` (or re-run plan with --execute)");
-    return lines.join("\n");
-  };
-  if (!flagBool(ctx.args.flags, "execute")) {
-    emit(ctx.json, summary, text);
-    return 0;
-  }
-  let rc = 0;
-  for (const c of outcome.created) {
-    const chainCtx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id: c.id } } };
-    validate(chainCtx);
-    queue(chainCtx);
-  }
-  for (const c of outcome.created.filter((t) => t.depends_on.length === 0)) {
-    const chainCtx = { ...ctx, args: { ...ctx.args, flags: { ...ctx.args.flags, id: c.id } } };
-    rc = Math.max(rc, await run(chainCtx));
-  }
-  return rc;
 };
 var dispatch = async (ctx) => {
-  const { deps } = depsFor(ctx);
+  const deps = depsFor(ctx);
   const id = requireId(ctx);
   const result2 = await dispatchTask(deps, id);
   const v = result2.verifier?.result ?? "FAILED";
@@ -13366,7 +10949,7 @@ var dispatch = async (ctx) => {
     () => {
       const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
       const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
-      const next = v === "PASSED" ? `run \`router land ${id}\` to merge` : `see \`router result ${id}\``;
+      const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
       return `${id}: ${v} (executor ${who}${sw}); ${next}`;
     }
   );
@@ -13375,57 +10958,47 @@ var dispatch = async (ctx) => {
 var land = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
-  const run2 = runId(1);
-  const result2 = readResult(paths, id, run2);
+  const result2 = readResult(paths, id, RUN2);
   if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)`, 1);
   if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED`, 1);
-  const branch = runBranch(id, run2);
+  const branch = runBranch(id, RUN2);
   try {
     mergeNoFF(paths.repoRoot, branch);
   } catch (e) {
     mergeAbort(paths.repoRoot);
     throw new CliError(`merge failed (aborted, tree restored): ${e.message}`, 1);
   }
-  worktreeRemove(paths.repoRoot, paths.worktree(id, run2));
+  worktreeRemove(paths.repoRoot, paths.worktree(id, RUN2));
   deleteBranch(paths.repoRoot, branch);
   emit(ctx.json, { ok: true, id, merged: branch }, () => `${id} landed (${branch})`);
   return 0;
 };
-var selftestCmd = async (ctx) => {
-  const { selftest: selftest2 } = await Promise.resolve().then(() => (init_selftest(), selftest_exports));
-  const r = await selftest2({ keep: flagBool(ctx.args.flags, "keep") });
-  emit(
-    ctx.json,
-    { ok: r.ok, canaries: r.canaries },
-    () => r.canaries.map((c) => `  ${c.ok ? "ok" : "x"} ${c.name}: ${c.actual} (${c.detail})`).join("\n") + `
-${r.ok ? "selftest PASSED" : "selftest FAILED"}`
-  );
-  return r.ok ? 0 : 1;
+var result = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const id = requireId(ctx);
+  const run = flagStr(ctx.args.flags, "run") ?? RUN2;
+  const res = readResult(paths, id, run);
+  if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
+  let tail = "";
+  try {
+    tail = readFileSync6(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+  } catch {
+  }
+  emit(ctx.json, { ok: true, result: res }, () => {
+    const checks = (res.verifier?.checks ?? []).map((c) => `  ${c.ok ? "ok" : "x"} ${c.id}${c.detail ? ` - ${c.detail}` : ""}`).join("\n");
+    return `${id} ${run}: exit=${res.exit_class} verifier=${res.verifier?.result ?? "n/a"}
+${checks}
+--- log tail ---
+${tail}`;
+  });
+  return 0;
 };
 var HANDLERS = {
   init,
   new: newTask,
-  plan,
   dispatch,
   land,
-  validate,
-  queue,
-  run,
-  "_worker-run": workerRun,
-  merge,
-  approve,
-  status,
-  list,
-  result,
-  stats,
-  baseline,
-  routing,
-  ready,
-  cancel,
-  gc,
-  recover: recoverCmd,
-  reindex,
-  selftest: selftestCmd
+  result
 };
 function versionText() {
   return VERSION;
@@ -13435,12 +11008,13 @@ function helpText() {
 
 Usage: router <command> [options]
 
-Simplified: init * plan * dispatch * land   (synchronous; quota-balanced executor)
-Lifecycle:  init * new * plan * validate * queue * run * status * result * approve * merge
-Ops:        list * ready * stats * baseline * routing * cancel * gc * recover * reindex * selftest
+  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)
+  dispatch <id>          run the task on the quota-picked executor to a verified diff
+  land <id>              merge a PASSED dispatch's diff
+  result <id>            show the verifier report + log tail
+  init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --id, --title, --run, --state, --force, --keep, --approve,
-       --dry-run, --keep-metrics, --since, --execute
+Flags: --json, --id, --title, --run, --router-dir
 `;
 }
 
