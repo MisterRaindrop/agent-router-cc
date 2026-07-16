@@ -1,13 +1,10 @@
-# The machine contract for one task. You write this (router does not infer it).
-# After `router new slugify`, replace .router/tasks/slugify/task.yaml with this.
+# The task contract Opus authors (or you write by hand). No global policy: scope and
+# the verify command live here. Copy to .router/tasks/slugify/task.yaml.
 schema_version: 1
 id: slugify
 title: Implement slugify()
-base_sha: null # resolved and frozen to the current HEAD by `router validate`
 max_wall_minutes: 10
-allowed_globs: ["src/**"] # the executor may ONLY touch these paths
+allowed_globs: ["src/**"]      # the executor may ONLY touch these paths
 forbidden_globs: []
 max_changed_lines: 100
-build_ref: build # -> policy.verification.build
-test_ref: test # -> policy.verification.test
-verification_params: {}
+verify: [["node", "--test"]]   # the mechanical gate (empty = diff/scope/secret only)

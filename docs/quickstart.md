@@ -1,163 +1,83 @@
 # Quickstart
 
-router turns "have an LLM change my code" into a gated pipeline: an executor
-(the `codex` or `claude` CLI) writes a diff inside an isolated git worktree, a
-deterministic verifier checks that diff, and only a passing diff is offered for
-merge. You write a small machine contract per task; router owns every gate.
-
-> **What router does NOT do:** it does not invent tasks or decompose a vague goal.
-> You (or an assistant) author the per-task contract below. router's job is to run
-> an executor against that contract and enforce the gates deterministically.
+router routes coding subtasks to the cheapest capable model to save Opus tokens. You
+plan with Opus; it dispatches the clear subtasks to a cheaper executor, verifies and
+reviews them; you approve and merge. There is no `init`, no policy file, and no commit
+step -- router auto-creates a gitignored `.router/` on first use.
 
 ## Prerequisites
 
-- The `codex` CLI or the `claude` CLI, authenticated (a plan subscription is fine;
-  no API key needed).
-- `router` available as `node /path/to/agent-router-cc/dist/router.js` (the bundle
-  is committed; no `npm install` required).
-- Your project is a git repo with a real build and/or test command.
+- The `codex` CLI or the `claude` CLI, logged in (a plan subscription is fine; no API
+  key). This is the executor router routes work to.
+- `router` available as a Claude Code plugin (`/plugin install router@agent-router-cc`)
+  or on your PATH as `node /path/to/agent-router-cc/dist/router.js`.
 
 ## The loop
 
-Run this in your repo. The `examples/minimal/` directory has a complete, runnable
-version (implement a `slugify()` function); the commands below mirror it.
+Plan the change with Opus in normal conversation, then:
 
-### 1. Initialize and write a policy
-
-```sh
-router init            # creates .router/ with a template policy.yaml
+```
+/router:go
 ```
 
-`policy.yaml` is the trust boundary. It names the executor, the file scope an
-executor may touch, and the exact verification commands. Every command is an argv
-array run without a shell. Minimal, dependency-free example:
+Opus decomposes the plan you agreed on into tasks and drives them, pausing at three
+points:
+
+1. **Confirm the plan** -- Opus shows each clear task (its scope + `verify` command) and
+   which tasks are unclear (it will do those with you directly). You say go.
+2. **Unclear tasks** -- Opus handles these interactively; they are not sent to a cheap
+   model.
+3. **Review + land** -- once every clear task passes both the mechanical gate and Opus's
+   own review of the diff, Opus shows you the diffs and the tokens saved; you approve
+   and it lands each.
+
+## The primitives
+
+`/router:go` drives these; you can also call them directly:
+
+```
+/router:dispatch <id>   # run one task on the quota-picked executor, to a verified diff
+/router:result <id>     # the per-check verifier report + log tail
+/router:land <id>       # merge a PASSED dispatch into your branch
+```
+
+Or from a shell (same thing): `router dispatch <id>`, `router land <id>`.
+
+## The task contract
+
+Opus writes one per subtask at `.router/tasks/<id>/task.yaml`:
 
 ```yaml
 schema_version: 1
-max_concurrent_workers: 1
-worker:
-  kind: codex            # or: workers: [{kind: codex}, {kind: claude}]  (fallback chain)
-scope:
-  forbidden_globs: [".router/**", "**/*.lock"]
-  test_globs: ["test/**"]        # tests can't be deleted/emptied to fake a pass
-  max_changed_lines: 100
-verification:
-  build:
-    - ["node", "--check", "src/slugify.mjs"]
-  test:
-    - ["node", "--test"]
+id: add-validators
+title: Add signup validators
+allowed_globs: ["src/validators/**"]   # the ONLY paths the executor may change
+max_changed_lines: 200
+verify: [["npm", "test"]]              # the mechanical gate; [] = diff/scope/secret only
+# worker: { kind: claude, model: sonnet }   # optional: pin an executor
 ```
 
-**Commit `policy.yaml`.** router reads it from the frozen `base_sha` git object (not
-your working tree), so a run cannot tamper with its own gates.
+`router new <id>` scaffolds this skeleton if you want to author one by hand.
 
-### 2. Create a task and write its contract
+## What each gate guarantees
 
-```sh
-router new slugify --title "Implement slugify()"
-```
+For a dispatched task, the diff must clear, in order:
 
-This scaffolds `.router/tasks/slugify/{task.yaml,TASK_CONTRACT.md}`. Edit them:
+| check | meaning |
+|-------|---------|
+| `diff_applies` | applies cleanly onto the base commit |
+| `scope`        | only `allowed_globs` changed, under the line cap, no test deletion |
+| `secret_scan`  | no leaked keys/secrets in the added lines |
+| `verify`       | the task's `verify` command(s) exit 0 (skipped if `verify: []`) |
 
-- `task.yaml` -- `allowed_globs` (the ONLY paths the executor may change),
-  `max_changed_lines`, and `build_ref`/`test_ref` pointing at the `verification`
-  entries in your policy.
-- `TASK_CONTRACT.md` -- the human-readable goal and definition of done handed to the
-  executor.
+Then the main session (Opus) reviews the diff for correctness/laziness. Both must pass
+before you land. `verify: []` means the mechanical gate only proves "applied, in scope,
+no secrets" -- give a real command to make PASS mean "your tests pass".
 
-Then commit them (`git add -A && git commit`).
+## Real-quota routing
 
-#### Shortcut: let claude draft the contract
-
-Instead of hand-writing step 2, `router plan "<goal>"` asks claude to propose a
-contract, validates it deterministically, and writes it at DRAFT for you to review:
-
-```sh
-router plan "implement slugify() in src/"        # writes .router/tasks/<id>/, stops at DRAFT
-# review it, then:
-router validate <id> && router queue <id> && router run <id>
-# or chain it in one shot once you trust the setup:
-router plan "implement slugify() in src/" --execute
-```
-
-claude only *proposes* the contract -- router rejects a malformed or over-broad
-proposal (an unknown build/test ref, a bare `**` scope, a glob matching no tracked
-file) before anything runs. The planner needs no file permissions; it just returns text.
-
-#### Multi-task dispatch
-
-A big goal may decompose into a batch of tasks. Each is labeled by the planner and
-gated deterministically by router:
-
-- **clear** tasks are materialized at DRAFT and dispatched; map them to a cheaper
-  executor with:
-
-  ```yaml
-  tiers:
-    clear: { kind: claude, model: sonnet }
-  ```
-
-- **unclear** tasks are NOT dispatched -- they come back as a handback list for the
-  orchestrating session to clarify or do directly.
-- **depends_on** between tasks is a hard gate: `router run` refuses a task until its
-  dependencies are MERGED. `router ready` lists what can run now; drive the batch
-  wave by wave (run ready tasks in parallel, review + merge, check `ready` again).
-- When the whole batch is merged, run your real build/tests once on the integrated
-  result (in your real checkout) -- that is the integration gate; worktrees only run
-  the environment-free checks.
-
-### 3. Validate, queue, run
-
-```sh
-router validate slugify   # freezes base_sha = current HEAD, hashes the contract
-router queue slugify
-router run slugify         # spawns a detached, self-supervised worker
-```
-
-The worker runs the executor in a fresh git worktree under `.router/worktrees/`,
-never in your checkout. It is supervised for wall-timeout, stalls, and crashes.
-
-### 4. Watch, inspect, merge
-
-```sh
-router status slugify      # poll until PASSED or FAILED
-router result slugify      # the verifier report (per check)
-router merge slugify       # only allowed from PASSED; fast-forwards the diff in
-```
-
-The verifier runs these checks; any failure => FAILED, nothing merged:
-
-| check | what it enforces |
-|-------|------------------|
-| `diff_applies`  | the diff applies cleanly to `base_sha` |
-| `scope`         | only `allowed_globs` changed, under `max_changed_lines`, no test deletion |
-| `secret_scan`   | no leaked keys/secrets in the added lines |
-| `build`         | your `build` command exits 0 |
-| `test`          | your `test` command exits 0 |
-| `contract_hash` | the frozen contract was not altered mid-run |
-
-## Resilience and safety (optional, all opt-in)
-
-Add to `policy.yaml` as needed:
-
-```yaml
-workers: [{kind: codex}, {kind: claude}]   # fall over to claude on a quota/rate-limit hit
-escalation:
-  max_attempts: 2                          # FAILED -> retry -> rescue -> NEEDS_REPLAN
-  rescue_worker: {kind: claude, model: claude-sonnet-5}
-budget_caps: {max_cost_usd: 1.0}           # refuse new runs once spend passes a cap
-```
-
-- **Budget-aware routing:** give a worker a `budget` and router starts each run with
-  the executor that has window headroom; see `router routing`. Details in
-  `docs/budget-aware-routing.md`.
-- **Approval gate:** tasks whose `allowed_globs` touch risky paths (lockfiles,
-  `.github/**`, migrations) require `router approve <id>` or `router merge --approve`.
-- **Housekeeping:** `router gc` rotates `metrics.jsonl` and removes worktrees for
-  terminal tasks. `router stats` reports spend and savings.
-
-## Verified
-
-The deterministic half of this loop (init -> validate -> queue -> run -> verify ->
-merge, with the executor stubbed) is exercised by `examples/minimal/` and the test
-suite. The executor step itself uses your real `codex`/`claude` CLI.
+router routes each task to the executor with more remaining quota. codex usage is read
+from `~/.codex/sessions`; for claude, point your statusline at
+`statusline/router-usage.mjs` (it snapshots usage to `.router/usage.json` and chains
+your existing statusline via `ROUTER_INNER_STATUSLINE`). Without the statusline, routing
+uses codex quota + a reactive 429 fallover -- still correct.

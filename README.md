@@ -1,28 +1,25 @@
 # router
 
-A Claude Code plugin that wraps an AI coding agent (the `codex` or `claude` CLI) in a
-deterministic pipeline. The agent writes its diff in an isolated git worktree; nothing
-reaches your branch until mechanical checks -- **build, tests, scope, secret scan** --
-all pass. You review and merge. The LLM only produces artifacts; the plugin owns every
-gate.
+A Claude Code plugin that routes coding subtasks to the cheapest capable model to save
+Opus tokens. You plan with the main session (Opus); it decomposes the plan, dispatches
+the clear subtasks to a cheaper executor (the `codex` or `claude` CLI) running in an
+isolated git worktree, mechanically verifies each diff, and reviews it; you approve and
+merge. The cheap models do the execution; Opus only plans, reviews, and merges.
 
-> **Status: beta (0.x).** Usable today; the policy schema and commands may still change
-> before 1.0.
+> **Status: beta (0.x).** Commands may still change before 1.0.
 
 ## With router vs. without
 
-|                        | Prompting the agent directly            | With router                                             |
-| ---------------------- | --------------------------------------- | ------------------------------------------------------- |
-| **Change scope**       | bounded only by the prompt              | enforced on the diff: allowed globs + changed-line cap  |
-| **Correctness**        | you check by hand afterward             | build + tests + scope + secret scan must pass to PASS   |
-| **Where edits land**   | your working tree, immediately          | an isolated worktree; your tree changes only on merge   |
-| **A failed attempt**   | you retry manually                      | escalation ladder: retry -> stronger model -> hand back |
-| **Quota / rate limit** | the run stalls                          | balances codex vs sonnet by real remaining quota, falls over on a hit |
-| **A runaway run**      | burns until you notice                  | wall timeout + stall watchdog + budget caps             |
-| **Secrets in a diff**  | can slip into a commit                  | scanned; a hit fails verification                       |
-| **Cost visibility**    | none                                    | `/router:stats`: tokens, spend, and savings             |
+|                        | Prompting the agent directly       | With router                                                    |
+| ---------------------- | ---------------------------------- | -------------------------------------------------------------- |
+| **Who executes**       | Opus (expensive)                   | the cheaper executor with more quota (codex / sonnet)          |
+| **Change scope**       | bounded only by the prompt         | enforced on the diff: allowed globs + changed-line cap         |
+| **Correctness**        | you check by hand                  | mechanical verify (your `verify` cmd + scope + secret scan)... |
+| **...and laziness**    | trust the model's word             | ...**plus** the main session reviews the diff for lazy/wrong work |
+| **Where edits land**   | your working tree, immediately     | an isolated worktree; your tree changes only on `land`         |
+| **Quota / rate limit** | the run stalls                     | balances codex vs claude by real remaining quota; 429 fallover |
 
-router **never auto-merges**. The mechanical gate decides PASS/FAIL; you decide merge.
+router **never auto-merges**. The gates decide PASS/FAIL; you decide land.
 
 ## Requirements
 
@@ -31,7 +28,9 @@ router **never auto-merges**. The mechanical gate decides PASS/FAIL; you decide 
 - One executor CLI, logged in: [codex](https://github.com/openai/codex) **or** `claude`.
   A plan subscription is fine -- **no API key needed**.
 
-The plugin ships a committed, dependency-free bundle -- **no `npm install`**.
+No install step, no config: `dist/router.js` is a committed, dependency-free bundle, and
+router auto-creates a gitignored `.router/` on first use. **No `init`, no policy file,
+no commit.**
 
 ## Install
 
@@ -43,77 +42,50 @@ From inside Claude Code:
 /reload-plugins
 ```
 
-You now have the `/router:*` slash commands, the `reviewer` / `summarizer` subagents,
-and a hook that reconciles crashed runs on session start.
+## Use it
 
-## Quickstart
-
-In the repo you want to work in:
+Just talk to Opus, plan the change together, then:
 
 ```
-/router:init                         # scaffolds .router/ with a ready-to-use policy
+/router:go
 ```
 
-Commit `.router/` (router reads the policy from git, not the working tree). It works
-out of the box. Then:
+`/router:go` executes the plan you both just agreed on, pausing at exactly **three
+points**: (1) confirm the decomposition into tasks, (2) handle any unclear tasks with
+you directly, (3) review all the verified diffs before merge. In between, for each clear
+task it: picks the cheaper executor with more remaining quota, runs it in an isolated
+worktree, mechanically verifies the diff, **and reviews it itself** (a cheap model can
+pass the tests while being lazy or wrong). You only decide and merge.
+
+Primitives (what `/router:go` drives, also usable directly):
 
 ```
-/router:go implement X in src/
+/router:dispatch <id>   # run one task on the quota-picked executor to a verified diff
+/router:land <id>       # merge a PASSED dispatch's diff into your branch
+/router:result <id>     # the per-check verifier report
 ```
 
-`/router:go` drives the whole loop and pauses at exactly **three points**: (1) confirm
-the decomposition plan, (2) handle any unclear tasks with you directly, (3) review all
-the verified diffs before merge. In between it runs the clear subtasks automatically on the
-**cheaper executor with more remaining quota** (codex vs sonnet), verifies each diff,
-and reports what it did and roughly what it saved. You only plan, decide, and merge.
+A task's contract lives in `.router/tasks/<id>/task.yaml` (`allowed_globs`, an optional
+`verify` command like `[["npm","test"]]`, and an optional `worker` to pin an executor).
+Opus authors these from your conversation; there is no global policy file.
 
-The primitives it uses are also available directly: `/router:dispatch <id>` (run one
-task synchronously on the quota-picked executor to a verified diff) and
-`/router:land <id>` (merge a PASSED dispatch). To make a PASS also mean "your build and
-tests pass", set your real commands under `verification` (see below).
+See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
+**[examples/minimal/](examples/minimal/)**.
 
-Prefer to write the contract yourself instead of having claude draft it? Use
-`/router:delegate <id> <description>`. Full walkthrough and the resilience/safety
-knobs are in **[docs/quickstart.md](docs/quickstart.md)**; a complete runnable task is
-in **[examples/minimal/](examples/minimal/)**.
+## How it works
 
-## `.router/policy.yaml`
-
-The per-repo rulebook, committed to git and read from the frozen `base_sha` (so a
-worker cannot loosen its own rules). Three parts:
-
-```yaml
-schema_version: 1
-worker: { kind: codex }              # or workers: [{kind: codex}, {kind: claude}] for fallback
-scope:
-  forbidden_globs: [".router/**", "**/*.lock"]
-  test_globs: ["test/**"]            # tests can't be deleted/emptied to fake a pass
-  max_changed_lines: 400
-verification:                        # the commands the gate runs (argv arrays, no shell)
-  build: [["npm", "run", "build"]]   # init ships a placeholder that always passes;
-  test:  [["npm", "test"]]           # replace with your real commands for a true gate
-```
-
-A task references these by `build_ref` / `test_ref`. Optional blocks add resilience and
-safety, and cost visibility: `escalation`, `budget_caps`, `secret_scan`, `routing`,
-`tiers` (which executor runs planner-labeled "clear" tasks, e.g. a cheaper model), and
-`pricing` (per-model USD, so `/router:stats` reports spend and savings). The `router
-init` template includes commented examples. See docs/quickstart.md.
-
-## How the gates work
-
-- **State is event-sourced.** Every transition goes through one lock-guarded
-  primitive; `events.jsonl` is the source of truth and `state.json` / `registry.json`
-  are rebuildable projections. A tampered log is rejected on fold.
-- **Scope is enforced on the diff, not the prompt.** `git diff` against the frozen
-  `base_sha` is checked against allowed/forbidden globs, a test-deletion guard, and a
-  changed-line cap.
-- **Commands are whitelisted.** Verification commands must match argv templates in
-  `policy.yaml`, read from the `base_sha` git object (not the worktree), so a worker
-  cannot loosen its own rules. Everything runs `shell:false`.
-- **Workers are supervised.** Each run is a detached process group with a wall
-  timeout, stall watchdog, and SIGTERM->SIGKILL escalation; its output goes to a log,
-  never the orchestrator's context.
+- **Task-scoped, no policy.** Each task carries its own scope and `verify` command;
+  there is no global `policy.yaml` and nothing is read from git. Executors default to
+  codex + claude.
+- **Isolated execution.** The executor runs in a fresh `git worktree` under `.router/`,
+  supervised with a wall timeout and a stall watchdog; its output never enters the
+  orchestrator's context. Your working tree is untouched until you `land`.
+- **Double verification.** Mechanical (deterministic): the diff must apply, stay within
+  `allowed_globs`, leak no secrets, and pass the task's `verify` command. Semantic: the
+  main session (Opus) then reviews the diff to catch a cheap model being lazy or wrong.
+- **Real-quota balancing.** codex usage is read from `~/.codex/sessions`, claude usage
+  from a statusline snapshot (`statusline/router-usage.mjs`, optional); the executor
+  with more headroom goes first, and a real 429 switches to the other.
 
 ## Development
 
@@ -124,9 +96,8 @@ npm run build     # bundle src/ -> dist/router.js (commit the result)
 ```
 
 `src/` is layered `domain -> core -> io -> app -> cli`. `core/` is pure (no fs,
-child_process, process, clock, or randomness -- enforced by `npm run check:deps`),
-which is what makes the gate logic unit-testable and keeps the LLM out of state
-transitions. Tests run on `node:test` against synthetic git-repo fixtures.
+child_process, process, clock, or randomness -- enforced by `npm run check:deps`), which
+keeps the gate logic deterministic and unit-testable.
 
 ## License
 
