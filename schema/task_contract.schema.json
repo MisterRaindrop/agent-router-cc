@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://agent-router-cc/schema/task_contract.schema.json",
-  "title": "router task.yaml (machine contract, frozen at VALIDATED)",
+  "title": "router task.yaml (machine contract)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -35,8 +35,6 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "max_changed_lines": { "type": "integer", "minimum": 1 },
-    "build_ref": { "type": "string", "minLength": 1 },
-    "test_ref": { "type": "string", "minLength": 1 },
     "verify": {
       "type": "array",
       "items": {
@@ -44,14 +42,6 @@
         "minItems": 1,
         "items": { "type": "string", "minLength": 1 }
       }
-    },
-    "verification_params": {
-      "type": "object",
-      "additionalProperties": { "type": "string" }
-    },
-    "depends_on": {
-      "type": "array",
-      "items": { "type": "string", "minLength": 1 }
     },
     "worker": {
       "type": "object",

@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Parse token usage and model from a codex `exec --json` event stream (captured
-// in the worker log), and derive cost. codex emits one `turn.completed` event per
-// turn carrying a `usage` object; we sum across turns. Cost is per-model when
-// `policy.pricing` is set, else a single ROUTER_PRICE_* env fallback, else null
-// (a ChatGPT-plan run has no per-token price).
-
-import type { Policy } from '../domain/types.ts';
+// in the worker log). codex emits one `turn.completed` event per turn carrying a
+// `usage` object; we sum across turns. Cost, when present, is the provider-reported
+// value (claude's `total_cost_usd`); a ChatGPT-plan run reports none.
 
 export interface Usage {
   input: number;
@@ -58,14 +55,6 @@ export function parseCodexLog(logText: string): ParsedLog {
   return { usage: found ? { input, output, cached } : null, model };
 }
 
-// Kept as thin wrappers for focused unit tests; the worker uses parseCodexLog once.
-export function parseCodexUsage(logText: string): Usage | null {
-  return parseCodexLog(logText).usage;
-}
-export function parseCodexModel(logText: string): string | null {
-  return parseCodexLog(logText).model;
-}
-
 /**
  * Parse the claude CLI `--output-format stream-json` stream: the final
  * `type:"result"` event carries `usage` (input/output tokens) and
@@ -101,42 +90,4 @@ export function parseClaudeLog(logText: string): ParsedLog {
 
 function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
-
-export interface Price {
-  input_per_mtok?: number;
-  output_per_mtok?: number;
-}
-
-/**
- * Resolve the per-token price for a run's model: policy.pricing[model], else
- * policy.pricing.default, else the ROUTER_PRICE_* env fallback. Returns null when
- * nothing is configured (plan mode -> cost stays null).
- */
-export function resolvePrice(
-  policy: Policy,
-  model: string | undefined,
-  env: NodeJS.ProcessEnv,
-): Price | null {
-  const table = policy.pricing;
-  if (table !== undefined) {
-    const hit = (model !== undefined ? table[model] : undefined) ?? table['default'];
-    if (hit !== undefined) return hit;
-  }
-  const pin = parseFloat(env.ROUTER_PRICE_INPUT_PER_MTOK ?? '');
-  const pout = parseFloat(env.ROUTER_PRICE_OUTPUT_PER_MTOK ?? '');
-  if (!Number.isFinite(pin) && !Number.isFinite(pout)) return null;
-  return {
-    ...(Number.isFinite(pin) ? { input_per_mtok: pin } : {}),
-    ...(Number.isFinite(pout) ? { output_per_mtok: pout } : {}),
-  };
-}
-
-/** USD cost from token counts at a resolved price. Null when no price. */
-export function estimateCostUsd(usage: Usage, price: Price | null): number | null {
-  if (price === null) return null;
-  const pin = price.input_per_mtok ?? 0;
-  const pout = price.output_per_mtok ?? 0;
-  if (pin === 0 && pout === 0) return null;
-  return pin * (usage.input / 1_000_000) + pout * (usage.output / 1_000_000);
 }

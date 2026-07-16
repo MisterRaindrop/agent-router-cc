@@ -6629,7 +6629,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
@@ -9718,27 +9718,13 @@ function routerPaths(routerDir) {
   return {
     root,
     repoRoot: dirname(root),
-    policy: join(root, "policy.yaml"),
-    registry: join(root, "registry.json"),
     metrics: join(root, "metrics.jsonl"),
-    metricsArchive: join(root, "metrics.jsonl.1"),
-    baseline: join(root, "baseline.jsonl"),
-    routing: join(root, "routing.jsonl"),
-    lockDir: join(root, ".lock"),
-    contextDir: join(root, "context"),
     tasksDir,
     worktreesDir: join(root, "worktrees"),
     taskDir,
     taskYaml: (id) => join(taskDir(id), "task.yaml"),
     contractMd: (id) => join(taskDir(id), "TASK_CONTRACT.md"),
-    planMd: (id) => join(taskDir(id), "PLAN.md"),
-    stateFile: (id) => join(taskDir(id), "state.json"),
-    eventsFile: (id) => join(taskDir(id), "events.jsonl"),
-    approval: (id) => join(taskDir(id), "approval.json"),
-    taskContextDir: (id) => join(taskDir(id), "context"),
     runsDir: (id) => join(taskDir(id), "runs"),
-    runDir,
-    lease: (id, run) => join(runDir(id, run), "lease.json"),
     heartbeat: (id, run) => join(runDir(id, run), "heartbeat"),
     resultJson: (id, run) => join(runDir(id, run), "result.json"),
     diffPatch: (id, run) => join(runDir(id, run), "diff.patch"),
@@ -9758,7 +9744,7 @@ function findRouterDir(startDir) {
 }
 
 // src/io/store.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2, readdirSync, rmSync, statSync as statSync2, writeFileSync } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "node:fs";
 
 // src/io/atomicWrite.ts
 import {
@@ -9837,7 +9823,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join6 } from "node:path";
 
@@ -9885,13 +9871,13 @@ function buildWorkerEnv(source, extraKeys = []) {
 }
 
 // src/io/quota.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3, readdirSync as readdirSync2, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync3, readdirSync, statSync as statSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 function walkJsonl(dir) {
   let out2 = [];
   let entries;
   try {
-    entries = readdirSync2(dir);
+    entries = readdirSync(dir);
   } catch {
     return out2;
   }
@@ -9899,7 +9885,7 @@ function walkJsonl(dir) {
     const p = join3(dir, name);
     let s;
     try {
-      s = statSync3(p);
+      s = statSync2(p);
     } catch {
       continue;
     }
@@ -9972,7 +9958,7 @@ function readClaudeQuota(usageJsonPath) {
 
 // src/io/supervisor.ts
 import { spawn } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync3, openSync as openSync2, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync as closeSync2, mkdirSync as mkdirSync3, openSync as openSync2, statSync as statSync3, writeFileSync } from "node:fs";
 import { dirname as dirname4, join as join4 } from "node:path";
 
 // src/io/signals.ts
@@ -9992,12 +9978,12 @@ function killProcessGroup(pgid, signal) {
 function activitySignal(logPath, watchDir) {
   let sig = 0;
   try {
-    sig += statSync4(logPath).size;
+    sig += statSync3(logPath).size;
   } catch {
   }
   for (const p of [watchDir, join4(watchDir, ".git")]) {
     try {
-      sig += Math.floor(statSync4(p).mtimeMs);
+      sig += Math.floor(statSync3(p).mtimeMs);
     } catch {
     }
   }
@@ -10072,7 +10058,7 @@ function superviseWorker(spec) {
       timers.push(
         setInterval(() => {
           try {
-            writeFileSync2(spec.heartbeatPath, `${Date.now()}
+            writeFileSync(spec.heartbeatPath, `${Date.now()}
 `);
           } catch {
           }
@@ -10093,7 +10079,7 @@ function superviseWorker(spec) {
         }, pollIntervalMs)
       );
       try {
-        writeFileSync2(spec.heartbeatPath, `${startedAtMs}
+        writeFileSync(spec.heartbeatPath, `${startedAtMs}
 `);
       } catch {
       }
@@ -10234,140 +10220,11 @@ import { readFileSync as readFileSync4 } from "node:fs";
 // src/domain/validate.ts
 var import_ajv = __toESM(require_ajv(), 1);
 
-// schema/policy.schema.json
-var policy_schema_default = {
-  $schema: "http://json-schema.org/draft-07/schema#",
-  $id: "https://agent-router-cc/schema/policy.schema.json",
-  title: "router policy.yaml (human-maintained, in git)",
-  type: "object",
-  additionalProperties: false,
-  required: ["schema_version", "scope", "verification"],
-  properties: {
-    schema_version: { const: 1 },
-    max_concurrent_workers: { type: "integer", minimum: 1 },
-    quota_error_pattern: { type: "string", minLength: 1 },
-    worker: { $ref: "#/definitions/worker" },
-    workers: {
-      type: "array",
-      minItems: 1,
-      items: { $ref: "#/definitions/worker" }
-    },
-    scope: {
-      type: "object",
-      additionalProperties: false,
-      required: ["max_changed_lines"],
-      properties: {
-        forbidden_globs: {
-          type: "array",
-          items: { type: "string", minLength: 1 }
-        },
-        test_globs: {
-          type: "array",
-          items: { type: "string", minLength: 1 }
-        },
-        max_changed_lines: { type: "integer", minimum: 1 }
-      }
-    },
-    verification: {
-      type: "object",
-      minProperties: 1,
-      additionalProperties: {
-        type: "array",
-        minItems: 1,
-        items: {
-          type: "array",
-          minItems: 1,
-          items: { type: "string", minLength: 1 }
-        }
-      }
-    },
-    escalation: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        max_attempts: { type: "integer", minimum: 1 },
-        rescue_worker: { $ref: "#/definitions/worker" }
-      }
-    },
-    budget_caps: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        max_cost_usd: { type: "number", minimum: 0 },
-        max_tokens: { type: "integer", minimum: 0 }
-      }
-    },
-    secret_scan: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        enabled: { type: "boolean" },
-        extra_patterns: {
-          type: "array",
-          items: { type: "string", minLength: 1 }
-        }
-      }
-    },
-    pricing: {
-      type: "object",
-      additionalProperties: {
-        type: "object",
-        additionalProperties: false,
-        required: ["input_per_mtok", "output_per_mtok"],
-        properties: {
-          input_per_mtok: { type: "number", minimum: 0 },
-          output_per_mtok: { type: "number", minimum: 0 }
-        }
-      }
-    },
-    routing: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        estimate_tokens_default: { type: "number", minimum: 0 },
-        calibration_alpha: { type: "number", minimum: 0, maximum: 1 },
-        calibration_margin: { type: "number", minimum: 0 }
-      }
-    },
-    tiers: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        clear: { $ref: "#/definitions/worker" }
-      }
-    }
-  },
-  definitions: {
-    worker: {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind"],
-      properties: {
-        kind: { enum: ["codex", "claude"] },
-        api_key_env: { type: "string", minLength: 1 },
-        model: { type: "string", minLength: 1 },
-        max_wall_minutes_default: { type: "integer", minimum: 1 },
-        stall_minutes: { type: "integer", minimum: 1 },
-        budget: {
-          type: "object",
-          additionalProperties: false,
-          required: ["window_minutes", "budget_tokens"],
-          properties: {
-            window_minutes: { type: "number", minimum: 1 },
-            budget_tokens: { type: "number", minimum: 1 },
-            switch_at: { type: "number", exclusiveMinimum: 0, maximum: 1 }
-          }
-        }
-      }
-    }
-  }
-};
-
 // schema/task_contract.schema.json
 var task_contract_schema_default = {
   $schema: "http://json-schema.org/draft-07/schema#",
   $id: "https://agent-router-cc/schema/task_contract.schema.json",
-  title: "router task.yaml (machine contract, frozen at VALIDATED)",
+  title: "router task.yaml (machine contract)",
   type: "object",
   additionalProperties: false,
   required: [
@@ -10401,8 +10258,6 @@ var task_contract_schema_default = {
       items: { type: "string", minLength: 1 }
     },
     max_changed_lines: { type: "integer", minimum: 1 },
-    build_ref: { type: "string", minLength: 1 },
-    test_ref: { type: "string", minLength: 1 },
     verify: {
       type: "array",
       items: {
@@ -10410,14 +10265,6 @@ var task_contract_schema_default = {
         minItems: 1,
         items: { type: "string", minLength: 1 }
       }
-    },
-    verification_params: {
-      type: "object",
-      additionalProperties: { type: "string" }
-    },
-    depends_on: {
-      type: "array",
-      items: { type: "string", minLength: 1 }
     },
     worker: {
       type: "object",
@@ -10436,7 +10283,6 @@ var task_contract_schema_default = {
 
 // src/domain/validate.ts
 var ajv = new import_ajv.Ajv({ allErrors: true });
-var validatePolicyFn = ajv.compile(policy_schema_default);
 var validateTaskFn = ajv.compile(task_contract_schema_default);
 function fmt(errors) {
   return (errors ?? []).map((e) => {
@@ -10478,7 +10324,7 @@ function loadTask(paths, id) {
 }
 
 // src/app/verifier.ts
-import { mkdtempSync, rmSync as rmSync2 } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join5 } from "node:path";
 
@@ -10659,7 +10505,7 @@ function verifyTask(req) {
     applies = applyCheck(tmpBase, patch);
   } finally {
     worktreeRemove(req.repoRoot, tmpBase);
-    rmSync2(tmpBase, { recursive: true, force: true });
+    rmSync(tmpBase, { recursive: true, force: true });
   }
   if (!applies) {
     checks.push(fail("diff_applies", "patch does not apply cleanly onto base_sha"));
@@ -10745,7 +10591,7 @@ async function dispatchTask(deps, id) {
   let switches = 0;
   for (let i = 0; i < order.length; i++) {
     used = order[i];
-    if (i > 0) writeFileSync3(logPath, "");
+    if (i > 0) writeFileSync2(logPath, "");
     const launcher2 = makeLauncher(used);
     const o = await superviseWorker({
       argv: launcher2.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
@@ -10790,7 +10636,7 @@ async function dispatchTask(deps, id) {
   };
   if (exitClass === "ok") {
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync3(paths.diffPatch(id, RUN), patch);
+    writeFileSync2(paths.diffPatch(id, RUN), patch);
     result2.diff_sha = createHash("sha256").update(patch).digest("hex");
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
@@ -10868,7 +10714,7 @@ function depsFor(ctx) {
     if (!existsSync6(d)) mkdirSync4(d, { recursive: true });
   }
   const gi = join7(paths.root, ".gitignore");
-  if (!existsSync6(gi)) writeFileSync4(gi, "*\n");
+  if (!existsSync6(gi)) writeFileSync3(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -10919,8 +10765,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync4(paths.taskDir(id), { recursive: true });
-  if (!existsSync6(paths.taskYaml(id))) writeFileSync4(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync6(paths.contractMd(id))) writeFileSync4(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync6(paths.taskYaml(id))) writeFileSync3(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync6(paths.contractMd(id))) writeFileSync3(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },

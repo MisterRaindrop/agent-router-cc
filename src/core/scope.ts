@@ -4,26 +4,10 @@
 import type {
   DiffEntry,
   EffectiveScope,
-  Policy,
   ScopeVerdict,
   ScopeViolation,
-  TaskYaml,
 } from '../domain/types.ts';
 import { matchAny } from './glob.ts';
-
-// Merge the frozen task contract with the (git-object) policy into the scope the
-// verifier actually enforces. forbidden = policy  union  task; test_globs from policy;
-// max_changed_lines capped by policy. PURE.
-export function buildEffectiveScope(task: TaskYaml, policy: Policy): EffectiveScope {
-  const policyMax = policy.scope.max_changed_lines;
-  const taskMax = task.max_changed_lines;
-  return {
-    allowed_globs: task.allowed_globs,
-    forbidden_globs: [...(policy.scope.forbidden_globs ?? []), ...(task.forbidden_globs ?? [])],
-    test_globs: policy.scope.test_globs ?? [],
-    max_changed_lines: taskMax !== undefined ? Math.min(taskMax, policyMax) : policyMax,
-  };
-}
 
 // Diff-side scope enforcement. This is the SOLE point where "what may this task
 // touch" is enforced - the worker prompt's scope is only guidance. PURE: consumes

@@ -32,8 +32,7 @@ title: demo
 base_sha: null
 max_wall_minutes: 1
 allowed_globs: ["src/**"]
-build_ref: build
-test_ref: test
+verify: []
 `;
 const CONTRACT = '# Contract\nEdit src.\n';
 
