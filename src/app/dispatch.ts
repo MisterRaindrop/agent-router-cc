@@ -6,10 +6,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { ExecutorQuota, ExitClass, MetricRecord, Policy, RunResult, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import { reclassifyQuota } from '../core/exitTaxonomy.ts';
-import { hashContract } from '../core/contractHash.ts';
 import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeRemove, deleteBranch } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
@@ -17,10 +16,9 @@ import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
 import { makeLauncher } from './codexLauncher.ts';
-import { loadPolicyFromGit } from './policyLoad.ts';
 import { loadTask } from './taskLoad.ts';
-import { estimateCostUsd, parseCodexLog, resolvePrice, type ParsedLog } from './usage.ts';
-import { verify } from './verifier.ts';
+import { parseCodexLog, type ParsedLog } from './usage.ts';
+import { verifyTask } from './verifier.ts';
 
 // The synchronous dispatch driver. Runs ONE clear task to a verified diff in the
 // foreground -- no state machine, no lock, no detached supervisor spine. Picks the
@@ -57,11 +55,9 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   const { paths, clock } = deps;
   const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
   const { task, contractMdText } = loadTask(paths, id);
-  const taskYamlText = readFileSync(paths.taskYaml(id), 'utf8');
-  const contractHash = hashContract(taskYamlText, contractMdText);
-  const policy = loadPolicyFromGit(paths, baseSha);
-  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
-  if (workers.length === 0) throw new Error(`task ${id}: policy defines no worker/workers`);
+  // Policy-free: the task carries its own executor pin, scope, and verify command.
+  // Executors default to codex + claude (quota-balanced) unless the task pins one.
+  const workers: WorkerPolicy[] = task.worker ? [task.worker] : [{ kind: 'codex' }, { kind: 'claude' }];
 
   const worktreeDir = paths.worktree(id, RUN);
   const branch = runBranch(id, RUN);
@@ -96,7 +92,7 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
       stallMs: (used.stall_minutes ?? 10) * 60_000,
     });
     outcome = o;
-    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath), policy.quota_error_pattern);
+    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath));
     if (exitClass === 'quota_exhausted' && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
@@ -110,7 +106,7 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   const launcher = makeLauncher(used);
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(safeRead(logPath));
   const model = parsed.model ?? used.model;
-  const costUsd = parsed.costUsd ?? (parsed.usage !== null ? estimateCostUsd(parsed.usage, resolvePrice(policy, model, process.env)) : null);
+  const costUsd = parsed.costUsd ?? null; // provider-reported only (no policy pricing table)
 
   const result: RunResult = {
     run_id: RUN,
@@ -134,16 +130,15 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
     writeFileSync(paths.diffPatch(id, RUN), patch);
     result.diff_sha = createHash('sha256').update(patch).digest('hex');
-    result.verifier = verify({
+    result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: 'HEAD',
-      policy,
-      task,
-      frozenContractHash: contractHash,
-      taskYamlText,
-      contractMdText,
+      allowedGlobs: task.allowed_globs,
+      ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
+      ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
+      verify: task.verify ?? [],
       env,
     });
   }

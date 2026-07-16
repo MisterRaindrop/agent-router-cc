@@ -9,9 +9,7 @@
     "id",
     "title",
     "max_wall_minutes",
-    "allowed_globs",
-    "build_ref",
-    "test_ref"
+    "allowed_globs"
   ],
   "properties": {
     "schema_version": { "const": 1 },
@@ -39,6 +37,14 @@
     "max_changed_lines": { "type": "integer", "minimum": 1 },
     "build_ref": { "type": "string", "minLength": 1 },
     "test_ref": { "type": "string", "minLength": 1 },
+    "verify": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "string", "minLength": 1 }
+      }
+    },
     "verification_params": {
       "type": "object",
       "additionalProperties": { "type": "string" }

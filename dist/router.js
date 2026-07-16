@@ -9658,9 +9658,7 @@ var init_task_contract_schema = __esm({
         "id",
         "title",
         "max_wall_minutes",
-        "allowed_globs",
-        "build_ref",
-        "test_ref"
+        "allowed_globs"
       ],
       properties: {
         schema_version: { const: 1 },
@@ -9688,6 +9686,14 @@ var init_task_contract_schema = __esm({
         max_changed_lines: { type: "integer", minimum: 1 },
         build_ref: { type: "string", minLength: 1 },
         test_ref: { type: "string", minLength: 1 },
+        verify: {
+          type: "array",
+          items: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string", minLength: 1 }
+          }
+        },
         verification_params: {
           type: "object",
           additionalProperties: { type: "string" }
@@ -11160,7 +11166,7 @@ function pass(id, detail) {
   return detail !== void 0 ? { id, ok: true, detail } : { id, ok: true };
 }
 function runRef(req, ref) {
-  const templates = req.policy.verification[ref];
+  const templates = ref !== void 0 ? req.policy.verification[ref] : void 0;
   if (templates === void 0 || templates.length === 0) {
     return { ok: false, detail: `no verification template for ref '${ref}'`, rc: null };
   }
@@ -11232,6 +11238,71 @@ function verify(req) {
   checks.push(pass("contract_hash"));
   return { result: "PASSED", checks, changed_lines: changedLines };
 }
+function verifyTask(req) {
+  const checks = [];
+  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
+  if (patch.trim() === "") {
+    checks.push(fail("diff_applies", "diff is empty - executor produced no committed change"));
+    return { result: "FAILED", checks };
+  }
+  const tmpBase = mkdtempSync(join7(tmpdir(), "router-verify-base-"));
+  let applies;
+  try {
+    worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
+    applies = applyCheck(tmpBase, patch);
+  } finally {
+    worktreeRemove(req.repoRoot, tmpBase);
+    rmSync3(tmpBase, { recursive: true, force: true });
+  }
+  if (!applies) {
+    checks.push(fail("diff_applies", "patch does not apply cleanly onto base_sha"));
+    return { result: "FAILED", checks };
+  }
+  checks.push(pass("diff_applies"));
+  const scope = {
+    allowed_globs: req.allowedGlobs,
+    forbidden_globs: req.forbiddenGlobs ?? [],
+    test_globs: DEFAULT_TEST_GLOBS,
+    max_changed_lines: req.maxChangedLines ?? DEFAULT_MAX_CHANGED_LINES
+  };
+  const verdict = evaluateScope(changes, scope);
+  if (!verdict.ok) {
+    checks.push(fail("scope", verdict.violations.map((v) => `${v.kind}:${v.path ?? ""}`).join(", ")));
+    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass("scope", `${verdict.changedLines} lines`));
+  const findings = scanSecrets(patch, req.secretExtraPatterns ?? []);
+  if (findings.length > 0) {
+    checks.push(fail("secret_scan", `likely secret(s): ${findings.map((f) => `${f.rule}@L${f.line}`).join(", ")}`));
+    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass("secret_scan"));
+  for (const [i, argv] of req.verify.entries()) {
+    if (argv.length === 0) continue;
+    const r = runCommand(argv, {
+      cwd: req.worktreeDir,
+      env: req.env,
+      ...req.buildTimeoutMs !== void 0 ? { timeoutMs: req.buildTimeoutMs } : {}
+    });
+    const label = req.verify.length > 1 ? `verify[${i}]` : "verify";
+    if (r.spawnError !== null) {
+      checks.push(fail(label, `spawn error: ${r.spawnError}`));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    if (r.timedOut) {
+      checks.push(fail(label, "timed out"));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    if (r.rc !== 0) {
+      checks.push(fail(label, `${argv.join(" ")} (rc ${r.rc})`, r.rc ?? void 0));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    checks.push(pass(label, `${argv.join(" ")} (rc 0)`));
+  }
+  return { result: "PASSED", checks, changed_lines: verdict.changedLines };
+}
+var DEFAULT_TEST_GLOBS, DEFAULT_MAX_CHANGED_LINES;
 var init_verifier = __esm({
   "src/app/verifier.ts"() {
     "use strict";
@@ -11241,6 +11312,8 @@ var init_verifier = __esm({
     init_secrets();
     init_git();
     init_proc();
+    DEFAULT_TEST_GLOBS = ["test/**", "tests/**", "**/*.test.*", "**/*_test.*"];
+    DEFAULT_MAX_CHANGED_LINES = 400;
   }
 });
 
@@ -12453,7 +12526,6 @@ function pickExecutor(quotas) {
 
 // src/app/dispatch.ts
 init_exitTaxonomy();
-init_contractHash();
 init_git();
 init_env();
 init_paths();
@@ -12547,7 +12619,6 @@ function readClaudeQuota(usageJsonPath) {
 // src/app/dispatch.ts
 init_store();
 init_supervisor();
-init_policyLoad();
 init_taskLoad();
 init_usage();
 init_verifier();
@@ -12570,11 +12641,7 @@ async function dispatchTask(deps, id) {
   const { paths, clock } = deps;
   const baseSha = resolveCommit(paths.repoRoot, "HEAD");
   const { task, contractMdText } = loadTask(paths, id);
-  const taskYamlText = readFileSync8(paths.taskYaml(id), "utf8");
-  const contractHash = hashContract(taskYamlText, contractMdText);
-  const policy = loadPolicyFromGit(paths, baseSha);
-  const workers = policy.workers ?? (policy.worker ? [policy.worker] : []);
-  if (workers.length === 0) throw new Error(`task ${id}: policy defines no worker/workers`);
+  const workers = task.worker ? [task.worker] : [{ kind: "codex" }, { kind: "claude" }];
   const worktreeDir = paths.worktree(id, RUN);
   const branch = runBranch(id, RUN);
   worktreeRemove(paths.repoRoot, worktreeDir);
@@ -12603,7 +12670,7 @@ async function dispatchTask(deps, id) {
       stallMs: (used.stall_minutes ?? 10) * 6e4
     });
     outcome = o;
-    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath), policy.quota_error_pattern);
+    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath));
     if (exitClass === "quota_exhausted" && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
@@ -12615,7 +12682,7 @@ async function dispatchTask(deps, id) {
   const launcher = makeLauncher(used);
   const parsed = (launcher.parseLog ?? parseCodexLog)(safeRead(logPath));
   const model = parsed.model ?? used.model;
-  const costUsd = parsed.costUsd ?? (parsed.usage !== null ? estimateCostUsd(parsed.usage, resolvePrice(policy, model, process.env)) : null);
+  const costUsd = parsed.costUsd ?? null;
   const result2 = {
     run_id: RUN,
     task_id: id,
@@ -12637,16 +12704,15 @@ async function dispatchTask(deps, id) {
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
     writeFileSync5(paths.diffPatch(id, RUN), patch);
     result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
-    result2.verifier = verify({
+    result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: "HEAD",
-      policy,
-      task,
-      frozenContractHash: contractHash,
-      taskYamlText,
-      contractMdText,
+      allowedGlobs: task.allowed_globs,
+      ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
+      ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
+      verify: task.verify ?? [],
       env
     });
   }
@@ -12711,11 +12777,14 @@ var CliError = class extends Error {
 // src/cli/commands.ts
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
-  const rd = explicit ?? findRouterDir(ctx.cwd);
-  if (rd === void 0 || rd === null || !existsSync8(rd)) {
-    throw new CliError("no .router found - run `router init` first", 3);
-  }
+  const found = explicit ?? findRouterDir(ctx.cwd);
+  const rd = found ?? join10(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
+  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
+    if (!existsSync8(d)) mkdirSync6(d, { recursive: true });
+  }
+  const gi = join10(paths.root, ".gitignore");
+  if (!existsSync8(gi)) writeFileSync8(gi, "*\n");
   return { deps: { paths, clock: systemClock }, paths };
 }
 function requireId(ctx) {
@@ -12723,55 +12792,6 @@ function requireId(ctx) {
   if (id === void 0 || id === "") throw new CliError("missing task id", 2);
   return id;
 }
-var POLICY_TEMPLATE = `schema_version: 1
-max_concurrent_workers: 1
-
-# Executor CLI. codex and claude are both plan-auth (no API key needed).
-worker:
-  kind: codex
-  stall_minutes: 10
-
-# What a task may change (enforced on the diff, after the run).
-scope:
-  forbidden_globs: [".router/**", "**/*.lock"]
-  test_globs: ["tests/**", "**/*_test.*", "**/*.test.*"]
-  max_changed_lines: 400
-
-# Commands the verifier runs. These defaults ALWAYS PASS (node is a requirement, so
-# they run anywhere) -- router works out of the box. But then a PASS only means the
-# diff applied, stayed in scope, and leaked no secrets. Replace with your project's
-# real commands to make PASS also mean "build + tests pass", e.g.:
-#   build: [["npm", "run", "build"]]
-#   test:  [["npm", "test"]]
-verification:
-  build:
-    - ["node", "-e", "process.exit(0)"]
-  test:
-    - ["node", "-e", "process.exit(0)"]
-
-# ---- Optional tuning (uncomment; all inert by default) -----------------------
-# Fallback chain + budget-aware routing (replaces the single 'worker' above): start
-# each run on the executor with quota headroom, fall over on a rate-limit hit.
-# workers:
-#   - kind: codex
-#     budget: { window_minutes: 300, budget_tokens: 4000000, switch_at: 0.9 }
-#   - kind: claude
-# routing:
-#   estimate_tokens_default: 40000
-#
-# Per-model USD prices (per million tokens). Fill these in and 'router stats' reports
-# real spend and savings; budget routing can then compare executors by cost.
-# pricing:
-#   default: { input_per_mtok: 3, output_per_mtok: 15 }
-#
-# Recover from failures: retry -> stronger model -> hand back to a human.
-# escalation:
-#   max_attempts: 2
-#   rescue_worker: { kind: claude }
-#
-# Hard ceilings per task -- refuse a new run once accumulated spend passes these.
-# budget_caps: { max_cost_usd: 1.0, max_tokens: 2000000 }
-`;
 var CONTRACT_TEMPLATE = (id, title) => `# ${title}
 
 task: ${id}
@@ -12790,36 +12810,33 @@ function taskTemplate(id, title) {
       schema_version: 1,
       id,
       title,
-      base_sha: null,
       max_wall_minutes: 30,
       allowed_globs: ["src/**"],
       forbidden_globs: [],
       max_changed_lines: 400,
-      build_ref: "build",
-      test_ref: "test",
-      verification_params: {}
+      verify: []
+      // e.g. [["npm","test"]]; empty = diff/scope/secret only
     },
     { lineWidth: 120 }
   );
 }
 var init = (ctx) => {
   const root = join10(ctx.cwd, ROUTER_DIR);
-  const force = flagBool(ctx.args.flags, "force");
   const paths = routerPaths(root);
   const created = [];
-  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir, paths.contextDir]) {
+  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
     if (!existsSync8(d)) {
       mkdirSync6(d, { recursive: true });
       created.push(d);
     }
   }
-  if (!existsSync8(paths.policy) || force) writeFileSync8(paths.policy, POLICY_TEMPLATE);
-  if (!existsSync8(paths.registry)) {
-    writeRegistry(paths, { schema_version: 1, rebuilt_at: systemClock.nowIso(), tasks: {} });
-  }
   const gi = join10(paths.root, ".gitignore");
-  if (!existsSync8(gi)) writeFileSync8(gi, "worktrees/\n");
-  emit(ctx.json, { ok: true, root: paths.root, created }, () => `initialized ${paths.root}`);
+  if (!existsSync8(gi)) writeFileSync8(gi, "*\n");
+  emit(
+    ctx.json,
+    { ok: true, root: paths.root, created },
+    () => `ready at ${paths.root} (optional; router auto-creates this on first use)`
+  );
   return 0;
 };
 var newTask = (ctx) => {
@@ -12857,7 +12874,7 @@ var validate = (ctx) => {
   const contractHash = hashContract(yamlText, contractText);
   const policy = loadPolicyFromGit(paths, baseSha);
   for (const ref of [frozenTask.build_ref, frozenTask.test_ref]) {
-    if (policy.verification[ref] === void 0) {
+    if (ref !== void 0 && policy.verification[ref] === void 0) {
       throw new CliError(`verification ref '${ref}' not in policy.yaml at base_sha`, 1);
     }
   }

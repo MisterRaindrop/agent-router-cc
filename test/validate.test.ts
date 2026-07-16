@@ -88,10 +88,10 @@ test('policy rejects non-codex worker kind', () => {
 
 test('task rejects missing required field', () => {
   const t = parse(GOOD_TASK) as Record<string, unknown>;
-  delete t.build_ref;
+  delete t.allowed_globs;
   const r = validateTaskYaml(t);
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('build_ref')));
+  assert.ok(r.errors.some((e) => e.includes('allowed_globs')));
 });
 
 test('task rejects bad id pattern', () => {
