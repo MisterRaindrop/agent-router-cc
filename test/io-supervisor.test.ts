@@ -7,7 +7,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { superviseWorker, type SuperviseSpec } from '../src/io/supervisor.ts';
-import { isProcessAlive } from '../src/io/lock.ts';
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const NODE = process.execPath;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

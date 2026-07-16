@@ -23,9 +23,8 @@ function guard(toolInput: Record<string, unknown>): number {
   }
 }
 
-test('hooks.json is valid JSON with SessionStart + PreToolUse', () => {
+test('hooks.json is valid JSON with the PreToolUse guard', () => {
   const h = JSON.parse(readFileSync(HOOKS_JSON, 'utf8'));
-  assert.ok(h.hooks.SessionStart);
   assert.ok(h.hooks.PreToolUse);
 });
 

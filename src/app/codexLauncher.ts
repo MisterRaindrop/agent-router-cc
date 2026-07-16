@@ -1,9 +1,24 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WorkerPolicy } from '../domain/types.ts';
-import type { WorkerContext, WorkerLauncher } from './worker.ts';
-import { parseClaudeLog, parseCodexLog } from './usage.ts';
+import type { TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import { parseClaudeLog, parseCodexLog, type ParsedLog } from './usage.ts';
+
+// A launcher turns a run context into the executor argv. Tests inject a fake that
+// edits files directly (ROUTER_CODEX_BIN / ROUTER_CLAUDE_BIN).
+export interface WorkerContext {
+  task: TaskYaml;
+  worktreeDir: string;
+  contractMdText: string;
+  planExists: boolean;
+}
+export interface WorkerLauncher {
+  kind: WorkerKind;
+  model?: string;
+  buildArgv(ctx: WorkerContext): string[];
+  /** Parse this executor's own log for usage/model/cost. Defaults to codex. */
+  parseLog?: (log: string) => ParsedLog;
+}
 
 // Builds the codex-cli invocation for one executor. Non-interactive `codex exec`,
 // pinned to the worktree, workspace-write sandbox, JSONL events (token usage +

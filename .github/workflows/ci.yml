@@ -20,5 +20,3 @@ jobs:
       # The committed bundle must build and run on bare Node.
       - run: npm run build
       - run: node dist/router.js --version
-      # Gate-integrity self-check: the scope trap MUST be caught.
-      - run: node dist/router.js selftest

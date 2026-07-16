@@ -7,10 +7,8 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fx from '../testkit/gitRepo.ts';
-import { resolveCommit } from '../src/io/git.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { hashContract } from '../src/core/contractHash.ts';
 import { orderByQuota, dispatchTask } from '../src/app/dispatch.ts';
 
 const NODE = process.execPath;
@@ -49,12 +47,10 @@ function setup(policy = POLICY): { repo: string; paths: ReturnType<typeof router
   return { repo, paths, deps: { paths, clock: fixedClock('2026-07-15T00:00:00.000Z') } };
 }
 
-function stageTask(paths: ReturnType<typeof routerPaths>, repo: string): void {
+function stageTask(paths: ReturnType<typeof routerPaths>): void {
   mkdirSync(paths.taskDir('t1'), { recursive: true });
   writeFileSync(paths.taskYaml('t1'), TASK_YAML);
   writeFileSync(paths.contractMd('t1'), CONTRACT);
-  void resolveCommit(repo, 'HEAD');
-  void hashContract(TASK_YAML, CONTRACT);
 }
 
 test('dispatchTask runs the executor synchronously to a PASSED verifier result', async () => {
@@ -64,7 +60,7 @@ test('dispatchTask runs the executor synchronously to a PASSED verifier result',
   process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
   process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions'); // force fallback (no quota data)
   try {
-    stageTask(paths, repo);
+    stageTask(paths);
     const result = await dispatchTask(deps, 't1');
     assert.equal(result.exit_class, 'ok');
     assert.equal(result.verifier?.result, 'PASSED');
