@@ -2,16 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { dump } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
+import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask } from '../app/dispatch.ts';
+import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
-import { flagStr, type ParsedArgs } from './args.ts';
+import { flagBool, flagStr, type ParsedArgs } from './args.ts';
 
 // The lean CLI: a synchronous task dispatcher. No state machine, no policy, no init
 // ceremony. Verbs: init (optional pre-scaffold), new (author a task skeleton),
@@ -161,12 +165,68 @@ const result: Handler = (ctx) => {
   return 0;
 };
 
+// Wire router's usage-snapshot wrapper into Claude Code's statusLine so the quota
+// balancer can read claude-side remaining quota. Chains any existing statusline.
+const setupStatusline: Handler = (ctx) => {
+  const settingsPath = flagStr(ctx.args.flags, 'settings') ?? join(homedir(), '.claude', 'settings.json');
+  const statuslinePath =
+    flagStr(ctx.args.flags, 'statusline') ??
+    resolve(dirname(fileURLToPath(import.meta.url)), '..', 'statusline', 'router-usage.mjs');
+  const dryRun = flagBool(ctx.args.flags, 'dry-run');
+
+  let settings: Record<string, unknown> = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as Record<string, unknown>;
+    } catch (e) {
+      throw new CliError(`cannot parse ${settingsPath}: ${(e as Error).message}`, 1);
+    }
+  }
+  const current = settings.statusLine as { command?: unknown } | undefined;
+  const existingCmd = typeof current?.command === 'string' ? current.command : undefined;
+  const plan = planStatusLine(existingCmd, statuslinePath);
+
+  const changed = plan.action !== 'already-configured';
+  if (changed && !dryRun) {
+    settings.statusLine = { type: 'command', command: plan.command };
+    writeJsonAtomic(settingsPath, settings);
+  }
+  const missing = !existsSync(statuslinePath);
+  emit(
+    ctx.json,
+    {
+      ok: true,
+      action: plan.action,
+      settings: settingsPath,
+      statusline: statuslinePath,
+      command: plan.command,
+      chained: plan.inner,
+      dry_run: dryRun,
+      statusline_exists: !missing,
+    },
+    () => {
+      const head =
+        plan.action === 'already-configured'
+          ? `already configured (${settingsPath})`
+          : dryRun
+            ? `would ${plan.action} statusLine in ${settingsPath}`
+            : `${plan.action} statusLine in ${settingsPath}`;
+      const chain = plan.inner ? `\n  chained your existing statusline: ${plan.inner}` : '';
+      const warn = missing ? `\n  WARNING: ${statuslinePath} not found (pass --statusline <path>)` : '';
+      const note = changed && !dryRun ? '\n  restart Claude Code (or reload) for it to take effect' : '';
+      return `${head}\n  command: ${plan.command}${chain}${warn}${note}`;
+    },
+  );
+  return 0;
+};
+
 export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
   dispatch,
   land,
   result,
+  'setup-statusline': setupStatusline,
 };
 
 export function versionText(): string {
@@ -181,7 +241,8 @@ export function helpText(): string {
     `  dispatch <id>          run the task on the quota-picked executor to a verified diff\n` +
     `  land <id>              merge a PASSED dispatch's diff\n` +
     `  result <id>            show the verifier report + log tail\n` +
+    `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --id, --title, --run, --router-dir\n`
+    `Flags: --json, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }

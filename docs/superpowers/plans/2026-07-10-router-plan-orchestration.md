@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Node 22 native type-stripping: relative imports MUST end in `.ts`; NO `enum`, NO parameter properties, NO `namespace`.
-- `tsconfig` has `erasableSyntaxOnly` and `exactOptionalPropertyTypes: true` — never pass `undefined` to an optional property; build objects with conditional spread `{...(v !== undefined ? { k: v } : {})}`.
+- `tsconfig` has `erasableSyntaxOnly` and `exactOptionalPropertyTypes: true` -- never pass `undefined` to an optional property; build objects with conditional spread `{...(v !== undefined ? { k: v } : {})}`.
 - Rings: `domain -> core -> io -> app -> cli`. `src/core/**` is PURE (no `fs`/`child_process`/`process`/`Date.now()`/`new Date()`/`Math.random()`, no importing io/app/cli), enforced by `scripts/check-deps.mjs`.
 - ASCII only, no non-ASCII characters anywhere. New files start with:
   `// Copyright 2026 The agent-router-cc Authors`
@@ -340,7 +340,7 @@ git commit -m "feat(plan): pure deterministic contract validation"
 
 ---
 
-### Task 3: io helpers — tracked files + claude planner spawn
+### Task 3: io helpers -- tracked files + claude planner spawn
 
 **Files:**
 - Modify: `src/io/git.ts` (add `listTrackedFiles`)
@@ -473,7 +473,7 @@ git commit -m "feat(plan): io helpers for tracked files + claude planner spawn"
 
 ---
 
-### Task 4: `app/plan.ts` — compose digest + claude + check + materialize
+### Task 4: `app/plan.ts` -- compose digest + claude + check + materialize
 
 **Files:**
 - Create: `src/app/plan.ts`
@@ -827,7 +827,7 @@ Note: `fakeCodex.mjs` edits `src/a.ts`; the `valid` fake proposal's `allowed_glo
 Run: `node --test test/cli-plan.test.ts`
 Expected: PASS all three subtests.
 
-- [ ] **Step 3: Document `plan` in `docs/quickstart.md`** — add a short section after step 2:
+- [ ] **Step 3: Document `plan` in `docs/quickstart.md`** -- add a short section after step 2:
 
 ```markdown
 ### Shortcut: let claude draft the contract
@@ -844,7 +844,7 @@ claude only proposes the contract; router rejects a malformed or over-broad
 proposal (e.g. a bare `**` scope) before anything runs.
 ```
 
-- [ ] **Step 4: Add `plan` to `README.md`** — one line in the command list mentioning `router plan "<goal>"` drafts + validates a contract via claude.
+- [ ] **Step 4: Add `plan` to `README.md`** -- one line in the command list mentioning `router plan "<goal>"` drafts + validates a contract via claude.
 
 - [ ] **Step 5: Full gate**
 
@@ -868,15 +868,15 @@ git commit -m "feat(plan): --execute e2e, docs, rebuilt bundle"
 ## Self-Review
 
 **Spec coverage:**
-- `router plan` verb, single task, static digest, stop-at-DRAFT + `--execute` — Tasks 4-5. ✓
-- Core invariant (claude only proposes; deterministic validation gates) — Task 2 (`parseAndCheck`), scope-broadness + ref + glob-match checks. ✓
-- Rings/purity (planPrompt/planCheck pure; io spawn/git; app compose; cli verb) — Tasks 1-5, purity check in Task 2 Step 5. ✓
-- Error handling (bad output -> exit 1 no task; missing claude -> error; truncation surfaced) — Task 4 `runPlan` + Task 5 handler + `truncated` in outcome. ✓
-- Testing (pure units + fake-bin app/CLI; no real claude) — Tasks 1-6. ✓
-- Out-of-scope (multi-task, retry, agentic) — not implemented. ✓
+- `router plan` verb, single task, static digest, stop-at-DRAFT + `--execute` -- Tasks 4-5. 
+- Core invariant (claude only proposes; deterministic validation gates) -- Task 2 (`parseAndCheck`), scope-broadness + ref + glob-match checks. 
+- Rings/purity (planPrompt/planCheck pure; io spawn/git; app compose; cli verb) -- Tasks 1-5, purity check in Task 2 Step 5. 
+- Error handling (bad output -> exit 1 no task; missing claude -> error; truncation surfaced) -- Task 4 `runPlan` + Task 5 handler + `truncated` in outcome. 
+- Testing (pure units + fake-bin app/CLI; no real claude) -- Tasks 1-6. 
+- Out-of-scope (multi-task, retry, agentic) -- not implemented. 
 
-**Placeholder scan:** no TBD/TODO; all code shown in full. ✓
+**Placeholder scan:** no TBD/TODO; all code shown in full. 
 
-**Type consistency:** `ProposedContract`/`RepoDigest`/`PlanCheckResult` defined in Task 1 and used identically in Tasks 2/4; `runPlan` signature in Task 4 matches its call in Task 5; `invokeClaudePlanner`/`listTrackedFiles` signatures in Task 3 match Task 4 usage; `matchGlob` (core/glob.ts) and `classifyRisk` (core/risk.ts) reused with their real signatures. ✓
+**Type consistency:** `ProposedContract`/`RepoDigest`/`PlanCheckResult` defined in Task 1 and used identically in Tasks 2/4; `runPlan` signature in Task 4 matches its call in Task 5; `invokeClaudePlanner`/`listTrackedFiles` signatures in Task 3 match Task 4 usage; `matchGlob` (core/glob.ts) and `classifyRisk` (core/risk.ts) reused with their real signatures. 
 
-**Deviation from spec:** chaining flag is `--execute` (not `--run`, which is an existing value flag) — noted in Global Constraints.
+**Deviation from spec:** chaining flag is `--execute` (not `--run`, which is an existing value flag) -- noted in Global Constraints.
