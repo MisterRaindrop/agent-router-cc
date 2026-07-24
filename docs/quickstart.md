@@ -43,6 +43,10 @@ points:
 
 Or from a shell (same thing): `router dispatch <id>`, `router land <id>`.
 
+Claude executors run with worktree-scoped `Read`/`Edit`/`Write` tools only; router runs
+the task's `verify` commands afterward in a separate minimal environment. Provider
+credentials and login-session metadata are not exposed to repository test commands.
+
 ## The task contract
 
 Opus writes one per subtask at `.router/tasks/<id>/task.yaml`:

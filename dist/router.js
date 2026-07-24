@@ -9361,8 +9361,8 @@ function sortKeyValue(key) {
 }
 function sortMappingItems(state, items) {
   if (!state.sortKeys) return items;
-  const copy = items.slice();
-  if (state.sortKeys === true) copy.sort((a, b) => {
+  const copy2 = items.slice();
+  if (state.sortKeys === true) copy2.sort((a, b) => {
     const x = sortKeyValue(a.key);
     const y = sortKeyValue(b.key);
     if (x < y) return -1;
@@ -9371,9 +9371,9 @@ function sortMappingItems(state, items) {
   });
   else {
     const fn = state.sortKeys;
-    copy.sort((a, b) => fn(sortKeyValue(a.key), sortKeyValue(b.key)));
+    copy2.sort((a, b) => fn(sortKeyValue(a.key), sortKeyValue(b.key)));
   }
-  return copy;
+  return copy2;
 }
 function writeBlockMapping(state, level, node, compact) {
   let result2 = "";
@@ -9549,7 +9549,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.1" : "0.0.0-dev";
+var VERSION = true ? "0.6.2" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9862,15 +9862,62 @@ function reclassifyQuota(exitClass, logText, pattern = DEFAULT_QUOTA_PATTERN) {
   if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
   return new RegExp(pattern, "i").test(logText) ? "quota_exhausted" : exitClass;
 }
+var DEFAULT_ENV_ERROR_PATTERN = "\\b(not logged in|please run /login|authentication[_ -]?failed|failed to authenticate|invalid api key|no api key found|oauth token expired)\\b";
+function reclassifyEnvironmentFailure(exitClass, logText, pattern = DEFAULT_ENV_ERROR_PATTERN) {
+  if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
+  return new RegExp(pattern, "i").test(logText) ? "env_error" : exitClass;
+}
 
 // src/io/env.ts
 var BASE_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM"];
+var EXECUTOR_CONTEXT_ALLOW = [
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  // macOS Keychain/session lookup used by native Claude Code.
+  "SECURITYSESSIONID",
+  "LaunchInstanceID",
+  "XPC_FLAGS",
+  "XPC_SERVICE_NAME",
+  "__CF_USER_TEXT_ENCODING",
+  // Explicit config/certificate locations and update policy.
+  "CLAUDE_CONFIG_DIR",
+  "XDG_CONFIG_HOME",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "DISABLE_AUTO_UPDATE"
+];
+var PROXY_URL_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+var NO_PROXY_KEYS = ["NO_PROXY", "no_proxy"];
+function copy(source, target, key) {
+  const value = source[key];
+  if (value !== void 0) target[key] = value;
+}
+function proxyHasCredentials(value) {
+  if (!value.includes("://")) return value.includes("@");
+  try {
+    const url = new URL(value);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return true;
+  }
+}
 function buildWorkerEnv(source, extraKeys = []) {
   const out2 = {};
-  for (const key of [...BASE_ALLOW, ...extraKeys]) {
-    const v = source[key];
-    if (v !== void 0) out2[key] = v;
+  for (const key of [...BASE_ALLOW, ...extraKeys]) copy(source, out2, key);
+  return out2;
+}
+function buildExecutorEnv(source, extraKeys = []) {
+  const out2 = buildWorkerEnv(source);
+  for (const key of EXECUTOR_CONTEXT_ALLOW) copy(source, out2, key);
+  for (const key of NO_PROXY_KEYS) copy(source, out2, key);
+  for (const key of PROXY_URL_KEYS) {
+    const value = source[key];
+    if (value !== void 0 && !proxyHasCredentials(value)) out2[key] = value;
   }
+  for (const key of extraKeys) copy(source, out2, key);
   return out2;
 }
 
@@ -10188,7 +10235,9 @@ function claudeLauncher(worker) {
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "bypassPermissions",
+        "acceptEdits",
+        "--tools",
+        "Read,Edit,Write",
         "--add-dir",
         ctx.worktreeDir
       ];
@@ -10585,8 +10634,7 @@ async function dispatchTask(deps, id) {
   worktreeRemove(paths.repoRoot, worktreeDir);
   deleteBranch(paths.repoRoot, branch);
   worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
-  const apiKeyEnvs = [...new Set(workers.map((w) => w.api_key_env).filter((v) => Boolean(v)))];
-  const env = buildWorkerEnv(process.env, apiKeyEnvs);
+  const verifyEnv = buildWorkerEnv(process.env);
   const logPath = paths.workerLog(id, RUN);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
@@ -10597,10 +10645,11 @@ async function dispatchTask(deps, id) {
     used = order[i];
     if (i > 0) writeFileSync2(logPath, "");
     const launcher2 = makeLauncher(used);
+    const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const o = await superviseWorker({
       argv: launcher2.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
       cwd: worktreeDir,
-      env,
+      env: executorEnv,
       logPath,
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
@@ -10608,8 +10657,9 @@ async function dispatchTask(deps, id) {
       stallMs: (used.stall_minutes ?? 10) * 6e4
     });
     outcome = o;
-    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath));
-    if (exitClass === "quota_exhausted" && i < order.length - 1) {
+    const log = safeRead(logPath);
+    exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    if ((exitClass === "quota_exhausted" || exitClass === "env_error") && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
       continue;
@@ -10651,7 +10701,7 @@ async function dispatchTask(deps, id) {
       ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
       ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
       verify: task.verify ?? [],
-      env
+      env: verifyEnv
     });
   }
   writeResult(paths, id, RUN, result2);

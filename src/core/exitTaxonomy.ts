@@ -50,3 +50,17 @@ export function reclassifyQuota(
   if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
   return new RegExp(pattern, 'i').test(logText) ? 'quota_exhausted' : exitClass;
 }
+
+// Provider authentication failures are environment/setup failures, not evidence
+// that the coding task was attempted and failed.
+export const DEFAULT_ENV_ERROR_PATTERN =
+  '\\b(not logged in|please run /login|authentication[_ -]?failed|failed to authenticate|invalid api key|no api key found|oauth token expired)\\b';
+
+export function reclassifyEnvironmentFailure(
+  exitClass: ExitClass,
+  logText: string,
+  pattern: string = DEFAULT_ENV_ERROR_PATTERN,
+): ExitClass {
+  if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
+  return new RegExp(pattern, 'i').test(logText) ? 'env_error' : exitClass;
+}

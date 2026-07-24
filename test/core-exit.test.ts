@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countsAsAttempt, reclassifyQuota } from '../src/core/exitTaxonomy.ts';
+import { countsAsAttempt, reclassifyEnvironmentFailure, reclassifyQuota } from '../src/core/exitTaxonomy.ts';
 
 test('countsAsAttempt: env_error and quota_exhausted do not count', () => {
   assert.equal(countsAsAttempt('ok'), true);
@@ -26,4 +26,12 @@ test('reclassifyQuota only touches task_failed/worker_crash when the log matches
 test('reclassifyQuota honors a custom pattern', () => {
   assert.equal(reclassifyQuota('task_failed', 'OUT OF CREDITS', 'out of credits'), 'quota_exhausted');
   assert.equal(reclassifyQuota('task_failed', 'OUT OF CREDITS'), 'task_failed'); // default pattern misses it
+});
+
+test('provider authentication failures are reclassified as env_error', () => {
+  assert.equal(reclassifyEnvironmentFailure('task_failed', 'Not logged in · Please run /login'), 'env_error');
+  assert.equal(reclassifyEnvironmentFailure('worker_crash', 'error=authentication_failed'), 'env_error');
+  assert.equal(reclassifyEnvironmentFailure('task_failed', 'Failed to authenticate. API Error: 403'), 'env_error');
+  assert.equal(reclassifyEnvironmentFailure('task_failed', 'AssertionError: expected 2'), 'task_failed');
+  assert.equal(reclassifyEnvironmentFailure('quota_exhausted', 'Not logged in'), 'quota_exhausted');
 });

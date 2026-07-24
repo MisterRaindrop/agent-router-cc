@@ -8,9 +8,9 @@ import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
-import { reclassifyQuota } from '../core/exitTaxonomy.ts';
+import { reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
 import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeRemove, deleteBranch } from '../io/git.ts';
-import { buildWorkerEnv } from '../io/env.ts';
+import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
@@ -65,12 +65,13 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   deleteBranch(paths.repoRoot, branch);
   worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
 
-  const apiKeyEnvs = [...new Set(workers.map((w) => w.api_key_env).filter((v): v is string => Boolean(v)))];
-  const env = buildWorkerEnv(process.env, apiKeyEnvs);
+  // Verification runs repository-controlled commands: never expose provider keys,
+  // proxy credentials, or login-session context to them.
+  const verifyEnv = buildWorkerEnv(process.env);
   const logPath = paths.workerLog(id, RUN);
 
-  // Executor chain, quota-ordered: try the executor with the most headroom first; on
-  // a real quota hit, reset the worktree and fall through to the next.
+  // Executor chain, quota-ordered: try the executor with the most headroom first;
+  // quota/auth/setup failures reset the worktree and fall through to the next.
   const { order } = orderByQuota(paths, workers);
   let used = order[0]!;
   let exitClass: ExitClass = 'task_failed';
@@ -81,10 +82,11 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     used = order[i]!;
     if (i > 0) writeFileSync(logPath, '');
     const launcher = makeLauncher(used);
+    const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const o = await superviseWorker({
       argv: launcher.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
       cwd: worktreeDir,
-      env,
+      env: executorEnv,
       logPath,
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
@@ -92,8 +94,9 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
       stallMs: (used.stall_minutes ?? 10) * 60_000,
     });
     outcome = o;
-    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath));
-    if (exitClass === 'quota_exhausted' && i < order.length - 1) {
+    const log = safeRead(logPath);
+    exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    if ((exitClass === 'quota_exhausted' || exitClass === 'env_error') && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
       continue;
@@ -139,7 +142,7 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
       ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
       ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
       verify: task.verify ?? [],
-      env,
+      env: verifyEnv,
     });
   }
 

@@ -79,7 +79,14 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   codex + claude.
 - **Isolated execution.** The executor runs in a fresh `git worktree` under `.router/`,
   supervised with a wall timeout and a stall watchdog; its output never enters the
-  orchestrator's context. Your working tree is untouched until you `land`.
+  orchestrator's context. Codex uses its `workspace-write` sandbox. Claude receives
+  only `Read`/`Edit`/`Write` tools in normal `acceptEdits` mode (no Bash and no
+  `bypassPermissions`), so access outside the worktree is denied. Your working tree
+  is untouched until you `land`.
+- **Credential separation.** Executor CLIs receive only the login-session/network
+  context needed for plan authentication plus an explicitly configured provider key.
+  Repository-controlled `verify` commands run with a separate minimal environment and
+  never inherit provider keys, proxy credentials, or login-session metadata.
 - **Double verification.** Mechanical (deterministic): the diff must apply, stay within
   `allowed_globs`, leak no secrets, and pass the task's `verify` command. Semantic: the
   main session (Opus) then reviews the diff to catch a cheap model being lazy or wrong.
