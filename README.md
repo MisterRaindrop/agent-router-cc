@@ -1,5 +1,7 @@
 # router
 
+**English** | [中文](README.zh-CN.md)
+
 A Claude Code plugin that routes coding subtasks to the cheapest capable model to save
 Opus tokens. You plan with the main session (Opus); it decomposes the plan, dispatches
 the clear subtasks to a cheaper executor (the `codex` or `claude` CLI) running in an
