@@ -44,6 +44,29 @@ From inside Claude Code:
 /reload-plugins
 ```
 
+## Update
+
+router ships as a committed, dependency-free bundle, so updating just means pulling the
+latest version from the marketplace. First refresh the catalog from the git repo (in
+Claude Code):
+
+```
+/plugin marketplace update agent-router-cc
+```
+
+Then update the installed plugin — open the `/plugin` menu and update **router** from the
+**Installed** tab, or run this in your terminal:
+
+```
+claude plugin update router@agent-router-cc
+```
+
+Finally reload so the new version is active in the current session:
+
+```
+/reload-plugins
+```
+
 ## Use it
 
 Just talk to Opus, plan the change together, then:
@@ -52,24 +75,49 @@ Just talk to Opus, plan the change together, then:
 /router:go
 ```
 
-`/router:go` executes the plan you both just agreed on, pausing at exactly **three
-points**: (1) confirm the decomposition into tasks, (2) handle any unclear tasks with
-you directly, (3) review all the verified diffs before merge. In between, for each clear
-task it: picks the cheaper executor with more remaining quota, runs it in an isolated
-worktree, mechanically verifies the diff, **and reviews it itself** (a cheap model can
-pass the tests while being lazy or wrong). You only decide and merge.
+`/router:go` is the **top-level command** — the one you normally type. It executes the
+plan you both just agreed on and drives all the lower-level commands for you. It pauses
+at exactly **three points**:
 
-Primitives (what `/router:go` drives, also usable directly):
+1. **Confirm the task breakdown.** Opus splits the plan into the smallest well-defined
+   subtasks and shows you each one (its file scope and target model) before anything runs.
+2. **Handle the unclear tasks.** Anything needing real judgment or design, Opus does
+   with you directly instead of handing it to a cheap model.
+3. **Approve before merge.** Nothing lands in your branch without your say-so.
+
+For each *clear* task in between, the work is split between two actors:
+
+- **The router CLI** runs the task on the quota-picked executor inside an isolated
+  worktree and **mechanically verifies** the resulting diff — this is the step that runs
+  your tests (the task's `verify` command), checks the diff stays within its allowed file
+  scope, and scans for secrets.
+- **Opus** then **reads and reviews the diff** for laziness or wrong work — hardcoded
+  values, skipped cases, misread intent (a cheap model can pass the tests while still
+  being wrong). **Opus does not run the tests itself**; that is the CLI's job above. If
+  the review is good, that task's worktree is merged back into your branch and Opus moves
+  on to the next task; if not, it re-dispatches with a sharper contract or takes it over.
+
+At the end Opus does a final acceptance pass over the combined result, and lands only on
+your approval. The cheap models do the execution; Opus only plans, reviews, and merges —
+that is the token saving.
+
+### The lower-level commands
+
+`/router:go` drives these for you, but you can also run them directly. Each takes a
+**task id** — the short name Opus assigns a subtask; its contract lives at
+`.router/tasks/<id>/task.yaml`.
 
 ```
-/router:dispatch <id>   # run one task on the quota-picked executor to a verified diff
-/router:land <id>       # merge a PASSED dispatch's diff into your branch
-/router:result <id>     # the per-check verifier report
+/router:dispatch <id>   # run task <id> once on the quota-picked executor, producing a
+                        #   mechanically-verified diff on an isolated worktree branch
+/router:land <id>       # merge task <id>'s verified diff into your working branch
+/router:result <id>     # show task <id>'s per-check verifier report and log tail
 ```
 
-A task's contract lives in `.router/tasks/<id>/task.yaml` (`allowed_globs`, an optional
-`verify` command like `[["npm","test"]]`, and an optional `worker` to pin an executor).
-Opus authors these from your conversation; there is no global policy file.
+A task's contract (`.router/tasks/<id>/task.yaml`) carries `allowed_globs` (its file
+scope), an optional `verify` command like `[["npm","test"]]`, and an optional `worker`
+to pin an executor. Opus authors these from your conversation; there is no global policy
+file.
 
 See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
 **[examples/minimal/](examples/minimal/)**.
