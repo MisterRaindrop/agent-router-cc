@@ -42,6 +42,28 @@ router **从不自动合并**。各道关卡决定 PASS/FAIL;是否 land 由你�
 /reload-plugins
 ```
 
+## 更新
+
+router 以一个已提交进仓库、无依赖的 bundle 发布,所以更新只是从 marketplace 拉取最新
+版本。先(在 Claude Code 中)从 git 仓库刷新目录:
+
+```
+/plugin marketplace update agent-router-cc
+```
+
+然后更新已安装的插件——打开 `/plugin` 菜单,在 **Installed** 标签页里更新 **router**,
+或者在终端里运行:
+
+```
+claude plugin update router@agent-router-cc
+```
+
+最后重新加载,让新版本在当前会话中生效:
+
+```
+/reload-plugins
+```
+
 ## 使用
 
 直接和 Opus 对话,一起把改动规划好,然后:
@@ -50,22 +72,43 @@ router **从不自动合并**。各道关卡决定 PASS/FAIL;是否 land 由你�
 /router:go
 ```
 
-`/router:go` 执行你俩刚商定的方案,并且只在**三个节点**暂停:(1) 确认任务分解,
-(2) 与你一起处理任何不清晰的任务,(3) 合并前复审所有已校验的 diff。在这之间,对每个
-明确的任务它会:挑选剩余配额更多、更便宜的执行器,在隔离 worktree 中运行它,机械校验
-diff,**并自行复审**(便宜的模型可能一边通过测试、一边偷懒或做错)。你只负责决策和合并。
+`/router:go` 是**上层命令**——通常你只需要敲这一个。它执行你俩刚商定的方案,并替你
+驱动下面所有的底层命令。它只在**三个节点**暂停:
 
-原语(`/router:go` 驱动的底层命令,也可直接使用):
+1. **确认任务分解。** Opus 把方案拆成最小的、定义清晰的子任务,在任何东西运行之前,
+   先把每个子任务(它的文件范围和目标模型)展示给你。
+2. **处理不清晰的任务。** 任何需要真正判断或设计的部分,Opus 会亲自和你一起做,而不是
+   丢给便宜的模型。
+3. **合并前先经你批准。** 没有你的同意,任何东西都不会 land 进你的分支。
+
+对于中间每个**明确**的任务,工作由两个角色分担:
+
+- **router CLI** 在隔离 worktree 中、用按配额挑选的执行器运行该任务,并对产出的 diff
+  做**机械校验**——正是这一步在跑你的测试(任务的 `verify` 命令),检查 diff 是否停留在
+  允许的文件范围内,并扫描是否泄漏密钥。
+- 随后 **Opus 读取并复审这个 diff**,识别偷懒或做错的地方——写死的值、跳过的用例、
+  误解的意图(便宜的模型可能一边通过测试、一边做错)。**Opus 自己并不跑测试**,那是上面
+  CLI 的活儿。如果复审没问题,该任务的 worktree 就被合并回你的分支,Opus 继续下一个任务;
+  如果有问题,就用更清晰的契约重新 dispatch,或由 Opus 亲自接手。
+
+到最后,Opus 会对合并后的整体结果做一次统一验收,并且只在**经你批准**后才 land。便宜的
+模型负责执行,Opus 只做规划、复审和合并——这就是省下的 token。
+
+### 底层命令
+
+`/router:go` 会替你驱动这些命令,但你也可以直接运行。每个命令都接受一个 **task id**
+——Opus 给子任务起的短名;它的契约位于 `.router/tasks/<id>/task.yaml`。
 
 ```
-/router:dispatch <id>   # 在按配额挑选的执行器上运行一个任务,直到得到已校验的 diff
-/router:land <id>       # 把一个 PASSED 的 dispatch 的 diff 合并进你的分支
-/router:result <id>     # 每项检查的校验报告
+/router:dispatch <id>   # 用按配额挑选的执行器把任务 <id> 运行一次,在隔离的 worktree
+                        #   分支上产出一个已机械校验的 diff
+/router:land <id>       # 把任务 <id> 已校验的 diff 合并进你的工作分支
+/router:result <id>     # 显示任务 <id> 的逐项校验报告和日志末尾
 ```
 
-任务契约位于 `.router/tasks/<id>/task.yaml`(`allowed_globs`、可选的 `verify` 命令,
-如 `[["npm","test"]]`,以及可选的 `worker` 用于指定执行器)。这些由 Opus 从你们的对话中
-生成;没有全局策略文件。
+任务契约(`.router/tasks/<id>/task.yaml`)自带 `allowed_globs`(文件范围)、可选的
+`verify` 命令(如 `[["npm","test"]]`),以及可选的 `worker`(用于指定执行器)。这些由
+Opus 从你们的对话中生成;没有全局策略文件。
 
 参见 **[docs/quickstart.md](docs/quickstart.md)**,以及
 **[examples/minimal/](examples/minimal/)** 中一个可运行的任务。
