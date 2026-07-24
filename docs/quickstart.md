@@ -1,9 +1,10 @@
 # Quickstart
 
 router routes coding subtasks to the cheapest capable model to save Opus tokens. You
-plan with Opus; it dispatches the clear subtasks to a cheaper executor, verifies and
-reviews them; you approve and merge. There is no `init`, no policy file, and no commit
-step -- router auto-creates a gitignored `.router/` on first use.
+plan with Opus; it dispatches the clear subtasks to a cheaper executor, gates each diff
+(scope + secrets), then reviews it and verifies the build/tests in your real environment;
+you approve and merge. There is no `init`, no policy file, and no commit step -- router
+auto-creates a gitignored `.router/` on first use.
 
 ## Prerequisites
 
@@ -23,13 +24,14 @@ Plan the change with Opus in normal conversation, then:
 Opus decomposes the plan you agreed on into tasks and drives them, pausing at three
 points:
 
-1. **Confirm the plan** -- Opus shows each clear task (its scope + `verify` command) and
-   which tasks are unclear (it will do those with you directly). You say go.
+1. **Confirm the plan** -- Opus shows each clear task (its scope, and that it carries its
+   own tests) and which tasks are unclear (it will do those with you directly). You say go.
 2. **Unclear tasks** -- Opus handles these interactively; they are not sent to a cheap
    model.
-3. **Review + land** -- once every clear task passes both the mechanical gate and Opus's
-   own review of the diff, Opus shows you the diffs and the tokens saved; you approve
-   and it lands each.
+3. **Review + land** -- Opus reviews each diff (and verifies anything risky in your real
+   environment as it goes), then runs a mandatory full-chain CI in your real environment
+   before reporting done; it shows you the diffs and the tokens saved, and you approve
+   each land.
 
 ## The primitives
 
@@ -43,9 +45,9 @@ points:
 
 Or from a shell (same thing): `router dispatch <id>`, `router land <id>`.
 
-Claude executors run with worktree-scoped `Read`/`Edit`/`Write` tools only; router runs
-the task's `verify` commands afterward in a separate minimal environment. Provider
-credentials and login-session metadata are not exposed to repository test commands.
+Claude executors run with worktree-scoped `Read`/`Edit`/`Write` tools only. The CLI
+applies environment-free gates to the diff (applies + scope + secrets); the real
+build/tests are run by Opus in your actual environment, not by the CLI.
 
 ## The task contract
 
@@ -57,26 +59,31 @@ id: add-validators
 title: Add signup validators
 allowed_globs: ["src/validators/**"]   # the ONLY paths the executor may change
 max_changed_lines: 200
-verify: [["npm", "test"]]              # the mechanical gate; [] = diff/scope/secret only
+verify: []                             # usually empty -- Opus runs the real build/tests
+# verify: [["npm", "test"]]            # optional: also run this in the CLI's minimal env
 # worker: { kind: claude, model: sonnet }   # optional: pin an executor
 ```
 
-`router new <id>` scaffolds this skeleton if you want to author one by hand.
+`router new <id>` scaffolds this skeleton if you want to author one by hand. Under the
+Opus-driven flow you leave `verify: []`; the real build/tests happen in your environment.
 
 ## What each gate guarantees
 
-For a dispatched task, the diff must clear, in order:
+A dispatched diff must clear the CLI's environment-free gates, in order:
 
 | check | meaning |
 |-------|---------|
 | `diff_applies` | applies cleanly onto the base commit |
 | `scope`        | only `allowed_globs` changed, under the line cap, no test deletion |
 | `secret_scan`  | no leaked keys/secrets in the added lines |
-| `verify`       | the task's `verify` command(s) exit 0 (skipped if `verify: []`) |
+| `verify`       | optional: any `verify` command(s) exit 0 (skipped when `verify: []`) |
 
-Then the main session (Opus) reviews the diff for correctness/laziness. Both must pass
-before you land. `verify: []` means the mechanical gate only proves "applied, in scope,
-no secrets" -- give a real command to make PASS mean "your tests pass".
+These are the deterministic guarantees a cheap model can't fake. **The real build/tests
+are Opus's job**, run in your actual environment (Docker and all): risk-driven per task,
+and always as a mandatory full-chain gate before "done". Opus also reviews every diff for
+correctness/laziness and reads the full test output itself -- a cheap model never decides
+its own pass/fail. Leave `verify: []` unless you want the CLI to also run a quick
+environment-free check.
 
 ## Real-quota routing
 
