@@ -50,10 +50,11 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunch
   };
 }
 
-// The claude CLI as a headless executor: `claude -p ... --output-format stream-json`
-// with permissions bypassed (safe: isolated worktree + diff-scope gate, same as
-// codex workspace-write). Plan-auth via ~/.claude, no API key. ROUTER_CLAUDE_BIN
-// overrides the binary (tests). Cost comes from the stream's total_cost_usd.
+// The claude CLI as a headless executor. It gets only Read/Edit/Write tools and
+// normal edit-acceptance permissions: reads outside the worktree are denied, and
+// it has no Bash escape hatch. Router runs verification commands itself afterward.
+// Plan-auth comes from the user's Claude session; ROUTER_CLAUDE_BIN overrides the
+// binary in tests. Cost comes from the stream's total_cost_usd.
 export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLauncher {
   const bin = process.env.ROUTER_CLAUDE_BIN ?? 'claude';
   const model = worker.model;
@@ -70,7 +71,9 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunc
         'stream-json',
         '--verbose',
         '--permission-mode',
-        'bypassPermissions',
+        'acceptEdits',
+        '--tools',
+        'Read,Edit,Write',
         '--add-dir',
         ctx.worktreeDir,
       ];

@@ -13,6 +13,8 @@ import { orderByQuota, dispatchTask } from '../src/app/dispatch.ts';
 
 const NODE = process.execPath;
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
+const FAKE_CLAUDE = fileURLToPath(new URL('../testkit/fakeClaude.mjs', import.meta.url));
+const FAKE_ENV = fileURLToPath(new URL('../testkit/fakeExecutorEnv.mjs', import.meta.url));
 
 const POLICY = `schema_version: 1
 worker:
@@ -46,9 +48,9 @@ function setup(policy = POLICY): { repo: string; paths: ReturnType<typeof router
   return { repo, paths, deps: { paths, clock: fixedClock('2026-07-15T00:00:00.000Z') } };
 }
 
-function stageTask(paths: ReturnType<typeof routerPaths>): void {
+function stageTask(paths: ReturnType<typeof routerPaths>, taskYaml = TASK_YAML): void {
   mkdirSync(paths.taskDir('t1'), { recursive: true });
-  writeFileSync(paths.taskYaml('t1'), TASK_YAML);
+  writeFileSync(paths.taskYaml('t1'), taskYaml);
   writeFileSync(paths.contractMd('t1'), CONTRACT);
 }
 
@@ -70,6 +72,62 @@ test('dispatchTask runs the executor synchronously to a PASSED verifier result',
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatch falls back when the first executor has an environment error', async () => {
+  chmodSync(FAKE_CLAUDE, 0o755);
+  const { repo, paths, deps } = setup();
+  const prevCodex = process.env.ROUTER_CODEX_BIN;
+  const prevClaude = process.env.ROUTER_CLAUDE_BIN;
+  process.env.ROUTER_CODEX_BIN = 'router-no-such-codex-binary';
+  process.env.ROUTER_CLAUDE_BIN = FAKE_CLAUDE;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.verifier?.result, 'PASSED');
+    assert.equal(result.worker.kind, 'claude');
+    assert.equal(result.executor_switches, 1);
+  } finally {
+    if (prevCodex === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prevCodex;
+    if (prevClaude === undefined) delete process.env.ROUTER_CLAUDE_BIN;
+    else process.env.ROUTER_CLAUDE_BIN = prevClaude;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+test('explicit executor key is not exposed to repository verification commands', async () => {
+  chmodSync(FAKE_ENV, 0o755);
+  const { repo, paths, deps } = setup();
+  const prevBin = process.env.ROUTER_CODEX_BIN;
+  const prevKey = process.env.ROUTER_TEST_API_KEY;
+  process.env.ROUTER_CODEX_BIN = FAKE_ENV;
+  process.env.ROUTER_TEST_API_KEY = 'executor-secret';
+  const task = `schema_version: 1
+id: t1
+title: demo
+base_sha: null
+max_wall_minutes: 1
+allowed_globs: ["src/**"]
+worker: {kind: codex, api_key_env: ROUTER_TEST_API_KEY}
+verify:
+  - [${JSON.stringify(NODE)}, "-e", "process.exit(process.env.ROUTER_TEST_API_KEY ? 9 : 0)"]
+`;
+  try {
+    stageTask(paths, task);
+    const result = await dispatchTask(deps, 't1');
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.verifier?.result, 'PASSED');
+  } finally {
+    if (prevBin === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prevBin;
+    if (prevKey === undefined) delete process.env.ROUTER_TEST_API_KEY;
+    else process.env.ROUTER_TEST_API_KEY = prevKey;
     fx.cleanup(repo);
   }
 });
