@@ -6,7 +6,9 @@
 // .router/. The deterministic CLI is the ONLY writer of state - an agent editing
 // state.json / events.jsonl / registry.json etc. would corrupt the source of
 // truth. Human/agent-editable contract files (task.yaml, TASK_CONTRACT.md,
-// PLAN.md, policy.yaml) are allowed. Exit 2 blocks the tool call.
+// PLAN.md, policy.yaml) are allowed, and so is everything under
+// .router/worktrees/ (isolated repo checkouts the executor legitimately edits -
+// the working copy, not router state). Exit 2 blocks the tool call.
 import { readFileSync } from 'node:fs';
 
 let raw = '';
@@ -29,6 +31,13 @@ if (target === '') process.exit(0);
 
 const inRouter = target.startsWith('.router/') || target.includes('/.router/');
 if (!inRouter) process.exit(0);
+
+// Worktrees under .router/worktrees/ are isolated repo checkouts that executors
+// legitimately edit - they are the working copy, not router-managed state. Allow
+// them; only real state files elsewhere under .router/ (e.g. .router/tasks/**)
+// are protected. Without this, dispatch fails because the worktree itself lives
+// under .router/, so every executor Write to its own checkout is blocked.
+if (target.startsWith('.router/worktrees/') || target.includes('/.router/worktrees/')) process.exit(0);
 
 const EDITABLE = new Set(['task.yaml', 'TASK_CONTRACT.md', 'PLAN.md', 'policy.yaml']);
 const base = target.split('/').pop() ?? '';

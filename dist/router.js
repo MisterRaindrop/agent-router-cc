@@ -9549,7 +9549,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.2" : "0.0.0-dev";
+var VERSION = true ? "0.6.3" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
