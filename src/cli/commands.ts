@@ -13,7 +13,7 @@ import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.t
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, resumeTask } from '../app/dispatch.ts';
-import { buildUsageReport, renderUsage } from '../app/usageReport.ts';
+import { buildUsageReport, explainSavingsText, renderUsage } from '../app/usageReport.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -237,7 +237,10 @@ const usage: Handler = (ctx) => {
   const { paths, clock } = depsFor(ctx);
   const all = flagBool(ctx.args.flags, 'all');
   const report = buildUsageReport(paths, clock.nowIso(), { all });
-  emit(ctx.json, { ok: true, usage: report }, () => renderUsage(report));
+  emit(ctx.json, { ok: true, usage: report }, () => {
+    const body = renderUsage(report);
+    return flagBool(ctx.args.flags, 'explain-savings') ? `${body}\n\n${explainSavingsText(report.baselineModel)}` : body;
+  });
   return 0;
 };
 

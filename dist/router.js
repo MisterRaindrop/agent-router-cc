@@ -6571,7 +6571,7 @@ var require_ajv = __commonJS({
 });
 
 // src/cli/args.ts
-var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run", "all"]);
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run", "all", "explain-savings"]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "id",
   "title",
@@ -9550,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.4" : "0.0.0-dev";
+var VERSION = true ? "0.6.5" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -10907,6 +10907,10 @@ function deriveCost(model, tokensIn, tokensOut) {
   if (p === null) return null;
   return tokensIn / 1e6 * p.inPerMTok + tokensOut / 1e6 * p.outPerMTok;
 }
+var STRONG_BASELINE_MODEL = "opus";
+function deriveBaselineCost(tokensIn, tokensOut) {
+  return deriveCost(STRONG_BASELINE_MODEL, tokensIn, tokensOut) ?? 0;
+}
 
 // src/app/usageReport.ts
 var DEFAULT_DAYS = 7;
@@ -10930,6 +10934,8 @@ function buildUsageReport(paths, nowIso, opts = {}) {
       costUsd = d;
       costSource = d === null ? "none" : "derived";
     }
+    const actualDerived = deriveCost(r.model, tokensIn, tokensOut);
+    const savingsUsd = actualDerived === null ? null : Math.max(0, deriveBaselineCost(tokensIn, tokensOut) - actualDerived);
     rows.push({
       ts: r.ts,
       taskId: r.task_id,
@@ -10940,7 +10946,8 @@ function buildUsageReport(paths, nowIso, opts = {}) {
       tokensTotal: tokensIn + tokensOut,
       costUsd,
       costSource,
-      verifier: r.verifier_result
+      verifier: r.verifier_result,
+      savingsUsd
     });
   }
   rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
@@ -10948,12 +10955,16 @@ function buildUsageReport(paths, nowIso, opts = {}) {
   let totalTokensOut = 0;
   let totalCostUsd = 0;
   let costComplete = true;
+  let estimatedSavingsUsd = 0;
+  let savingsComplete = true;
   const byExec = /* @__PURE__ */ new Map();
   for (const row of rows) {
     totalTokensIn += row.tokensIn;
     totalTokensOut += row.tokensOut;
     if (row.costUsd === null) costComplete = false;
     else totalCostUsd += row.costUsd;
+    if (row.savingsUsd === null) savingsComplete = false;
+    else estimatedSavingsUsd += row.savingsUsd;
     const e = byExec.get(row.executor) ?? { executor: row.executor, dispatches: 0, tokensTotal: 0, costUsd: 0, costComplete: true };
     e.dispatches += 1;
     e.tokensTotal += row.tokensTotal;
@@ -10969,8 +10980,24 @@ function buildUsageReport(paths, nowIso, opts = {}) {
     totalTokens: totalTokensIn + totalTokensOut,
     totalCostUsd,
     costComplete,
-    byExecutor: [...byExec.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
+    byExecutor: [...byExec.values()].sort((a, b) => b.tokensTotal - a.tokensTotal),
+    estimatedSavingsUsd,
+    savingsComplete,
+    baselineModel: STRONG_BASELINE_MODEL
   };
+}
+function explainSavingsText(baselineModel) {
+  return [
+    `Estimated savings = (each dispatch's tokens re-priced at the "${baselineModel}" baseline)`,
+    `                    minus (the same tokens at that dispatch's own model rate).`,
+    "It is an ESTIMATE at public list prices, not a measurement. Caveats:",
+    `  1. Assumes the ${baselineModel} baseline would use the SAME token counts (a stronger`,
+    "     model often needs fewer turns; a weaker one may retry and use more).",
+    "  2. Excludes your own review/verify cost, which a baseline-only run would not incur.",
+    "  3. List prices only -- real bills differ (discounts; plan auth is not billed per token).",
+    "  4. Quality is unpriced: cheaper output that is worse has a cost this number cannot see.",
+    "Lead with actual spend; treat savings as a rough, optimistic upper bound."
+  ].join("\n");
 }
 function pad(s, n) {
   return s.length >= n ? s : s + " ".repeat(n - s.length);
@@ -11013,6 +11040,8 @@ No dispatches recorded yet.`;
   );
   const byExec = report.byExecutor.map((e) => `${e.executor} ${e.dispatches} (${e.costComplete ? "" : "~"}$${e.costUsd.toFixed(2)}${e.costComplete ? "" : "+"})`).join(" \xB7 ");
   lines.push(`By executor: ${byExec}`);
+  const savings = `~$${report.estimatedSavingsUsd.toFixed(2)}${report.savingsComplete ? "" : "+"}`;
+  lines.push(`Estimated saved vs all-${report.baselineModel} (list price, est): ${savings}  (--explain-savings for caveats)`);
   lines.push('Cost: provider-reported where available; ~ = list-price estimate (src/core/pricing.ts); "tokens" = unknown model.');
   return lines.join("\n");
 }
@@ -11254,7 +11283,12 @@ var usage = (ctx) => {
   const { paths, clock } = depsFor(ctx);
   const all = flagBool(ctx.args.flags, "all");
   const report = buildUsageReport(paths, clock.nowIso(), { all });
-  emit(ctx.json, { ok: true, usage: report }, () => renderUsage(report));
+  emit(ctx.json, { ok: true, usage: report }, () => {
+    const body = renderUsage(report);
+    return flagBool(ctx.args.flags, "explain-savings") ? `${body}
+
+${explainSavingsText(report.baselineModel)}` : body;
+  });
   return 0;
 };
 var setupStatusline = (ctx) => {

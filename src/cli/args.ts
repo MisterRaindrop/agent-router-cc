@@ -5,7 +5,7 @@
 // value-flag consumes the next token while a boolean-flag does not - this avoids
 // ambiguity like `run --json t1` swallowing the positional.
 
-const BOOLEAN_FLAGS = new Set(['json', 'force', 'keep', 'help', 'approve', 'dry-run', 'all']);
+const BOOLEAN_FLAGS = new Set(['json', 'force', 'keep', 'help', 'approve', 'dry-run', 'all', 'explain-savings']);
 const VALUE_FLAGS = new Set([
   'id',
   'title',
