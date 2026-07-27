@@ -1,5 +1,6 @@
 {
   "name": "agent-router-cc",
+  "description": "Plugins for deterministic, verified coding-task routing in Claude Code.",
   "owner": {
     "name": "MisterRaindrop"
   },

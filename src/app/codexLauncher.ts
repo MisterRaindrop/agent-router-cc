@@ -16,6 +16,12 @@ export interface WorkerLauncher {
   kind: WorkerKind;
   model?: string;
   buildArgv(ctx: WorkerContext): string[];
+  /**
+   * Argv to RESUME a prior session (context retained) with a follow-up message,
+   * instead of a cold restart. `router resume` compares the resumed run's reported
+   * session id back to `sessionId` to prove it re-attached.
+   */
+  buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[];
   /** Parse this executor's own log for usage/model/cost. Defaults to codex. */
   parseLog?: (log: string) => ParsedLog;
 }
@@ -47,13 +53,34 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunch
       if (model !== undefined) argv.push('-m', model);
       return argv;
     },
+    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
+    // resume flag can vary by codex version; the session-id continuity guard in
+    // `router resume` catches a wrong invocation instead of silently not resuming.
+    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
+      const argv = [
+        bin,
+        'exec',
+        'resume',
+        sessionId,
+        feedback,
+        '-C',
+        worktreeDir,
+        '-s',
+        'workspace-write',
+        '--skip-git-repo-check',
+        '--json',
+      ];
+      if (model !== undefined) argv.push('-m', model);
+      return argv;
+    },
   };
 }
 
-// The claude CLI as a headless executor: `claude -p ... --output-format stream-json`
-// with permissions bypassed (safe: isolated worktree + diff-scope gate, same as
-// codex workspace-write). Plan-auth via ~/.claude, no API key. ROUTER_CLAUDE_BIN
-// overrides the binary (tests). Cost comes from the stream's total_cost_usd.
+// The claude CLI as a headless executor. It gets only Read/Edit/Write tools and
+// normal edit-acceptance permissions: reads outside the worktree are denied, and
+// it has no Bash escape hatch. Router runs verification commands itself afterward.
+// Plan-auth comes from the user's Claude session; ROUTER_CLAUDE_BIN overrides the
+// binary in tests. Cost comes from the stream's total_cost_usd.
 export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLauncher {
   const bin = process.env.ROUTER_CLAUDE_BIN ?? 'claude';
   const model = worker.model;
@@ -70,9 +97,34 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunc
         'stream-json',
         '--verbose',
         '--permission-mode',
-        'bypassPermissions',
+        'acceptEdits',
+        '--tools',
+        'Read,Edit,Write',
         '--add-dir',
         ctx.worktreeDir,
+      ];
+      if (model !== undefined) argv.push('--model', model);
+      return argv;
+    },
+    // `claude --resume <session-id> -p <feedback>` continues that session with its
+    // context retained. The session-id continuity guard in `router resume` verifies
+    // it re-attached.
+    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
+      const argv = [
+        bin,
+        '-p',
+        feedback,
+        '--resume',
+        sessionId,
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--permission-mode',
+        'acceptEdits',
+        '--tools',
+        'Read,Edit,Write',
+        '--add-dir',
+        worktreeDir,
       ];
       if (model !== undefined) argv.push('--model', model);
       return argv;

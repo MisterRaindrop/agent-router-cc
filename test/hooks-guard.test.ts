@@ -42,3 +42,13 @@ test('guard allows editable contract files and non-router paths (exit 0)', () =>
   assert.equal(guard({ file_path: 'src/main.ts' }), 0);
   assert.equal(guard({}), 0); // no path
 });
+
+test('guard allows edits inside worktree checkouts (exit 0)', () => {
+  // The worktree lives under .router/worktrees/ but is the executor's working
+  // copy, not router state. Both relative and absolute forms must be allowed,
+  // otherwise every dispatch fails when the executor writes to its own checkout.
+  assert.equal(guard({ file_path: '.router/worktrees/t1/run-001/src/main.ts' }), 0);
+  assert.equal(guard({ file_path: '/abs/project/.router/worktrees/t1/run-001/tests/foo.py' }), 0);
+  // Real state under .router/tasks/** stays protected even for a state.json name.
+  assert.equal(guard({ file_path: '/abs/project/.router/tasks/t1/state.json' }), 2);
+});

@@ -1,18 +1,19 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { dump } from 'js-yaml';
+import { dump, load } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask } from '../app/dispatch.ts';
+import { dispatchTask, resumeTask } from '../app/dispatch.ts';
+import { buildUsageReport, renderUsage } from '../app/usageReport.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -55,6 +56,8 @@ function requireId(ctx: Ctx): string {
 }
 
 const RUN = fmtRunId(1); // one synchronous attempt per task
+
+const pad = (s: string, n: number): string => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
 function taskTemplate(id: string, title: string): string {
   return dump(
@@ -125,6 +128,38 @@ const dispatch: Handler = async (ctx) => {
   return v === 'PASSED' ? 0 : 1;
 };
 
+// Resume the prior dispatch's executor session with feedback (context retained) instead
+// of a cold re-dispatch. Fail-loud: if the executor reports a different session id, the
+// resume did not re-attach -- nothing is committed and this exits non-zero.
+const resume: Handler = async (ctx) => {
+  const deps = depsFor(ctx);
+  const id = requireId(ctx);
+  const feedback = flagStr(ctx.args.flags, 'feedback') ?? '';
+  if (feedback === '') throw new CliError('resume needs --feedback "<what to fix>"', 2);
+  const result = await resumeTask(deps, id, feedback);
+  const mism = result.resume_session_mismatch === true;
+  const v = result.verifier?.result ?? 'FAILED';
+  emit(
+    ctx.json,
+    {
+      ok: !mism && v === 'PASSED',
+      id,
+      resumed: true,
+      session_mismatch: mism,
+      session_id: result.session_id ?? null,
+      verifier: v,
+      exit_class: result.exit_class,
+    },
+    () => {
+      if (mism)
+        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+      return `${id}: resumed -> ${v} (${result.exit_class}); ${next}`;
+    },
+  );
+  return !mism && v === 'PASSED' ? 0 : 1;
+};
+
 const land: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
@@ -162,6 +197,47 @@ const result: Handler = (ctx) => {
       .join('\n');
     return `${id} ${run}: exit=${res.exit_class} verifier=${res.verifier?.result ?? 'n/a'}\n${checks}\n--- log tail ---\n${tail}`;
   });
+  return 0;
+};
+
+// List authored tasks with their last dispatch status and whether a worktree is
+// still on disk (read-only; helps you see leftovers before cleaning them).
+const list: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const ids = existsSync(paths.tasksDir)
+    ? readdirSync(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
+    : [];
+  const rows = ids.map((id) => {
+    let title = '';
+    try {
+      title = ((load(readFileSync(paths.taskYaml(id), 'utf8')) as { title?: string } | null)?.title) ?? '';
+    } catch {
+      /* missing/invalid task.yaml */
+    }
+    const res = store.readResult(paths, id, RUN);
+    const status = res === null ? 'none' : (res.verifier?.result ?? res.exit_class);
+    const worktree = existsSync(paths.worktree(id, RUN));
+    return { id, title, status, worktree };
+  });
+  emit(ctx.json, { ok: true, tasks: rows }, () => {
+    if (rows.length === 0) return 'No tasks in .router/tasks.';
+    const lines = [`Tasks (${rows.length}):`, pad('id', 22) + pad('status', 10) + pad('worktree', 10) + 'title'];
+    for (const r of rows) lines.push(pad(r.id, 22) + pad(String(r.status), 10) + pad(r.worktree ? 'present' : '-', 10) + r.title);
+    const leftover = rows.filter((r) => r.worktree).length;
+    if (leftover > 0)
+      lines.push(`\n${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+    return lines.join('\n');
+  });
+  return 0;
+};
+
+// Token/cost usage across recent dispatches, read from .router/metrics.jsonl.
+// Provider cost where reported; otherwise a list-price estimate (src/core/pricing.ts).
+const usage: Handler = (ctx) => {
+  const { paths, clock } = depsFor(ctx);
+  const all = flagBool(ctx.args.flags, 'all');
+  const report = buildUsageReport(paths, clock.nowIso(), { all });
+  emit(ctx.json, { ok: true, usage: report }, () => renderUsage(report));
   return 0;
 };
 
@@ -224,8 +300,11 @@ export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
   dispatch,
+  resume,
   land,
   result,
+  list,
+  usage,
   'setup-statusline': setupStatusline,
 };
 
@@ -239,10 +318,13 @@ export function helpText(): string {
     `Usage: router <command> [options]\n\n` +
     `  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)\n` +
     `  dispatch <id>          run the task on the quota-picked executor to a verified diff\n` +
+    `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
     `  land <id>              merge a PASSED dispatch's diff\n` +
     `  result <id>            show the verifier report + log tail\n` +
+    `  list                   list tasks with last status + whether a worktree remains\n` +
+    `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }

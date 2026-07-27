@@ -24,11 +24,13 @@ test('plugin.json is valid and names the plugin', () => {
   const p = JSON.parse(read('../.claude-plugin/plugin.json'));
   assert.equal(p.name, 'router');
   assert.ok(typeof p.description === 'string' && p.description.length > 0);
+  assert.ok(p.author && typeof p.author.name === 'string', 'plugin needs author attribution');
 });
 
 test('marketplace.json lists the router plugin so it is installable', () => {
   const m = JSON.parse(read('../.claude-plugin/marketplace.json'));
   assert.ok(typeof m.name === 'string' && m.name.length > 0, 'marketplace needs a name');
+  assert.ok(typeof m.description === 'string' && m.description.length > 0, 'marketplace needs a description');
   assert.ok(m.owner && typeof m.owner.name === 'string', 'marketplace needs an owner.name');
   assert.ok(Array.isArray(m.plugins) && m.plugins.length > 0, 'marketplace needs plugins');
   const router = m.plugins.find((p: { name: string }) => p.name === 'router');
@@ -43,7 +45,18 @@ test('every command has a description in its frontmatter', () => {
   for (const f of files) {
     const fm = frontmatter(readFileSync(new URL(f, dir), 'utf8'));
     assert.ok(fm.description, `${f}: missing description`);
+    if (fm['argument-hint']) {
+      const body = readFileSync(new URL(f, dir), 'utf8');
+      assert.doesNotMatch(body, /\$[1-9]\b/, `${f}: Claude commands do not populate shell positional parameters`);
+      assert.match(body, /\$ARGUMENTS\b/, `${f}: argument-taking command must use $ARGUMENTS`);
+    }
   }
+});
+
+test('init keeps router runtime state gitignored and does not mention removed policy flow', () => {
+  const body = read('../commands/init.md');
+  assert.match(body, /do NOT stage or commit/i);
+  assert.doesNotMatch(body, /committed base_sha|default policy|policy works/i);
 });
 
 test('every agent declares name + model', () => {

@@ -6571,11 +6571,12 @@ var require_ajv = __commonJS({
 });
 
 // src/cli/args.ts
-var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run"]);
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run", "all"]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "id",
   "title",
   "run",
+  "feedback",
   "state",
   "attempt",
   "since",
@@ -6631,7 +6632,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname5, join as join7, resolve as resolve2 } from "node:path";
@@ -9236,7 +9237,7 @@ function blockHeader(string, indentPerLevel) {
 function encodeFlowBreaks(string, indent) {
   let nextLF = string.indexOf("\n");
   if (nextLF === -1) return string;
-  const pad = " ".repeat(indent);
+  const pad3 = " ".repeat(indent);
   let result2 = string.slice(0, nextLF);
   const lineRe = /(\n+)([^\n]*)/g;
   lineRe.lastIndex = nextLF;
@@ -9244,7 +9245,7 @@ function encodeFlowBreaks(string, indent) {
   while (match = lineRe.exec(string)) {
     const breaks = match[1].length;
     const line = match[2];
-    result2 += "\n".repeat(breaks + 1) + pad + line;
+    result2 += "\n".repeat(breaks + 1) + pad3 + line;
   }
   return result2;
 }
@@ -9320,8 +9321,8 @@ function writeFlowSequence(state, level, node) {
     if (result2 !== "") result2 += `,${!state.flowSkipCommaSpace ? " " : ""}`;
     result2 += item;
   }
-  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
-  return `[${pad}${result2}${pad}]`;
+  const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
+  return `[${pad3}${result2}${pad3}]`;
 }
 function writeBlockSequence(state, level, node, compact) {
   let result2 = "";
@@ -9353,16 +9354,16 @@ function writeFlowMapping(state, level, node) {
     pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep}${valueText}`;
     result2 += pairBuffer;
   }
-  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
-  return `{${pad}${result2}${pad}}`;
+  const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
+  return `{${pad3}${result2}${pad3}}`;
 }
 function sortKeyValue(key) {
   return key.kind === "scalar" ? key.value : key;
 }
 function sortMappingItems(state, items) {
   if (!state.sortKeys) return items;
-  const copy = items.slice();
-  if (state.sortKeys === true) copy.sort((a, b) => {
+  const copy2 = items.slice();
+  if (state.sortKeys === true) copy2.sort((a, b) => {
     const x = sortKeyValue(a.key);
     const y = sortKeyValue(b.key);
     if (x < y) return -1;
@@ -9371,9 +9372,9 @@ function sortMappingItems(state, items) {
   });
   else {
     const fn = state.sortKeys;
-    copy.sort((a, b) => fn(sortKeyValue(a.key), sortKeyValue(b.key)));
+    copy2.sort((a, b) => fn(sortKeyValue(a.key), sortKeyValue(b.key)));
   }
-  return copy;
+  return copy2;
 }
 function writeBlockMapping(state, level, node, compact) {
   let result2 = "";
@@ -9549,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.2" : "0.0.0-dev";
+var VERSION = true ? "0.6.4" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9809,6 +9810,20 @@ function appendJsonl(path, record) {
   appendFileSync(path, `${line}
 `, { flag: "a" });
 }
+function readJsonl(path) {
+  if (!existsSync2(path)) return [];
+  const raw = readFileSync(path, "utf8");
+  const out2 = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    try {
+      out2.push(JSON.parse(trimmed));
+    } catch {
+    }
+  }
+  return out2;
+}
 
 // src/io/store.ts
 function readJson(path) {
@@ -9827,7 +9842,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join6 } from "node:path";
 
@@ -9862,15 +9877,62 @@ function reclassifyQuota(exitClass, logText, pattern = DEFAULT_QUOTA_PATTERN) {
   if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
   return new RegExp(pattern, "i").test(logText) ? "quota_exhausted" : exitClass;
 }
+var DEFAULT_ENV_ERROR_PATTERN = "\\b(not logged in|please run /login|authentication[_ -]?failed|failed to authenticate|invalid api key|no api key found|oauth token expired)\\b";
+function reclassifyEnvironmentFailure(exitClass, logText, pattern = DEFAULT_ENV_ERROR_PATTERN) {
+  if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
+  return new RegExp(pattern, "i").test(logText) ? "env_error" : exitClass;
+}
 
 // src/io/env.ts
 var BASE_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM"];
+var EXECUTOR_CONTEXT_ALLOW = [
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  // macOS Keychain/session lookup used by native Claude Code.
+  "SECURITYSESSIONID",
+  "LaunchInstanceID",
+  "XPC_FLAGS",
+  "XPC_SERVICE_NAME",
+  "__CF_USER_TEXT_ENCODING",
+  // Explicit config/certificate locations and update policy.
+  "CLAUDE_CONFIG_DIR",
+  "XDG_CONFIG_HOME",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "DISABLE_AUTO_UPDATE"
+];
+var PROXY_URL_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+var NO_PROXY_KEYS = ["NO_PROXY", "no_proxy"];
+function copy(source, target, key) {
+  const value = source[key];
+  if (value !== void 0) target[key] = value;
+}
+function proxyHasCredentials(value) {
+  if (!value.includes("://")) return value.includes("@");
+  try {
+    const url = new URL(value);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return true;
+  }
+}
 function buildWorkerEnv(source, extraKeys = []) {
   const out2 = {};
-  for (const key of [...BASE_ALLOW, ...extraKeys]) {
-    const v = source[key];
-    if (v !== void 0) out2[key] = v;
+  for (const key of [...BASE_ALLOW, ...extraKeys]) copy(source, out2, key);
+  return out2;
+}
+function buildExecutorEnv(source, extraKeys = []) {
+  const out2 = buildWorkerEnv(source);
+  for (const key of EXECUTOR_CONTEXT_ALLOW) copy(source, out2, key);
+  for (const key of NO_PROXY_KEYS) copy(source, out2, key);
+  for (const key of PROXY_URL_KEYS) {
+    const value = source[key];
+    if (value !== void 0 && !proxyHasCredentials(value)) out2[key] = value;
   }
+  for (const key of extraKeys) copy(source, out2, key);
   return out2;
 }
 
@@ -10098,6 +10160,7 @@ function parseCodexLog(logText) {
   let output = 0;
   let cached = 0;
   let model = null;
+  let sessionId = null;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10118,13 +10181,18 @@ function parseCodexLog(logText) {
       const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
       if (typeof m === "string" && m !== "") model = m;
     }
+    if (sessionId === null) {
+      const s = rec.session_id ?? rec.thread_id ?? rec.thread?.id ?? rec.session?.id;
+      if (typeof s === "string" && s !== "") sessionId = s;
+    }
   }
-  return { usage: found ? { input, output, cached } : null, model };
+  return { usage: found ? { input, output, cached } : null, model, sessionId };
 }
 function parseClaudeLog(logText) {
-  let usage = null;
+  let usage2 = null;
   let costUsd = null;
   let model = null;
+  let sessionId = null;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10136,12 +10204,13 @@ function parseClaudeLog(logText) {
     }
     const rec = o;
     if (rec.type === "result" && rec.usage) {
-      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      usage2 = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
       if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
     }
     if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
+    if (sessionId === null && typeof rec.session_id === "string" && rec.session_id !== "") sessionId = rec.session_id;
   }
-  return { usage, model, costUsd };
+  return { usage: usage2, model, costUsd, sessionId };
 }
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -10169,6 +10238,26 @@ function codexLauncher(worker) {
       ];
       if (model !== void 0) argv.push("-m", model);
       return argv;
+    },
+    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
+    // resume flag can vary by codex version; the session-id continuity guard in
+    // `router resume` catches a wrong invocation instead of silently not resuming.
+    buildResumeArgv(worktreeDir, sessionId, feedback) {
+      const argv = [
+        bin,
+        "exec",
+        "resume",
+        sessionId,
+        feedback,
+        "-C",
+        worktreeDir,
+        "-s",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "--json"
+      ];
+      if (model !== void 0) argv.push("-m", model);
+      return argv;
     }
   };
 }
@@ -10188,9 +10277,34 @@ function claudeLauncher(worker) {
         "stream-json",
         "--verbose",
         "--permission-mode",
-        "bypassPermissions",
+        "acceptEdits",
+        "--tools",
+        "Read,Edit,Write",
         "--add-dir",
         ctx.worktreeDir
+      ];
+      if (model !== void 0) argv.push("--model", model);
+      return argv;
+    },
+    // `claude --resume <session-id> -p <feedback>` continues that session with its
+    // context retained. The session-id continuity guard in `router resume` verifies
+    // it re-attached.
+    buildResumeArgv(worktreeDir, sessionId, feedback) {
+      const argv = [
+        bin,
+        "-p",
+        feedback,
+        "--resume",
+        sessionId,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "acceptEdits",
+        "--tools",
+        "Read,Edit,Write",
+        "--add-dir",
+        worktreeDir
       ];
       if (model !== void 0) argv.push("--model", model);
       return argv;
@@ -10585,8 +10699,7 @@ async function dispatchTask(deps, id) {
   worktreeRemove(paths.repoRoot, worktreeDir);
   deleteBranch(paths.repoRoot, branch);
   worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
-  const apiKeyEnvs = [...new Set(workers.map((w) => w.api_key_env).filter((v) => Boolean(v)))];
-  const env = buildWorkerEnv(process.env, apiKeyEnvs);
+  const verifyEnv = buildWorkerEnv(process.env);
   const logPath = paths.workerLog(id, RUN);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
@@ -10597,10 +10710,11 @@ async function dispatchTask(deps, id) {
     used = order[i];
     if (i > 0) writeFileSync2(logPath, "");
     const launcher2 = makeLauncher(used);
+    const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const o = await superviseWorker({
       argv: launcher2.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
       cwd: worktreeDir,
-      env,
+      env: executorEnv,
       logPath,
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
@@ -10608,8 +10722,9 @@ async function dispatchTask(deps, id) {
       stallMs: (used.stall_minutes ?? 10) * 6e4
     });
     outcome = o;
-    exitClass = reclassifyQuota(o.exitClass, safeRead(logPath));
-    if (exitClass === "quota_exhausted" && i < order.length - 1) {
+    const log = safeRead(logPath);
+    exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    if ((exitClass === "quota_exhausted" || exitClass === "env_error") && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
       continue;
@@ -10634,9 +10749,11 @@ async function dispatchTask(deps, id) {
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
     worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    base_sha: baseSha,
     ...switches > 0 ? { executor_switches: switches } : {},
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
-    ...costUsd !== null ? { cost_usd: costUsd } : {}
+    ...costUsd !== null ? { cost_usd: costUsd } : {},
+    ...parsed.sessionId ? { session_id: parsed.sessionId } : {}
   };
   if (exitClass === "ok") {
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
@@ -10651,7 +10768,81 @@ async function dispatchTask(deps, id) {
       ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
       ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
       verify: task.verify ?? [],
-      env
+      env: verifyEnv
+    });
+  }
+  writeResult(paths, id, RUN, result2);
+  appendMetric2(deps, result2);
+  return result2;
+}
+async function resumeTask(deps, id, feedback) {
+  const { paths } = deps;
+  const prev = readResult(paths, id, RUN);
+  if (prev === null) throw new Error(`no prior dispatch for ${id}; run \`router dispatch ${id}\` first`);
+  const priorSession = prev.session_id ?? null;
+  if (!priorSession) throw new Error(`prior run for ${id} has no session id; resume unavailable -- re-dispatch instead`);
+  const worktreeDir = paths.worktree(id, RUN);
+  if (!existsSync6(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
+  const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, "HEAD");
+  const { task } = loadTask(paths, id);
+  const used = prev.worker.model ? { kind: prev.worker.kind, model: prev.worker.model } : { kind: prev.worker.kind };
+  const launcher = makeLauncher(used);
+  const logPath = paths.workerLog(id, RUN);
+  writeFileSync2(logPath, "");
+  const verifyEnv = buildWorkerEnv(process.env);
+  const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+  const o = await superviseWorker({
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    cwd: worktreeDir,
+    env: executorEnv,
+    logPath,
+    heartbeatPath: paths.heartbeat(id, RUN),
+    watchDir: worktreeDir,
+    maxWallMs: task.max_wall_minutes * 6e4,
+    stallMs: (used.stall_minutes ?? 10) * 6e4
+  });
+  const log = safeRead(logPath);
+  const exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+  const parsed = (launcher.parseLog ?? parseCodexLog)(log);
+  const newSession = parsed.sessionId ?? null;
+  const mismatch = newSession !== null && newSession !== priorSession;
+  const model = parsed.model ?? used.model;
+  const costUsd = parsed.costUsd ?? null;
+  const result2 = {
+    run_id: RUN,
+    task_id: id,
+    attempt_number: prev.attempt_number + 1,
+    exit_class: mismatch ? "task_failed" : exitClass,
+    rc: o.rc,
+    timed_out: o.timedOut,
+    stalled: o.stalled,
+    env_error: exitClass === "env_error",
+    started_at: new Date(o.startedAtMs).toISOString(),
+    ended_at: new Date(o.endedAtMs).toISOString(),
+    wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1e3),
+    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    base_sha: baseSha,
+    resumed: true,
+    session_id: newSession ?? priorSession,
+    ...mismatch ? { resume_session_mismatch: true } : {},
+    ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
+    ...costUsd !== null ? { cost_usd: costUsd } : {}
+  };
+  if (!mismatch && exitClass === "ok") {
+    commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
+    const patch = rawDiff(worktreeDir, baseSha, "HEAD");
+    writeFileSync2(paths.diffPatch(id, RUN), patch);
+    result2.diff_sha = createHash("sha256").update(patch).digest("hex");
+    result2.verifier = verifyTask({
+      repoRoot: paths.repoRoot,
+      worktreeDir,
+      baseSha,
+      head: "HEAD",
+      allowedGlobs: task.allowed_globs,
+      ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
+      ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
+      verify: task.verify ?? [],
+      env: verifyEnv
     });
   }
   writeResult(paths, id, RUN, result2);
@@ -10684,6 +10875,146 @@ function appendMetric2(deps, result2) {
     env_error: result2.env_error
   };
   appendMetric(deps.paths, metric);
+}
+
+// src/core/pricing.ts
+var TABLE = [
+  // Anthropic (Claude)
+  ["opus", { inPerMTok: 5, outPerMTok: 25 }],
+  ["sonnet", { inPerMTok: 3, outPerMTok: 15 }],
+  ["haiku", { inPerMTok: 1, outPerMTok: 5 }],
+  // OpenAI (Codex / GPT)
+  ["gpt-5-nano", { inPerMTok: 0.05, outPerMTok: 0.4 }],
+  ["gpt-5-mini", { inPerMTok: 0.25, outPerMTok: 2 }],
+  ["gpt-5-codex", { inPerMTok: 1.25, outPerMTok: 10 }],
+  ["gpt-5", { inPerMTok: 1.25, outPerMTok: 10 }]
+];
+function priceFor(model) {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  let best = null;
+  let bestLen = -1;
+  for (const [key, price] of TABLE) {
+    if (m.includes(key) && key.length > bestLen) {
+      best = price;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+function deriveCost(model, tokensIn, tokensOut) {
+  const p = priceFor(model);
+  if (p === null) return null;
+  return tokensIn / 1e6 * p.inPerMTok + tokensOut / 1e6 * p.outPerMTok;
+}
+
+// src/app/usageReport.ts
+var DEFAULT_DAYS = 7;
+function buildUsageReport(paths, nowIso, opts = {}) {
+  const records = readJsonl(paths.metrics);
+  const windowDays = opts.all ? null : DEFAULT_DAYS;
+  const cutoff = windowDays === null ? -Infinity : Date.parse(nowIso) - windowDays * 864e5;
+  const rows = [];
+  for (const r of records) {
+    const t = Date.parse(r.ts);
+    if (Number.isFinite(t) && t < cutoff) continue;
+    const tokensIn = r.tokens_input ?? 0;
+    const tokensOut = r.tokens_output ?? 0;
+    let costUsd;
+    let costSource;
+    if (r.cost_usd !== null && r.cost_usd !== void 0) {
+      costUsd = r.cost_usd;
+      costSource = "provider";
+    } else {
+      const d = deriveCost(r.model, tokensIn, tokensOut);
+      costUsd = d;
+      costSource = d === null ? "none" : "derived";
+    }
+    rows.push({
+      ts: r.ts,
+      taskId: r.task_id,
+      executor: r.executor ?? "unknown",
+      model: r.model,
+      tokensIn,
+      tokensOut,
+      tokensTotal: tokensIn + tokensOut,
+      costUsd,
+      costSource,
+      verifier: r.verifier_result
+    });
+  }
+  rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
+  let totalTokensIn = 0;
+  let totalTokensOut = 0;
+  let totalCostUsd = 0;
+  let costComplete = true;
+  const byExec = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    totalTokensIn += row.tokensIn;
+    totalTokensOut += row.tokensOut;
+    if (row.costUsd === null) costComplete = false;
+    else totalCostUsd += row.costUsd;
+    const e = byExec.get(row.executor) ?? { executor: row.executor, dispatches: 0, tokensTotal: 0, costUsd: 0, costComplete: true };
+    e.dispatches += 1;
+    e.tokensTotal += row.tokensTotal;
+    if (row.costUsd === null) e.costComplete = false;
+    else e.costUsd += row.costUsd;
+    byExec.set(row.executor, e);
+  }
+  return {
+    windowDays,
+    rows,
+    totalTokensIn,
+    totalTokensOut,
+    totalTokens: totalTokensIn + totalTokensOut,
+    totalCostUsd,
+    costComplete,
+    byExecutor: [...byExec.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
+  };
+}
+function pad(s, n) {
+  return s.length >= n ? s : s + " ".repeat(n - s.length);
+}
+function fmtTokens(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+function fmtCost(costUsd, source) {
+  if (costUsd === null) return "tokens";
+  const s = `$${costUsd.toFixed(2)}`;
+  return source === "derived" ? `~${s}` : s;
+}
+function shortModel(m) {
+  if (!m) return "";
+  return m.length > 18 ? m.slice(0, 17) + "\u2026" : m;
+}
+function renderUsage(report) {
+  const win = report.windowDays === null ? "all time" : `last ${report.windowDays} days`;
+  if (report.rows.length === 0) {
+    return `Router usage \u2014 ${win}
+No dispatches recorded yet.`;
+  }
+  const bar = "\u2500".repeat(80);
+  const lines = [];
+  lines.push(`Router usage \u2014 ${win}    ${report.rows.length} dispatch(es) \xB7 ${report.byExecutor.length} executor(s)`);
+  lines.push(bar);
+  lines.push(pad("Task", 16) + pad("executor/model", 28) + pad("In", 8) + pad("Out", 8) + pad("Tokens", 9) + "Cost");
+  for (const r of report.rows) {
+    const who = `${r.executor}${r.model ? `/${shortModel(r.model)}` : ""}`;
+    lines.push(
+      pad(r.taskId, 16) + pad(who, 28) + pad(fmtTokens(r.tokensIn), 8) + pad(fmtTokens(r.tokensOut), 8) + pad(fmtTokens(r.tokensTotal), 9) + fmtCost(r.costUsd, r.costSource)
+    );
+  }
+  lines.push(bar);
+  const totalCost = report.costComplete ? `$${report.totalCostUsd.toFixed(2)}` : `~$${report.totalCostUsd.toFixed(2)}+`;
+  lines.push(
+    pad("TOTAL", 44) + pad(fmtTokens(report.totalTokensIn), 8) + pad(fmtTokens(report.totalTokensOut), 8) + pad(fmtTokens(report.totalTokens), 9) + totalCost
+  );
+  const byExec = report.byExecutor.map((e) => `${e.executor} ${e.dispatches} (${e.costComplete ? "" : "~"}$${e.costUsd.toFixed(2)}${e.costComplete ? "" : "+"})`).join(" \xB7 ");
+  lines.push(`By executor: ${byExec}`);
+  lines.push('Cost: provider-reported where available; ~ = list-price estimate (src/core/pricing.ts); "tokens" = unknown model.');
+  return lines.join("\n");
 }
 
 // src/core/statuslineSetup.ts
@@ -10736,10 +11067,10 @@ function depsFor(ctx) {
   const rd = found ?? join7(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync6(d)) mkdirSync4(d, { recursive: true });
+    if (!existsSync7(d)) mkdirSync4(d, { recursive: true });
   }
   const gi = join7(paths.root, ".gitignore");
-  if (!existsSync6(gi)) writeFileSync3(gi, "*\n");
+  if (!existsSync7(gi)) writeFileSync3(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -10748,6 +11079,7 @@ function requireId(ctx) {
   return id;
 }
 var RUN2 = runId(1);
+var pad2 = (s, n) => s.length >= n ? s : s + " ".repeat(n - s.length);
 function taskTemplate(id, title) {
   return dump(
     {
@@ -10790,8 +11122,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync4(paths.taskDir(id), { recursive: true });
-  if (!existsSync6(paths.taskYaml(id))) writeFileSync3(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync6(paths.contractMd(id))) writeFileSync3(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync7(paths.taskYaml(id))) writeFileSync3(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync7(paths.contractMd(id))) writeFileSync3(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -10825,6 +11157,34 @@ var dispatch = async (ctx) => {
     }
   );
   return v === "PASSED" ? 0 : 1;
+};
+var resume = async (ctx) => {
+  const deps = depsFor(ctx);
+  const id = requireId(ctx);
+  const feedback = flagStr(ctx.args.flags, "feedback") ?? "";
+  if (feedback === "") throw new CliError('resume needs --feedback "<what to fix>"', 2);
+  const result2 = await resumeTask(deps, id, feedback);
+  const mism = result2.resume_session_mismatch === true;
+  const v = result2.verifier?.result ?? "FAILED";
+  emit(
+    ctx.json,
+    {
+      ok: !mism && v === "PASSED",
+      id,
+      resumed: true,
+      session_mismatch: mism,
+      session_id: result2.session_id ?? null,
+      verifier: v,
+      exit_class: result2.exit_class
+    },
+    () => {
+      if (mism)
+        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result2.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+      return `${id}: resumed -> ${v} (${result2.exit_class}); ${next}`;
+    }
+  );
+  return !mism && v === "PASSED" ? 0 : 1;
 };
 var land = (ctx) => {
   const { paths } = depsFor(ctx);
@@ -10864,12 +11224,45 @@ ${tail}`;
   });
   return 0;
 };
+var list = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const ids = existsSync7(paths.tasksDir) ? readdirSync2(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const rows = ids.map((id) => {
+    let title = "";
+    try {
+      title = load(readFileSync6(paths.taskYaml(id), "utf8"))?.title ?? "";
+    } catch {
+    }
+    const res = readResult(paths, id, RUN2);
+    const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
+    const worktree = existsSync7(paths.worktree(id, RUN2));
+    return { id, title, status, worktree };
+  });
+  emit(ctx.json, { ok: true, tasks: rows }, () => {
+    if (rows.length === 0) return "No tasks in .router/tasks.";
+    const lines = [`Tasks (${rows.length}):`, pad2("id", 22) + pad2("status", 10) + pad2("worktree", 10) + "title"];
+    for (const r of rows) lines.push(pad2(r.id, 22) + pad2(String(r.status), 10) + pad2(r.worktree ? "present" : "-", 10) + r.title);
+    const leftover = rows.filter((r) => r.worktree).length;
+    if (leftover > 0)
+      lines.push(`
+${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+    return lines.join("\n");
+  });
+  return 0;
+};
+var usage = (ctx) => {
+  const { paths, clock } = depsFor(ctx);
+  const all = flagBool(ctx.args.flags, "all");
+  const report = buildUsageReport(paths, clock.nowIso(), { all });
+  emit(ctx.json, { ok: true, usage: report }, () => renderUsage(report));
+  return 0;
+};
 var setupStatusline = (ctx) => {
   const settingsPath = flagStr(ctx.args.flags, "settings") ?? join7(homedir2(), ".claude", "settings.json");
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve2(dirname5(fileURLToPath(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync6(settingsPath)) {
+  if (existsSync7(settingsPath)) {
     try {
       settings = JSON.parse(readFileSync6(settingsPath, "utf8"));
     } catch (e) {
@@ -10884,7 +11277,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync6(statuslinePath);
+  const missing = !existsSync7(statuslinePath);
   emit(
     ctx.json,
     {
@@ -10914,8 +11307,11 @@ var HANDLERS = {
   init,
   new: newTask,
   dispatch,
+  resume,
   land,
   result,
+  list,
+  usage,
   "setup-statusline": setupStatusline
 };
 function versionText() {
@@ -10928,12 +11324,15 @@ Usage: router <command> [options]
 
   new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)
   dispatch <id>          run the task on the quota-picked executor to a verified diff
+  resume <id> --feedback continue the prior executor session with feedback (no cold restart)
   land <id>              merge a PASSED dispatch's diff
   result <id>            show the verifier report + log tail
+  list                   list tasks with last status + whether a worktree remains
+  usage [--all]          token/cost usage across recent dispatches (last 7 days)
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
+Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 
