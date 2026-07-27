@@ -10,6 +10,7 @@ import {
   applyCheck,
   branchExists,
   collectDiff,
+  commitAll,
   rawDiff,
   resolveCommit,
   showFileAtRev,
@@ -29,6 +30,20 @@ test('resolveCommit returns a full 40-hex sha', () => {
     const sha = fx.addCommit(dir, 'base');
     assert.match(resolveCommit(dir, 'HEAD'), /^[0-9a-f]{40}$/);
     assert.equal(resolveCommit(dir, 'HEAD'), sha);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('commitAll carries its own identity (independent of ambient git config)', () => {
+  const dir = fx.initRepo(); // initRepo sets a DIFFERENT local identity
+  try {
+    fx.write(dir, 'src/a.txt', 'hello\n');
+    assert.equal(commitAll(dir, 'router: test run'), true);
+    // The -c override must win over the repo's configured identity, so router's
+    // bookkeeping commit works even in a repo/container with no identity at all.
+    assert.equal(fx.git(dir, ['log', '-1', '--format=%an <%ae>']).trim(), 'router <router@localhost>');
+    assert.equal(commitAll(dir, 'noop'), false); // clean tree => no commit
   } finally {
     fx.cleanup(dir);
   }

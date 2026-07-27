@@ -9550,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.3" : "0.0.0-dev";
+var VERSION = true ? "0.6.4" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9736,7 +9736,7 @@ function worktreeRemove(cwd, path, force = true) {
 function commitAll(cwd, message) {
   git(cwd, ["add", "-A"]);
   if (git(cwd, ["diff", "--cached", "--name-only"]).trim() === "") return false;
-  git(cwd, ["commit", "-q", "-m", message]);
+  git(cwd, ["-c", "user.name=router", "-c", "user.email=router@localhost", "commit", "-q", "-m", message]);
   return true;
 }
 function resetHard(cwd, sha) {

@@ -182,11 +182,14 @@ export function worktreeRemove(cwd: string, path: string, force = true): void {
 }
 
 
-/** Stage everything and commit; returns false (no commit) if the tree is clean. */
+/** Stage everything and commit; returns false (no commit) if the tree is clean.
+ * Carries its own committer identity via -c so this bookkeeping commit never
+ * depends on ambient git config (fresh containers / CI often have none); the
+ * commit is throwaway anyway - `land` re-integrates the diff with `merge --no-ff`. */
 export function commitAll(cwd: string, message: string): boolean {
   git(cwd, ['add', '-A']);
   if (git(cwd, ['diff', '--cached', '--name-only']).trim() === '') return false;
-  git(cwd, ['commit', '-q', '-m', message]);
+  git(cwd, ['-c', 'user.name=router', '-c', 'user.email=router@localhost', 'commit', '-q', '-m', message]);
   return true;
 }
 
