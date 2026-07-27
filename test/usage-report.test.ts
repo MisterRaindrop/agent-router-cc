@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deriveCost, priceFor } from '../src/core/pricing.ts';
-import { buildUsageReport, renderUsage } from '../src/app/usageReport.ts';
+import { buildUsageReport, explainSavingsText, renderUsage } from '../src/app/usageReport.ts';
 import type { RouterPaths } from '../src/io/paths.ts';
 
 function metricsPathWith(lines: object[]): RouterPaths {
@@ -84,6 +84,46 @@ test('usage report: empty metrics renders a friendly message, not a crash', () =
   assert.equal(r.rows.length, 0);
   const text = renderUsage(r);
   assert.match(text, /No dispatches recorded/);
+});
+
+test('savings: per-row = baseline(opus) minus own-model rate; unknown model => null/incomplete', () => {
+  const paths = metricsPathWith([
+    // gpt-5-mini: own = 1M*$0.25 + 1M*$2 = $2.25; opus baseline = 1M*$5 + 1M*$25 = $30 => saved $27.75
+    { ts: '2026-07-26T00:00:00Z', task_id: 'cheap', run_id: 'run-001', model: 'gpt-5-mini', executor: 'codex',
+      verifier_result: 'PASSED', tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 1 },
+    // opus itself: own == baseline => saved 0
+    { ts: '2026-07-26T01:00:00Z', task_id: 'strong', run_id: 'run-001', model: 'claude-opus-4-8', executor: 'claude',
+      verifier_result: 'PASSED', tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 1 },
+    // unknown model => savings null => savingsComplete false
+    { ts: '2026-07-26T02:00:00Z', task_id: 'mystery', run_id: 'run-001', model: 'who-knows', executor: 'codex',
+      verifier_result: 'PASSED', tokens_input: 100, tokens_output: 100, cost_usd: null, wall_seconds: 1 },
+  ]);
+  const r = buildUsageReport(paths, NOW);
+  const byTask = Object.fromEntries(r.rows.map((row) => [row.taskId, row]));
+  assert.equal(byTask.cheap!.savingsUsd, 27.75);
+  assert.equal(byTask.strong!.savingsUsd, 0);
+  assert.equal(byTask.mystery!.savingsUsd, null);
+  assert.equal(r.estimatedSavingsUsd, 27.75);
+  assert.equal(r.savingsComplete, false); // mystery had no known rate
+  assert.equal(r.baselineModel, 'opus');
+});
+
+test('renderUsage shows an estimated-savings line marked with ~ and est', () => {
+  const paths = metricsPathWith([
+    { ts: '2026-07-26T00:00:00Z', task_id: 'cheap', run_id: 'run-001', model: 'gpt-5-mini', executor: 'codex',
+      verifier_result: 'PASSED', tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 1 },
+  ]);
+  const text = renderUsage(buildUsageReport(paths, NOW));
+  assert.match(text, /Estimated saved vs all-opus/);
+  assert.match(text, /~\$27\.75/);
+  assert.match(text, /est/);
+});
+
+test('explainSavingsText states the baseline and the estimate caveats', () => {
+  const t = explainSavingsText('opus');
+  assert.match(t, /ESTIMATE/);
+  assert.match(t, /opus/);
+  assert.match(t, /review/i); // caveat: review cost excluded
 });
 
 test('renderUsage: includes header, TOTAL, and marks derived costs with ~', () => {

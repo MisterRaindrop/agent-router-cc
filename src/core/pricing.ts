@@ -46,3 +46,13 @@ export function deriveCost(model: string | null | undefined, tokensIn: number, t
   if (p === null) return null;
   return (tokensIn / 1e6) * p.inPerMTok + (tokensOut / 1e6) * p.outPerMTok;
 }
+
+// The strong-model baseline used to estimate savings: "what this dispatch would
+// have cost if the strong orchestrator model had done it instead". Opus is the most
+// expensive tier, so this is the upper-plausible-bound baseline. See deriveBaselineCost.
+export const STRONG_BASELINE_MODEL = 'opus';
+
+/** Cost of these token counts if priced at the strong-model baseline (always known). */
+export function deriveBaselineCost(tokensIn: number, tokensOut: number): number {
+  return deriveCost(STRONG_BASELINE_MODEL, tokensIn, tokensOut) ?? 0;
+}

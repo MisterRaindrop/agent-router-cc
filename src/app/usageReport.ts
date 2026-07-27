@@ -4,7 +4,7 @@
 import type { MetricRecord } from '../domain/types.ts';
 import type { RouterPaths } from '../io/paths.ts';
 import { readJsonl } from '../io/jsonl.ts';
-import { deriveCost } from '../core/pricing.ts';
+import { deriveBaselineCost, deriveCost, STRONG_BASELINE_MODEL } from '../core/pricing.ts';
 
 // Builds `router usage` from .router/metrics.jsonl (one record per dispatch).
 // Cost is provider-reported when present, else price-derived (an ESTIMATE from
@@ -29,6 +29,9 @@ export interface UsageRow {
   costUsd: number | null;
   costSource: CostSource;
   verifier: 'PASSED' | 'FAILED' | null;
+  // Estimated saving vs the strong-model baseline: (tokens re-priced at baseline) minus
+  // (tokens re-priced at this dispatch's own model). null if the model is unknown.
+  savingsUsd: number | null;
 }
 
 export interface ExecutorRollup {
@@ -48,6 +51,9 @@ export interface UsageReport {
   totalCostUsd: number;
   costComplete: boolean; // false if any row's cost was unknown
   byExecutor: ExecutorRollup[];
+  estimatedSavingsUsd: number; // sum of per-row savings vs the strong-model baseline (ESTIMATE)
+  savingsComplete: boolean; // false if any row's model was unknown (savings could not be estimated)
+  baselineModel: string; // the strong-model baseline savings are measured against
 }
 
 export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all?: boolean } = {}): UsageReport {
@@ -71,6 +77,11 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
       costUsd = d;
       costSource = d === null ? 'none' : 'derived';
     }
+    // Savings = same tokens priced at the strong baseline minus at this model's own
+    // rate. Uses derived (list-price) costs on BOTH sides so it isolates the price
+    // differential; null when the model is unknown (cannot derive the actual rate).
+    const actualDerived = deriveCost(r.model, tokensIn, tokensOut);
+    const savingsUsd = actualDerived === null ? null : Math.max(0, deriveBaselineCost(tokensIn, tokensOut) - actualDerived);
     rows.push({
       ts: r.ts,
       taskId: r.task_id,
@@ -82,6 +93,7 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
       costUsd,
       costSource,
       verifier: r.verifier_result,
+      savingsUsd,
     });
   }
   rows.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0)); // newest first
@@ -90,12 +102,16 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
   let totalTokensOut = 0;
   let totalCostUsd = 0;
   let costComplete = true;
+  let estimatedSavingsUsd = 0;
+  let savingsComplete = true;
   const byExec = new Map<string, ExecutorRollup>();
   for (const row of rows) {
     totalTokensIn += row.tokensIn;
     totalTokensOut += row.tokensOut;
     if (row.costUsd === null) costComplete = false;
     else totalCostUsd += row.costUsd;
+    if (row.savingsUsd === null) savingsComplete = false;
+    else estimatedSavingsUsd += row.savingsUsd;
 
     const e =
       byExec.get(row.executor) ??
@@ -116,7 +132,25 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
     totalCostUsd,
     costComplete,
     byExecutor: [...byExec.values()].sort((a, b) => b.tokensTotal - a.tokensTotal),
+    estimatedSavingsUsd,
+    savingsComplete,
+    baselineModel: STRONG_BASELINE_MODEL,
   };
+}
+
+/** The assumptions that make the savings figure an ESTIMATE, printed by `--explain-savings`. */
+export function explainSavingsText(baselineModel: string): string {
+  return [
+    `Estimated savings = (each dispatch's tokens re-priced at the "${baselineModel}" baseline)`,
+    `                    minus (the same tokens at that dispatch's own model rate).`,
+    'It is an ESTIMATE at public list prices, not a measurement. Caveats:',
+    `  1. Assumes the ${baselineModel} baseline would use the SAME token counts (a stronger`,
+    '     model often needs fewer turns; a weaker one may retry and use more).',
+    '  2. Excludes your own review/verify cost, which a baseline-only run would not incur.',
+    '  3. List prices only -- real bills differ (discounts; plan auth is not billed per token).',
+    '  4. Quality is unpriced: cheaper output that is worse has a cost this number cannot see.',
+    'Lead with actual spend; treat savings as a rough, optimistic upper bound.',
+  ].join('\n');
 }
 
 // -- rendering (English; open-source plugin) --------------------------------
@@ -173,6 +207,8 @@ export function renderUsage(report: UsageReport): string {
     .map((e) => `${e.executor} ${e.dispatches} (${e.costComplete ? '' : '~'}$${e.costUsd.toFixed(2)}${e.costComplete ? '' : '+'})`)
     .join(' · ');
   lines.push(`By executor: ${byExec}`);
+  const savings = `~$${report.estimatedSavingsUsd.toFixed(2)}${report.savingsComplete ? '' : '+'}`;
+  lines.push(`Estimated saved vs all-${report.baselineModel} (list price, est): ${savings}  (--explain-savings for caveats)`);
   lines.push('Cost: provider-reported where available; ~ = list-price estimate (src/core/pricing.ts); "tokens" = unknown model.');
   return lines.join('\n');
 }
