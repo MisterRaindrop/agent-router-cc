@@ -72,3 +72,7 @@ and the pass/fail verdict -- stays with you, never with the executor and never c
 
 You planned, decomposed, reviewed, verified in the real environment, and merged; the cheap models
 did the execution -- that is the token saving.
+
+Bookends (optional, independent second opinions): run `/router:spec` **before** `go` to
+adversarially review the plan, and `/router:review` **after** the final tests pass to
+adversarially review the code.
