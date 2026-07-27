@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
@@ -124,12 +124,101 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
     worker: model !== undefined ? { kind: used.kind, model } : { kind: used.kind },
+    base_sha: baseSha,
     ...(switches > 0 ? { executor_switches: switches } : {}),
+    ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
+    ...(costUsd !== null ? { cost_usd: costUsd } : {}),
+    ...(parsed.sessionId ? { session_id: parsed.sessionId } : {}),
+  };
+
+  if (exitClass === 'ok') {
+    const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
+    writeFileSync(paths.diffPatch(id, RUN), patch);
+    result.diff_sha = createHash('sha256').update(patch).digest('hex');
+    result.verifier = verifyTask({
+      repoRoot: paths.repoRoot,
+      worktreeDir,
+      baseSha,
+      head: 'HEAD',
+      allowedGlobs: task.allowed_globs,
+      ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
+      ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
+      verify: task.verify ?? [],
+      env: verifyEnv,
+    });
+  }
+
+  store.writeResult(paths, id, RUN, result);
+  appendMetric(deps, result);
+  return result;
+}
+
+/**
+ * Resume a prior dispatch's executor session with follow-up feedback, instead of a
+ * cold restart -- the executor keeps its context, so the retry is cheaper. Reuses the
+ * SAME worktree. Fail-loud continuity guard: if the resumed run reports a different
+ * session id than the prior run, we do NOT commit/verify -- a fresh session is not a
+ * resume, and silently treating it as one would defeat the point.
+ */
+export async function resumeTask(deps: DispatchDeps, id: string, feedback: string): Promise<RunResult> {
+  const { paths } = deps;
+  const prev = store.readResult(paths, id, RUN);
+  if (prev === null) throw new Error(`no prior dispatch for ${id}; run \`router dispatch ${id}\` first`);
+  const priorSession = prev.session_id ?? null;
+  if (!priorSession) throw new Error(`prior run for ${id} has no session id; resume unavailable -- re-dispatch instead`);
+  const worktreeDir = paths.worktree(id, RUN);
+  if (!existsSync(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
+  const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, 'HEAD');
+
+  const { task } = loadTask(paths, id);
+  const used: WorkerPolicy = prev.worker.model ? { kind: prev.worker.kind, model: prev.worker.model } : { kind: prev.worker.kind };
+  const launcher = makeLauncher(used);
+  const logPath = paths.workerLog(id, RUN);
+  writeFileSync(logPath, '');
+  const verifyEnv = buildWorkerEnv(process.env);
+  const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+
+  const o = await superviseWorker({
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    cwd: worktreeDir,
+    env: executorEnv,
+    logPath,
+    heartbeatPath: paths.heartbeat(id, RUN),
+    watchDir: worktreeDir,
+    maxWallMs: task.max_wall_minutes * 60_000,
+    stallMs: (used.stall_minutes ?? 10) * 60_000,
+  });
+  const log = safeRead(logPath);
+  const exitClass: ExitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+  const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
+  const newSession = parsed.sessionId ?? null;
+  const mismatch = newSession !== null && newSession !== priorSession;
+
+  const model = parsed.model ?? used.model;
+  const costUsd = parsed.costUsd ?? null;
+  const result: RunResult = {
+    run_id: RUN,
+    task_id: id,
+    attempt_number: prev.attempt_number + 1,
+    exit_class: mismatch ? 'task_failed' : exitClass,
+    rc: o.rc,
+    timed_out: o.timedOut,
+    stalled: o.stalled,
+    env_error: exitClass === 'env_error',
+    started_at: new Date(o.startedAtMs).toISOString(),
+    ended_at: new Date(o.endedAtMs).toISOString(),
+    wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1000),
+    worker: model !== undefined ? { kind: used.kind, model } : { kind: used.kind },
+    base_sha: baseSha,
+    resumed: true,
+    session_id: newSession ?? priorSession,
+    ...(mismatch ? { resume_session_mismatch: true } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
 
-  if (exitClass === 'ok') {
+  if (!mismatch && exitClass === 'ok') {
+    commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
     writeFileSync(paths.diffPatch(id, RUN), patch);
     result.diff_sha = createHash('sha256').update(patch).digest('hex');

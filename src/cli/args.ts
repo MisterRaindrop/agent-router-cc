@@ -10,6 +10,7 @@ const VALUE_FLAGS = new Set([
   'id',
   'title',
   'run',
+  'feedback',
   'state',
   'attempt',
   'since',

@@ -16,6 +16,12 @@ export interface WorkerLauncher {
   kind: WorkerKind;
   model?: string;
   buildArgv(ctx: WorkerContext): string[];
+  /**
+   * Argv to RESUME a prior session (context retained) with a follow-up message,
+   * instead of a cold restart. `router resume` compares the resumed run's reported
+   * session id back to `sessionId` to prove it re-attached.
+   */
+  buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[];
   /** Parse this executor's own log for usage/model/cost. Defaults to codex. */
   parseLog?: (log: string) => ParsedLog;
 }
@@ -39,6 +45,26 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunch
         buildPrompt(ctx),
         '-C',
         ctx.worktreeDir,
+        '-s',
+        'workspace-write',
+        '--skip-git-repo-check',
+        '--json',
+      ];
+      if (model !== undefined) argv.push('-m', model);
+      return argv;
+    },
+    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
+    // resume flag can vary by codex version; the session-id continuity guard in
+    // `router resume` catches a wrong invocation instead of silently not resuming.
+    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
+      const argv = [
+        bin,
+        'exec',
+        'resume',
+        sessionId,
+        feedback,
+        '-C',
+        worktreeDir,
         '-s',
         'workspace-write',
         '--skip-git-repo-check',
@@ -76,6 +102,29 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunc
         'Read,Edit,Write',
         '--add-dir',
         ctx.worktreeDir,
+      ];
+      if (model !== undefined) argv.push('--model', model);
+      return argv;
+    },
+    // `claude --resume <session-id> -p <feedback>` continues that session with its
+    // context retained. The session-id continuity guard in `router resume` verifies
+    // it re-attached.
+    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
+      const argv = [
+        bin,
+        '-p',
+        feedback,
+        '--resume',
+        sessionId,
+        '--output-format',
+        'stream-json',
+        '--verbose',
+        '--permission-mode',
+        'acceptEdits',
+        '--tools',
+        'Read,Edit,Write',
+        '--add-dir',
+        worktreeDir,
       ];
       if (model !== undefined) argv.push('--model', model);
       return argv;

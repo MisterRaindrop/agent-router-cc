@@ -115,6 +115,10 @@ export interface RunResult {
   cost_usd?: number;
   verifier?: VerifierReport;
   diff_sha?: string;
+  session_id?: string | null; // executor session/thread id, for a later `router resume`
+  resumed?: boolean; // this run continued a prior executor session
+  resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
+  base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
 }
 
 export interface MetricRecord {

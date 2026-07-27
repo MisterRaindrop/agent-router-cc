@@ -12,7 +12,7 @@ import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask } from '../app/dispatch.ts';
+import { dispatchTask, resumeTask } from '../app/dispatch.ts';
 import { buildUsageReport, renderUsage } from '../app/usageReport.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
@@ -126,6 +126,38 @@ const dispatch: Handler = async (ctx) => {
     },
   );
   return v === 'PASSED' ? 0 : 1;
+};
+
+// Resume the prior dispatch's executor session with feedback (context retained) instead
+// of a cold re-dispatch. Fail-loud: if the executor reports a different session id, the
+// resume did not re-attach -- nothing is committed and this exits non-zero.
+const resume: Handler = async (ctx) => {
+  const deps = depsFor(ctx);
+  const id = requireId(ctx);
+  const feedback = flagStr(ctx.args.flags, 'feedback') ?? '';
+  if (feedback === '') throw new CliError('resume needs --feedback "<what to fix>"', 2);
+  const result = await resumeTask(deps, id, feedback);
+  const mism = result.resume_session_mismatch === true;
+  const v = result.verifier?.result ?? 'FAILED';
+  emit(
+    ctx.json,
+    {
+      ok: !mism && v === 'PASSED',
+      id,
+      resumed: true,
+      session_mismatch: mism,
+      session_id: result.session_id ?? null,
+      verifier: v,
+      exit_class: result.exit_class,
+    },
+    () => {
+      if (mism)
+        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+      return `${id}: resumed -> ${v} (${result.exit_class}); ${next}`;
+    },
+  );
+  return !mism && v === 'PASSED' ? 0 : 1;
 };
 
 const land: Handler = (ctx) => {
@@ -268,6 +300,7 @@ export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
   dispatch,
+  resume,
   land,
   result,
   list,
@@ -285,6 +318,7 @@ export function helpText(): string {
     `Usage: router <command> [options]\n\n` +
     `  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)\n` +
     `  dispatch <id>          run the task on the quota-picked executor to a verified diff\n` +
+    `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
     `  land <id>              merge a PASSED dispatch's diff\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +

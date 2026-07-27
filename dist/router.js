@@ -6576,6 +6576,7 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "id",
   "title",
   "run",
+  "feedback",
   "state",
   "attempt",
   "since",
@@ -6631,7 +6632,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname5, join as join7, resolve as resolve2 } from "node:path";
@@ -9841,7 +9842,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join6 } from "node:path";
 
@@ -10159,6 +10160,7 @@ function parseCodexLog(logText) {
   let output = 0;
   let cached = 0;
   let model = null;
+  let sessionId = null;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10179,13 +10181,18 @@ function parseCodexLog(logText) {
       const m = rec.model ?? rec.thread?.model ?? rec.turn?.model;
       if (typeof m === "string" && m !== "") model = m;
     }
+    if (sessionId === null) {
+      const s = rec.session_id ?? rec.thread_id ?? rec.thread?.id ?? rec.session?.id;
+      if (typeof s === "string" && s !== "") sessionId = s;
+    }
   }
-  return { usage: found ? { input, output, cached } : null, model };
+  return { usage: found ? { input, output, cached } : null, model, sessionId };
 }
 function parseClaudeLog(logText) {
   let usage2 = null;
   let costUsd = null;
   let model = null;
+  let sessionId = null;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10201,8 +10208,9 @@ function parseClaudeLog(logText) {
       if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
     }
     if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
+    if (sessionId === null && typeof rec.session_id === "string" && rec.session_id !== "") sessionId = rec.session_id;
   }
-  return { usage: usage2, model, costUsd };
+  return { usage: usage2, model, costUsd, sessionId };
 }
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -10223,6 +10231,26 @@ function codexLauncher(worker) {
         buildPrompt(ctx),
         "-C",
         ctx.worktreeDir,
+        "-s",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "--json"
+      ];
+      if (model !== void 0) argv.push("-m", model);
+      return argv;
+    },
+    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
+    // resume flag can vary by codex version; the session-id continuity guard in
+    // `router resume` catches a wrong invocation instead of silently not resuming.
+    buildResumeArgv(worktreeDir, sessionId, feedback) {
+      const argv = [
+        bin,
+        "exec",
+        "resume",
+        sessionId,
+        feedback,
+        "-C",
+        worktreeDir,
         "-s",
         "workspace-write",
         "--skip-git-repo-check",
@@ -10254,6 +10282,29 @@ function claudeLauncher(worker) {
         "Read,Edit,Write",
         "--add-dir",
         ctx.worktreeDir
+      ];
+      if (model !== void 0) argv.push("--model", model);
+      return argv;
+    },
+    // `claude --resume <session-id> -p <feedback>` continues that session with its
+    // context retained. The session-id continuity guard in `router resume` verifies
+    // it re-attached.
+    buildResumeArgv(worktreeDir, sessionId, feedback) {
+      const argv = [
+        bin,
+        "-p",
+        feedback,
+        "--resume",
+        sessionId,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "acceptEdits",
+        "--tools",
+        "Read,Edit,Write",
+        "--add-dir",
+        worktreeDir
       ];
       if (model !== void 0) argv.push("--model", model);
       return argv;
@@ -10698,11 +10749,87 @@ async function dispatchTask(deps, id) {
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
     worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    base_sha: baseSha,
     ...switches > 0 ? { executor_switches: switches } : {},
+    ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
+    ...costUsd !== null ? { cost_usd: costUsd } : {},
+    ...parsed.sessionId ? { session_id: parsed.sessionId } : {}
+  };
+  if (exitClass === "ok") {
+    const patch = rawDiff(worktreeDir, baseSha, "HEAD");
+    writeFileSync2(paths.diffPatch(id, RUN), patch);
+    result2.diff_sha = createHash("sha256").update(patch).digest("hex");
+    result2.verifier = verifyTask({
+      repoRoot: paths.repoRoot,
+      worktreeDir,
+      baseSha,
+      head: "HEAD",
+      allowedGlobs: task.allowed_globs,
+      ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
+      ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
+      verify: task.verify ?? [],
+      env: verifyEnv
+    });
+  }
+  writeResult(paths, id, RUN, result2);
+  appendMetric2(deps, result2);
+  return result2;
+}
+async function resumeTask(deps, id, feedback) {
+  const { paths } = deps;
+  const prev = readResult(paths, id, RUN);
+  if (prev === null) throw new Error(`no prior dispatch for ${id}; run \`router dispatch ${id}\` first`);
+  const priorSession = prev.session_id ?? null;
+  if (!priorSession) throw new Error(`prior run for ${id} has no session id; resume unavailable -- re-dispatch instead`);
+  const worktreeDir = paths.worktree(id, RUN);
+  if (!existsSync6(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
+  const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, "HEAD");
+  const { task } = loadTask(paths, id);
+  const used = prev.worker.model ? { kind: prev.worker.kind, model: prev.worker.model } : { kind: prev.worker.kind };
+  const launcher = makeLauncher(used);
+  const logPath = paths.workerLog(id, RUN);
+  writeFileSync2(logPath, "");
+  const verifyEnv = buildWorkerEnv(process.env);
+  const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+  const o = await superviseWorker({
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    cwd: worktreeDir,
+    env: executorEnv,
+    logPath,
+    heartbeatPath: paths.heartbeat(id, RUN),
+    watchDir: worktreeDir,
+    maxWallMs: task.max_wall_minutes * 6e4,
+    stallMs: (used.stall_minutes ?? 10) * 6e4
+  });
+  const log = safeRead(logPath);
+  const exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+  const parsed = (launcher.parseLog ?? parseCodexLog)(log);
+  const newSession = parsed.sessionId ?? null;
+  const mismatch = newSession !== null && newSession !== priorSession;
+  const model = parsed.model ?? used.model;
+  const costUsd = parsed.costUsd ?? null;
+  const result2 = {
+    run_id: RUN,
+    task_id: id,
+    attempt_number: prev.attempt_number + 1,
+    exit_class: mismatch ? "task_failed" : exitClass,
+    rc: o.rc,
+    timed_out: o.timedOut,
+    stalled: o.stalled,
+    env_error: exitClass === "env_error",
+    started_at: new Date(o.startedAtMs).toISOString(),
+    ended_at: new Date(o.endedAtMs).toISOString(),
+    wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1e3),
+    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    base_sha: baseSha,
+    resumed: true,
+    session_id: newSession ?? priorSession,
+    ...mismatch ? { resume_session_mismatch: true } : {},
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
-  if (exitClass === "ok") {
+  if (!mismatch && exitClass === "ok") {
+    commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
     writeFileSync2(paths.diffPatch(id, RUN), patch);
     result2.diff_sha = createHash("sha256").update(patch).digest("hex");
@@ -10940,10 +11067,10 @@ function depsFor(ctx) {
   const rd = found ?? join7(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync6(d)) mkdirSync4(d, { recursive: true });
+    if (!existsSync7(d)) mkdirSync4(d, { recursive: true });
   }
   const gi = join7(paths.root, ".gitignore");
-  if (!existsSync6(gi)) writeFileSync3(gi, "*\n");
+  if (!existsSync7(gi)) writeFileSync3(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -10995,8 +11122,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync4(paths.taskDir(id), { recursive: true });
-  if (!existsSync6(paths.taskYaml(id))) writeFileSync3(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync6(paths.contractMd(id))) writeFileSync3(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync7(paths.taskYaml(id))) writeFileSync3(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync7(paths.contractMd(id))) writeFileSync3(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -11030,6 +11157,34 @@ var dispatch = async (ctx) => {
     }
   );
   return v === "PASSED" ? 0 : 1;
+};
+var resume = async (ctx) => {
+  const deps = depsFor(ctx);
+  const id = requireId(ctx);
+  const feedback = flagStr(ctx.args.flags, "feedback") ?? "";
+  if (feedback === "") throw new CliError('resume needs --feedback "<what to fix>"', 2);
+  const result2 = await resumeTask(deps, id, feedback);
+  const mism = result2.resume_session_mismatch === true;
+  const v = result2.verifier?.result ?? "FAILED";
+  emit(
+    ctx.json,
+    {
+      ok: !mism && v === "PASSED",
+      id,
+      resumed: true,
+      session_mismatch: mism,
+      session_id: result2.session_id ?? null,
+      verifier: v,
+      exit_class: result2.exit_class
+    },
+    () => {
+      if (mism)
+        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result2.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+      return `${id}: resumed -> ${v} (${result2.exit_class}); ${next}`;
+    }
+  );
+  return !mism && v === "PASSED" ? 0 : 1;
 };
 var land = (ctx) => {
   const { paths } = depsFor(ctx);
@@ -11071,7 +11226,7 @@ ${tail}`;
 };
 var list = (ctx) => {
   const { paths } = depsFor(ctx);
-  const ids = existsSync6(paths.tasksDir) ? readdirSync2(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync7(paths.tasksDir) ? readdirSync2(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
@@ -11080,7 +11235,7 @@ var list = (ctx) => {
     }
     const res = readResult(paths, id, RUN2);
     const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
-    const worktree = existsSync6(paths.worktree(id, RUN2));
+    const worktree = existsSync7(paths.worktree(id, RUN2));
     return { id, title, status, worktree };
   });
   emit(ctx.json, { ok: true, tasks: rows }, () => {
@@ -11107,7 +11262,7 @@ var setupStatusline = (ctx) => {
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve2(dirname5(fileURLToPath(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync6(settingsPath)) {
+  if (existsSync7(settingsPath)) {
     try {
       settings = JSON.parse(readFileSync6(settingsPath, "utf8"));
     } catch (e) {
@@ -11122,7 +11277,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync6(statuslinePath);
+  const missing = !existsSync7(statuslinePath);
   emit(
     ctx.json,
     {
@@ -11152,6 +11307,7 @@ var HANDLERS = {
   init,
   new: newTask,
   dispatch,
+  resume,
   land,
   result,
   list,
@@ -11168,6 +11324,7 @@ Usage: router <command> [options]
 
   new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)
   dispatch <id>          run the task on the quota-picked executor to a verified diff
+  resume <id> --feedback continue the prior executor session with feedback (no cold restart)
   land <id>              merge a PASSED dispatch's diff
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
