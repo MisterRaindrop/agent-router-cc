@@ -1,11 +1,11 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { dump } from 'js-yaml';
+import { dump, load } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
@@ -13,6 +13,7 @@ import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.t
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask } from '../app/dispatch.ts';
+import { buildUsageReport, renderUsage } from '../app/usageReport.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -55,6 +56,8 @@ function requireId(ctx: Ctx): string {
 }
 
 const RUN = fmtRunId(1); // one synchronous attempt per task
+
+const pad = (s: string, n: number): string => (s.length >= n ? s : s + ' '.repeat(n - s.length));
 
 function taskTemplate(id: string, title: string): string {
   return dump(
@@ -165,6 +168,47 @@ const result: Handler = (ctx) => {
   return 0;
 };
 
+// List authored tasks with their last dispatch status and whether a worktree is
+// still on disk (read-only; helps you see leftovers before cleaning them).
+const list: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const ids = existsSync(paths.tasksDir)
+    ? readdirSync(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
+    : [];
+  const rows = ids.map((id) => {
+    let title = '';
+    try {
+      title = ((load(readFileSync(paths.taskYaml(id), 'utf8')) as { title?: string } | null)?.title) ?? '';
+    } catch {
+      /* missing/invalid task.yaml */
+    }
+    const res = store.readResult(paths, id, RUN);
+    const status = res === null ? 'none' : (res.verifier?.result ?? res.exit_class);
+    const worktree = existsSync(paths.worktree(id, RUN));
+    return { id, title, status, worktree };
+  });
+  emit(ctx.json, { ok: true, tasks: rows }, () => {
+    if (rows.length === 0) return 'No tasks in .router/tasks.';
+    const lines = [`Tasks (${rows.length}):`, pad('id', 22) + pad('status', 10) + pad('worktree', 10) + 'title'];
+    for (const r of rows) lines.push(pad(r.id, 22) + pad(String(r.status), 10) + pad(r.worktree ? 'present' : '-', 10) + r.title);
+    const leftover = rows.filter((r) => r.worktree).length;
+    if (leftover > 0)
+      lines.push(`\n${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+    return lines.join('\n');
+  });
+  return 0;
+};
+
+// Token/cost usage across recent dispatches, read from .router/metrics.jsonl.
+// Provider cost where reported; otherwise a list-price estimate (src/core/pricing.ts).
+const usage: Handler = (ctx) => {
+  const { paths, clock } = depsFor(ctx);
+  const all = flagBool(ctx.args.flags, 'all');
+  const report = buildUsageReport(paths, clock.nowIso(), { all });
+  emit(ctx.json, { ok: true, usage: report }, () => renderUsage(report));
+  return 0;
+};
+
 // Wire router's usage-snapshot wrapper into Claude Code's statusLine so the quota
 // balancer can read claude-side remaining quota. Chains any existing statusline.
 const setupStatusline: Handler = (ctx) => {
@@ -226,6 +270,8 @@ export const HANDLERS: Record<string, Handler> = {
   dispatch,
   land,
   result,
+  list,
+  usage,
   'setup-statusline': setupStatusline,
 };
 
@@ -241,8 +287,10 @@ export function helpText(): string {
     `  dispatch <id>          run the task on the quota-picked executor to a verified diff\n` +
     `  land <id>              merge a PASSED dispatch's diff\n` +
     `  result <id>            show the verifier report + log tail\n` +
+    `  list                   list tasks with last status + whether a worktree remains\n` +
+    `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }

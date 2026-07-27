@@ -6571,7 +6571,7 @@ var require_ajv = __commonJS({
 });
 
 // src/cli/args.ts
-var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run"]);
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run", "all"]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "id",
   "title",
@@ -6631,7 +6631,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync6, mkdirSync as mkdirSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir as homedir2 } from "node:os";
 import { dirname as dirname5, join as join7, resolve as resolve2 } from "node:path";
@@ -9236,7 +9236,7 @@ function blockHeader(string, indentPerLevel) {
 function encodeFlowBreaks(string, indent) {
   let nextLF = string.indexOf("\n");
   if (nextLF === -1) return string;
-  const pad = " ".repeat(indent);
+  const pad3 = " ".repeat(indent);
   let result2 = string.slice(0, nextLF);
   const lineRe = /(\n+)([^\n]*)/g;
   lineRe.lastIndex = nextLF;
@@ -9244,7 +9244,7 @@ function encodeFlowBreaks(string, indent) {
   while (match = lineRe.exec(string)) {
     const breaks = match[1].length;
     const line = match[2];
-    result2 += "\n".repeat(breaks + 1) + pad + line;
+    result2 += "\n".repeat(breaks + 1) + pad3 + line;
   }
   return result2;
 }
@@ -9320,8 +9320,8 @@ function writeFlowSequence(state, level, node) {
     if (result2 !== "") result2 += `,${!state.flowSkipCommaSpace ? " " : ""}`;
     result2 += item;
   }
-  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
-  return `[${pad}${result2}${pad}]`;
+  const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
+  return `[${pad3}${result2}${pad3}]`;
 }
 function writeBlockSequence(state, level, node, compact) {
   let result2 = "";
@@ -9353,8 +9353,8 @@ function writeFlowMapping(state, level, node) {
     pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep}${valueText}`;
     result2 += pairBuffer;
   }
-  const pad = state.flowBracketPadding && result2 !== "" ? " " : "";
-  return `{${pad}${result2}${pad}}`;
+  const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
+  return `{${pad3}${result2}${pad3}}`;
 }
 function sortKeyValue(key) {
   return key.kind === "scalar" ? key.value : key;
@@ -9809,6 +9809,20 @@ function appendJsonl(path, record) {
   appendFileSync(path, `${line}
 `, { flag: "a" });
 }
+function readJsonl(path) {
+  if (!existsSync2(path)) return [];
+  const raw = readFileSync(path, "utf8");
+  const out2 = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    try {
+      out2.push(JSON.parse(trimmed));
+    } catch {
+    }
+  }
+  return out2;
+}
 
 // src/io/store.ts
 function readJson(path) {
@@ -10169,7 +10183,7 @@ function parseCodexLog(logText) {
   return { usage: found ? { input, output, cached } : null, model };
 }
 function parseClaudeLog(logText) {
-  let usage = null;
+  let usage2 = null;
   let costUsd = null;
   let model = null;
   for (const line of logText.split("\n")) {
@@ -10183,12 +10197,12 @@ function parseClaudeLog(logText) {
     }
     const rec = o;
     if (rec.type === "result" && rec.usage) {
-      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      usage2 = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
       if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
     }
     if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
   }
-  return { usage, model, costUsd };
+  return { usage: usage2, model, costUsd };
 }
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -10736,6 +10750,146 @@ function appendMetric2(deps, result2) {
   appendMetric(deps.paths, metric);
 }
 
+// src/core/pricing.ts
+var TABLE = [
+  // Anthropic (Claude)
+  ["opus", { inPerMTok: 5, outPerMTok: 25 }],
+  ["sonnet", { inPerMTok: 3, outPerMTok: 15 }],
+  ["haiku", { inPerMTok: 1, outPerMTok: 5 }],
+  // OpenAI (Codex / GPT)
+  ["gpt-5-nano", { inPerMTok: 0.05, outPerMTok: 0.4 }],
+  ["gpt-5-mini", { inPerMTok: 0.25, outPerMTok: 2 }],
+  ["gpt-5-codex", { inPerMTok: 1.25, outPerMTok: 10 }],
+  ["gpt-5", { inPerMTok: 1.25, outPerMTok: 10 }]
+];
+function priceFor(model) {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  let best = null;
+  let bestLen = -1;
+  for (const [key, price] of TABLE) {
+    if (m.includes(key) && key.length > bestLen) {
+      best = price;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+function deriveCost(model, tokensIn, tokensOut) {
+  const p = priceFor(model);
+  if (p === null) return null;
+  return tokensIn / 1e6 * p.inPerMTok + tokensOut / 1e6 * p.outPerMTok;
+}
+
+// src/app/usageReport.ts
+var DEFAULT_DAYS = 7;
+function buildUsageReport(paths, nowIso, opts = {}) {
+  const records = readJsonl(paths.metrics);
+  const windowDays = opts.all ? null : DEFAULT_DAYS;
+  const cutoff = windowDays === null ? -Infinity : Date.parse(nowIso) - windowDays * 864e5;
+  const rows = [];
+  for (const r of records) {
+    const t = Date.parse(r.ts);
+    if (Number.isFinite(t) && t < cutoff) continue;
+    const tokensIn = r.tokens_input ?? 0;
+    const tokensOut = r.tokens_output ?? 0;
+    let costUsd;
+    let costSource;
+    if (r.cost_usd !== null && r.cost_usd !== void 0) {
+      costUsd = r.cost_usd;
+      costSource = "provider";
+    } else {
+      const d = deriveCost(r.model, tokensIn, tokensOut);
+      costUsd = d;
+      costSource = d === null ? "none" : "derived";
+    }
+    rows.push({
+      ts: r.ts,
+      taskId: r.task_id,
+      executor: r.executor ?? "unknown",
+      model: r.model,
+      tokensIn,
+      tokensOut,
+      tokensTotal: tokensIn + tokensOut,
+      costUsd,
+      costSource,
+      verifier: r.verifier_result
+    });
+  }
+  rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
+  let totalTokensIn = 0;
+  let totalTokensOut = 0;
+  let totalCostUsd = 0;
+  let costComplete = true;
+  const byExec = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    totalTokensIn += row.tokensIn;
+    totalTokensOut += row.tokensOut;
+    if (row.costUsd === null) costComplete = false;
+    else totalCostUsd += row.costUsd;
+    const e = byExec.get(row.executor) ?? { executor: row.executor, dispatches: 0, tokensTotal: 0, costUsd: 0, costComplete: true };
+    e.dispatches += 1;
+    e.tokensTotal += row.tokensTotal;
+    if (row.costUsd === null) e.costComplete = false;
+    else e.costUsd += row.costUsd;
+    byExec.set(row.executor, e);
+  }
+  return {
+    windowDays,
+    rows,
+    totalTokensIn,
+    totalTokensOut,
+    totalTokens: totalTokensIn + totalTokensOut,
+    totalCostUsd,
+    costComplete,
+    byExecutor: [...byExec.values()].sort((a, b) => b.tokensTotal - a.tokensTotal)
+  };
+}
+function pad(s, n) {
+  return s.length >= n ? s : s + " ".repeat(n - s.length);
+}
+function fmtTokens(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+function fmtCost(costUsd, source) {
+  if (costUsd === null) return "tokens";
+  const s = `$${costUsd.toFixed(2)}`;
+  return source === "derived" ? `~${s}` : s;
+}
+function shortModel(m) {
+  if (!m) return "";
+  return m.length > 18 ? m.slice(0, 17) + "\u2026" : m;
+}
+function renderUsage(report) {
+  const win = report.windowDays === null ? "all time" : `last ${report.windowDays} days`;
+  if (report.rows.length === 0) {
+    return `Router usage \u2014 ${win}
+No dispatches recorded yet.`;
+  }
+  const bar = "\u2500".repeat(80);
+  const lines = [];
+  lines.push(`Router usage \u2014 ${win}    ${report.rows.length} dispatch(es) \xB7 ${report.byExecutor.length} executor(s)`);
+  lines.push(bar);
+  lines.push(pad("Task", 16) + pad("executor/model", 28) + pad("In", 8) + pad("Out", 8) + pad("Tokens", 9) + "Cost");
+  for (const r of report.rows) {
+    const who = `${r.executor}${r.model ? `/${shortModel(r.model)}` : ""}`;
+    lines.push(
+      pad(r.taskId, 16) + pad(who, 28) + pad(fmtTokens(r.tokensIn), 8) + pad(fmtTokens(r.tokensOut), 8) + pad(fmtTokens(r.tokensTotal), 9) + fmtCost(r.costUsd, r.costSource)
+    );
+  }
+  lines.push(bar);
+  const totalCost = report.costComplete ? `$${report.totalCostUsd.toFixed(2)}` : `~$${report.totalCostUsd.toFixed(2)}+`;
+  lines.push(
+    pad("TOTAL", 44) + pad(fmtTokens(report.totalTokensIn), 8) + pad(fmtTokens(report.totalTokensOut), 8) + pad(fmtTokens(report.totalTokens), 9) + totalCost
+  );
+  const byExec = report.byExecutor.map((e) => `${e.executor} ${e.dispatches} (${e.costComplete ? "" : "~"}$${e.costUsd.toFixed(2)}${e.costComplete ? "" : "+"})`).join(" \xB7 ");
+  lines.push(`By executor: ${byExec}`);
+  lines.push('Cost: provider-reported where available; ~ = list-price estimate (src/core/pricing.ts); "tokens" = unknown model.');
+  return lines.join("\n");
+}
+
 // src/core/statuslineSetup.ts
 var MARKER = "router-usage.mjs";
 function shQuote(s) {
@@ -10798,6 +10952,7 @@ function requireId(ctx) {
   return id;
 }
 var RUN2 = runId(1);
+var pad2 = (s, n) => s.length >= n ? s : s + " ".repeat(n - s.length);
 function taskTemplate(id, title) {
   return dump(
     {
@@ -10914,6 +11069,39 @@ ${tail}`;
   });
   return 0;
 };
+var list = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const ids = existsSync6(paths.tasksDir) ? readdirSync2(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const rows = ids.map((id) => {
+    let title = "";
+    try {
+      title = load(readFileSync6(paths.taskYaml(id), "utf8"))?.title ?? "";
+    } catch {
+    }
+    const res = readResult(paths, id, RUN2);
+    const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
+    const worktree = existsSync6(paths.worktree(id, RUN2));
+    return { id, title, status, worktree };
+  });
+  emit(ctx.json, { ok: true, tasks: rows }, () => {
+    if (rows.length === 0) return "No tasks in .router/tasks.";
+    const lines = [`Tasks (${rows.length}):`, pad2("id", 22) + pad2("status", 10) + pad2("worktree", 10) + "title"];
+    for (const r of rows) lines.push(pad2(r.id, 22) + pad2(String(r.status), 10) + pad2(r.worktree ? "present" : "-", 10) + r.title);
+    const leftover = rows.filter((r) => r.worktree).length;
+    if (leftover > 0)
+      lines.push(`
+${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+    return lines.join("\n");
+  });
+  return 0;
+};
+var usage = (ctx) => {
+  const { paths, clock } = depsFor(ctx);
+  const all = flagBool(ctx.args.flags, "all");
+  const report = buildUsageReport(paths, clock.nowIso(), { all });
+  emit(ctx.json, { ok: true, usage: report }, () => renderUsage(report));
+  return 0;
+};
 var setupStatusline = (ctx) => {
   const settingsPath = flagStr(ctx.args.flags, "settings") ?? join7(homedir2(), ".claude", "settings.json");
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve2(dirname5(fileURLToPath(import.meta.url)), "..", "statusline", "router-usage.mjs");
@@ -10966,6 +11154,8 @@ var HANDLERS = {
   dispatch,
   land,
   result,
+  list,
+  usage,
   "setup-statusline": setupStatusline
 };
 function versionText() {
@@ -10980,10 +11170,12 @@ Usage: router <command> [options]
   dispatch <id>          run the task on the quota-picked executor to a verified diff
   land <id>              merge a PASSED dispatch's diff
   result <id>            show the verifier report + log tail
+  list                   list tasks with last status + whether a worktree remains
+  usage [--all]          token/cost usage across recent dispatches (last 7 days)
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
+Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 
