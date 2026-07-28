@@ -7,9 +7,11 @@ itself** -- its soundness, risks, and whether there is a better approach. This r
 the *approach*, NOT how the work will be split into tasks (that is `/router:go`).
 
 **You do not review your own plan.** Launch an **independent reviewer -- a different
-model from yourself** (you are Claude, so prefer a non-Claude reviewer, e.g. run
-`codex exec` via Bash, or a `Task` subagent pinned to another model). Independence is
-the whole point: it catches blind spots a self-review shares.
+model from yourself** (you are Claude, so prefer a non-Claude reviewer). Get the reviewer
+chain from `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models --json` (the `review` array,
+strongest first): launch the first entry via `codex exec -m <model> -c
+model_reasoning_effort=<effort>`; if codex is out of quota, fall to the next same-strength
+entry. Independence is the whole point: it catches blind spots a self-review shares.
 
 **The human is the judge, not you.** Print the reviewer's critique **verbatim** so the
 user can see it. You do not decide which objections are valid, and you do not silently

@@ -70,3 +70,20 @@ test('task rejects empty allowed_globs', () => {
   const r = validateTaskYaml(t);
   assert.equal(r.ok, false);
 });
+
+test('task accepts a valid tier and an effort on worker', () => {
+  const t = parse(GOOD_TASK) as Record<string, unknown>;
+  t.tier = 'strong';
+  t.worker = { kind: 'codex', model: 'gpt-5.6-sol', effort: 'max' };
+  const r = validateTaskYaml(t);
+  assert.ok(r.ok, r.errors.join('; '));
+  assert.equal(r.value?.tier, 'strong');
+  assert.equal(r.value?.worker?.effort, 'max');
+});
+
+test('task rejects an unknown tier value', () => {
+  const t = parse(GOOD_TASK) as Record<string, unknown>;
+  t.tier = 'medium'; // only weak|strong allowed
+  const r = validateTaskYaml(t);
+  assert.equal(r.ok, false);
+});

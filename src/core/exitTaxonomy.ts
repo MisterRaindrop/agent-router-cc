@@ -64,3 +64,16 @@ export function reclassifyEnvironmentFailure(
   if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
   return new RegExp(pattern, 'i').test(logText) ? 'env_error' : exitClass;
 }
+
+// A configured model slug the executor rejects: the tier config is likely stale
+// (provider updated its lineup, or the plan lacks that tier). Detected so the CLI
+// can warn the user to edit .router/models.yaml -- never auto-changed. PURE.
+export const DEFAULT_MODEL_MISMATCH_PATTERN =
+  '\\b(unknown model|model not found|no such model|model .*not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b';
+
+export function detectModelMismatch(
+  logText: string,
+  pattern: string = DEFAULT_MODEL_MISMATCH_PATTERN,
+): boolean {
+  return new RegExp(pattern, 'i').test(logText);
+}

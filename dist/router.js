@@ -6632,10 +6632,10 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync7, writeFileSync as writeFileSync3 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname5, join as join7, resolve as resolve2 } from "node:path";
+import { dirname as dirname5, join as join8, resolve as resolve2 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -9550,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.5" : "0.0.0-dev";
+var VERSION = true ? "0.6.6" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9842,9 +9842,9 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync6, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/core/pickExecutor.ts
 function pickExecutor(quotas) {
@@ -9881,6 +9881,10 @@ var DEFAULT_ENV_ERROR_PATTERN = "\\b(not logged in|please run /login|authenticat
 function reclassifyEnvironmentFailure(exitClass, logText, pattern = DEFAULT_ENV_ERROR_PATTERN) {
   if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
   return new RegExp(pattern, "i").test(logText) ? "env_error" : exitClass;
+}
+var DEFAULT_MODEL_MISMATCH_PATTERN = "\\b(unknown model|model not found|no such model|model .*not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b";
+function detectModelMismatch(logText, pattern = DEFAULT_MODEL_MISMATCH_PATTERN) {
+  return new RegExp(pattern, "i").test(logText);
 }
 
 // src/io/env.ts
@@ -10220,6 +10224,7 @@ function num(v) {
 function codexLauncher(worker) {
   const bin = process.env.ROUTER_CODEX_BIN ?? "codex";
   const model = worker.model;
+  const effort = worker.effort;
   return {
     kind: "codex",
     ...model !== void 0 ? { model } : {},
@@ -10237,6 +10242,7 @@ function codexLauncher(worker) {
         "--json"
       ];
       if (model !== void 0) argv.push("-m", model);
+      if (effort !== void 0) argv.push("-c", `model_reasoning_effort=${effort}`);
       return argv;
     },
     // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
@@ -10257,6 +10263,7 @@ function codexLauncher(worker) {
         "--json"
       ];
       if (model !== void 0) argv.push("-m", model);
+      if (effort !== void 0) argv.push("-c", `model_reasoning_effort=${effort}`);
       return argv;
     }
   };
@@ -10264,6 +10271,7 @@ function codexLauncher(worker) {
 function claudeLauncher(worker) {
   const bin = process.env.ROUTER_CLAUDE_BIN ?? "claude";
   const model = worker.model;
+  const effort = worker.effort;
   return {
     kind: "claude",
     ...model !== void 0 ? { model } : {},
@@ -10284,6 +10292,7 @@ function claudeLauncher(worker) {
         ctx.worktreeDir
       ];
       if (model !== void 0) argv.push("--model", model);
+      if (effort !== void 0) argv.push("--effort", effort);
       return argv;
     },
     // `claude --resume <session-id> -p <feedback>` continues that session with its
@@ -10307,6 +10316,7 @@ function claudeLauncher(worker) {
         worktreeDir
       ];
       if (model !== void 0) argv.push("--model", model);
+      if (effort !== void 0) argv.push("--effort", effort);
       return argv;
     }
   };
@@ -10332,8 +10342,70 @@ Constraints:
 `;
 }
 
-// src/app/taskLoad.ts
+// src/app/modelConfig.ts
 import { readFileSync as readFileSync4 } from "node:fs";
+import { join as join5 } from "node:path";
+var DEFAULT_MODEL_CONFIG = {
+  codex: {
+    weak: { model: "gpt-5.6-terra", effort: "xhigh" },
+    strong: { model: "gpt-5.6-sol", effort: "max" }
+  },
+  claude: {
+    weak: { model: "haiku", effort: "xhigh" },
+    strong: { model: "opus", effort: "xhigh" }
+  },
+  // spec/review: strongest + independent (non-Claude first); fall to a same-strength
+  // Claude reviewer if codex is unavailable/out of quota.
+  review: [
+    { kind: "codex", model: "gpt-5.6-sol", effort: "max" },
+    { kind: "claude", model: "opus", effort: "xhigh" }
+  ]
+};
+function modelsYamlPath(paths) {
+  return join5(paths.root, "models.yaml");
+}
+function isSpec(v) {
+  return typeof v === "object" && v !== null && typeof v.model === "string";
+}
+function cloneDefault() {
+  return JSON.parse(JSON.stringify(DEFAULT_MODEL_CONFIG));
+}
+function loadModelConfig(paths) {
+  const cfg = cloneDefault();
+  let raw;
+  try {
+    raw = load(readFileSync4(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+  } catch {
+    return cfg;
+  }
+  if (typeof raw !== "object" || raw === null) return cfg;
+  const o = raw;
+  for (const kind of ["codex", "claude"]) {
+    const section = o[kind];
+    if (typeof section === "object" && section !== null) {
+      for (const tier of ["weak", "strong"]) {
+        const spec = section[tier];
+        if (isSpec(spec)) cfg[kind][tier] = { model: spec.model, ...spec.effort ? { effort: spec.effort } : {} };
+      }
+    }
+  }
+  if (Array.isArray(o.review)) {
+    const chain = o.review.filter(
+      (r) => typeof r === "object" && r !== null && r.kind !== void 0
+    );
+    if (chain.length > 0) cfg.review = chain;
+  }
+  return cfg;
+}
+function tierWorkers(cfg, tier) {
+  return ["codex", "claude"].map((kind) => {
+    const spec = cfg[kind][tier];
+    return { kind, model: spec.model, ...spec.effort ? { effort: spec.effort } : {} };
+  });
+}
+
+// src/app/taskLoad.ts
+import { readFileSync as readFileSync5 } from "node:fs";
 
 // src/domain/validate.ts
 var import_ajv = __toESM(require_ajv(), 1);
@@ -10384,6 +10456,7 @@ var task_contract_schema_default = {
         items: { type: "string", minLength: 1 }
       }
     },
+    tier: { enum: ["weak", "strong"] },
     worker: {
       type: "object",
       additionalProperties: false,
@@ -10392,6 +10465,7 @@ var task_contract_schema_default = {
         kind: { enum: ["codex", "claude"] },
         api_key_env: { type: "string", minLength: 1 },
         model: { type: "string", minLength: 1 },
+        effort: { type: "string", minLength: 1 },
         max_wall_minutes_default: { type: "integer", minimum: 1 },
         stall_minutes: { type: "integer", minimum: 1 }
       }
@@ -10421,10 +10495,10 @@ var TaskContractError = class extends Error {
   }
 };
 function loadTask(paths, id) {
-  const taskYamlText = readFileSync4(paths.taskYaml(id), "utf8");
+  const taskYamlText = readFileSync5(paths.taskYaml(id), "utf8");
   let contractMdText = "";
   try {
-    contractMdText = readFileSync4(paths.contractMd(id), "utf8");
+    contractMdText = readFileSync5(paths.contractMd(id), "utf8");
   } catch {
     contractMdText = "";
   }
@@ -10444,7 +10518,7 @@ function loadTask(paths, id) {
 // src/app/verifier.ts
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 
 // src/core/glob.ts
 var cache = /* @__PURE__ */ new Map();
@@ -10616,7 +10690,7 @@ function verifyTask(req) {
     checks.push(fail("diff_applies", "diff is empty - executor produced no committed change"));
     return { result: "FAILED", checks };
   }
-  const tmpBase = mkdtempSync(join5(tmpdir(), "router-verify-base-"));
+  const tmpBase = mkdtempSync(join6(tmpdir(), "router-verify-base-"));
   let applies;
   try {
     worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
@@ -10677,10 +10751,10 @@ function verifyTask(req) {
 var RUN = runId(1);
 function quotaFor(paths, kind) {
   if (kind === "codex") {
-    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join6(homedir(), ".codex", "sessions");
+    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join7(homedir(), ".codex", "sessions");
     return readCodexQuota(dir);
   }
-  return readClaudeQuota(join6(paths.root, "usage.json"));
+  return readClaudeQuota(join7(paths.root, "usage.json"));
 }
 function orderByQuota(paths, workers) {
   const quotas = workers.map((w) => quotaFor(paths, w.kind)).filter((q) => q !== null);
@@ -10693,7 +10767,7 @@ async function dispatchTask(deps, id) {
   const { paths, clock } = deps;
   const baseSha = resolveCommit(paths.repoRoot, "HEAD");
   const { task, contractMdText } = loadTask(paths, id);
-  const workers = task.worker ? [task.worker] : [{ kind: "codex" }, { kind: "claude" }];
+  const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
   const worktreeDir = paths.worktree(id, RUN);
   const branch = runBranch(id, RUN);
   worktreeRemove(paths.repoRoot, worktreeDir);
@@ -10733,9 +10807,11 @@ async function dispatchTask(deps, id) {
   }
   if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${RUN}`);
   const launcher = makeLauncher(used);
-  const parsed = (launcher.parseLog ?? parseCodexLog)(safeRead(logPath));
+  const finalLog = safeRead(logPath);
+  const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
+  const modelMismatch = exitClass !== "ok" && detectModelMismatch(finalLog);
   const result2 = {
     run_id: RUN,
     task_id: id,
@@ -10748,9 +10824,14 @@ async function dispatchTask(deps, id) {
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
-    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    worker: {
+      kind: used.kind,
+      ...model !== void 0 ? { model } : {},
+      ...used.effort !== void 0 ? { effort: used.effort } : {}
+    },
     base_sha: baseSha,
     ...switches > 0 ? { executor_switches: switches } : {},
+    ...modelMismatch ? { model_mismatch: true } : {},
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {},
     ...parsed.sessionId ? { session_id: parsed.sessionId } : {}
@@ -10785,7 +10866,11 @@ async function resumeTask(deps, id, feedback) {
   if (!existsSync6(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
   const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, "HEAD");
   const { task } = loadTask(paths, id);
-  const used = prev.worker.model ? { kind: prev.worker.kind, model: prev.worker.model } : { kind: prev.worker.kind };
+  const used = {
+    kind: prev.worker.kind,
+    ...prev.worker.model ? { model: prev.worker.model } : {},
+    ...prev.worker.effort ? { effort: prev.worker.effort } : {}
+  };
   const launcher = makeLauncher(used);
   const logPath = paths.workerLog(id, RUN);
   writeFileSync2(logPath, "");
@@ -10808,6 +10893,7 @@ async function resumeTask(deps, id, feedback) {
   const mismatch = newSession !== null && newSession !== priorSession;
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
+  const modelMismatch = exitClass !== "ok" && detectModelMismatch(log);
   const result2 = {
     run_id: RUN,
     task_id: id,
@@ -10820,11 +10906,16 @@ async function resumeTask(deps, id, feedback) {
     started_at: new Date(o.startedAtMs).toISOString(),
     ended_at: new Date(o.endedAtMs).toISOString(),
     wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1e3),
-    worker: model !== void 0 ? { kind: used.kind, model } : { kind: used.kind },
+    worker: {
+      kind: used.kind,
+      ...model !== void 0 ? { model } : {},
+      ...used.effort !== void 0 ? { effort: used.effort } : {}
+    },
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
     ...mismatch ? { resume_session_mismatch: true } : {},
+    ...modelMismatch ? { model_mismatch: true } : {},
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
@@ -10851,7 +10942,7 @@ async function resumeTask(deps, id, feedback) {
 }
 function safeRead(path) {
   try {
-    return readFileSync5(path, "utf8");
+    return readFileSync6(path, "utf8");
   } catch {
     return "";
   }
@@ -11093,12 +11184,12 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const found = explicit ?? findRouterDir(ctx.cwd);
-  const rd = found ?? join7(ctx.cwd, ROUTER_DIR);
+  const rd = found ?? join8(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
     if (!existsSync7(d)) mkdirSync4(d, { recursive: true });
   }
-  const gi = join7(paths.root, ".gitignore");
+  const gi = join8(paths.root, ".gitignore");
   if (!existsSync7(gi)) writeFileSync3(gi, "*\n");
   return { paths, clock: systemClock };
 }
@@ -11176,13 +11267,16 @@ var dispatch = async (ctx) => {
       exit_class: result2.exit_class,
       tokens: result2.tokens ?? null,
       cost_usd: result2.cost_usd ?? null,
-      executor_switches: result2.executor_switches ?? 0
+      executor_switches: result2.executor_switches ?? 0,
+      model_mismatch: result2.model_mismatch ?? false
     },
     () => {
       const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
       const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
       const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      return `${id}: ${v} (executor ${who}${sw}); ${next}`;
+      const warn = result2.model_mismatch ? `
+WARNING: ${result2.worker.kind} rejected model '${result2.worker.model ?? "?"}' -- your model config may be stale (provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.` : "";
+      return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
     }
   );
   return v === "PASSED" ? 0 : 1;
@@ -11241,7 +11335,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync6(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync7(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -11259,7 +11353,7 @@ var list = (ctx) => {
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync6(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync7(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
     const res = readResult(paths, id, RUN2);
@@ -11292,13 +11386,13 @@ ${explainSavingsText(report.baselineModel)}` : body;
   return 0;
 };
 var setupStatusline = (ctx) => {
-  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join7(homedir2(), ".claude", "settings.json");
+  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join8(homedir2(), ".claude", "settings.json");
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve2(dirname5(fileURLToPath(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
   if (existsSync7(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync6(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync7(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }
@@ -11337,6 +11431,21 @@ var setupStatusline = (ctx) => {
   );
   return 0;
 };
+var models = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const cfg = loadModelConfig(paths);
+  const spec = (s) => `${s.model}${s.effort ? `/${s.effort}` : ""}`;
+  emit(ctx.json, { ok: true, models: cfg }, () => {
+    const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
+    const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
+    const src = existsSync7(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    return `model tiers (${src}):
+${tier("codex")}
+${tier("claude")}
+  review: ${review}`;
+  });
+  return 0;
+};
 var HANDLERS = {
   init,
   new: newTask,
@@ -11346,6 +11455,7 @@ var HANDLERS = {
   result,
   list,
   usage,
+  models,
   "setup-statusline": setupStatusline
 };
 function versionText() {
@@ -11363,6 +11473,7 @@ Usage: router <command> [options]
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
   usage [--all]          token/cost usage across recent dispatches (last 7 days)
+  models                 print the resolved model-tier config (default + .router/models.yaml)
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
