@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load, JSON_SCHEMA } from 'js-yaml';
-import type { ModelSpec, ModelTier, ModelTierConfig, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { ModelSpec, ModelTier, ModelTierConfig, WorkerPolicy } from '../domain/types.ts';
 import type { RouterPaths } from '../io/paths.ts';
 
 // The model menu for tiered routing. A bundled default ships in this file so the
@@ -88,8 +88,8 @@ export function loadModelConfig(paths: RouterPaths): ModelTierConfig {
  * each carrying that tier's model + effort. Router then picks by quota.
  */
 export function tierWorkers(cfg: ModelTierConfig, tier: ModelTier): WorkerPolicy[] {
-  return (['codex', 'claude'] as WorkerKind[]).map((kind) => {
-    const spec = cfg[kind as 'codex' | 'claude'][tier];
+  return (['codex', 'claude'] as const).map((kind) => {
+    const spec = cfg[kind][tier];
     return { kind, model: spec.model, ...(spec.effort ? { effort: spec.effort } : {}) };
   });
 }

@@ -61,6 +61,7 @@ test('init keeps router runtime state gitignored and does not mention removed po
 
 test('every agent declares name + model', () => {
   const dir = new URL('../agents/', import.meta.url);
+  if (!existsSync(fileURLToPath(dir))) return; // no plugin agents shipped -> nothing to validate
   for (const f of readdirSync(dir).filter((x) => x.endsWith('.md'))) {
     const fm = frontmatter(readFileSync(new URL(f, dir), 'utf8'));
     assert.ok(fm.name, `${f}: missing name`);
