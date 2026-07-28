@@ -3,3 +3,4 @@ node_modules/
 .router/worktrees/
 .DS_Store
 .claude/
+docs/design/
