@@ -27,13 +27,16 @@ and the pass/fail verdict -- stays with you, never with the executor and never c
    **leave `verify: []`** -- you run the real build/tests later, so the CLI should apply only
    its environment-free gates, not a build/test command. Make each task's Definition of Done
    include **writing tests for the code it changes** (the cheap model produces a first cut;
-   you vet them). Pin the cheapest capable model with `worker: { kind: claude, model: haiku }`
-   (or `sonnet`) for a genuinely simple task; leave `worker` unset to let router quota-balance
-   codex vs claude.
+   you vet them). **Set the difficulty tier per task** in `task.yaml`: `tier: weak` for
+   mechanical work, `tier: strong` for a task that needs more capability. Router then picks
+   the executor by real quota and the model + reasoning effort from the tier config
+   (`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models` shows it) -- router never judges
+   difficulty itself; that judgment is yours. (An explicit `worker: { kind, model }` still
+   overrides the tier for a task that must run on a specific executor/model.)
 
-   **Touchpoint 1:** show the user the task list -- each clear task with its scope, target
-   model, and the note that it carries its own tests; each unclear task -- and wait for their
-   go-ahead.
+   **Touchpoint 1:** show the user the task list -- each clear task with its scope, its tier
+   (weak/strong), and the note that it carries its own tests; each unclear task -- and wait
+   for their go-ahead.
 
 2. **Run the clear tasks one at a time, in dependency order:**
    `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" dispatch <id> --json`

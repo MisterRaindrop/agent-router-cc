@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
-import { reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
+import { detectModelMismatch, reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
 import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeRemove, deleteBranch } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
@@ -16,6 +16,7 @@ import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
 import { makeLauncher } from './codexLauncher.ts';
+import { loadModelConfig, tierWorkers } from './modelConfig.ts';
 import { loadTask } from './taskLoad.ts';
 import { parseCodexLog, type ParsedLog } from './usage.ts';
 import { verifyTask } from './verifier.ts';
@@ -55,9 +56,12 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   const { paths, clock } = deps;
   const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
   const { task, contractMdText } = loadTask(paths, id);
-  // Policy-free: the task carries its own executor pin, scope, and verify command.
-  // Executors default to codex + claude (quota-balanced) unless the task pins one.
-  const workers: WorkerPolicy[] = task.worker ? [task.worker] : [{ kind: 'codex' }, { kind: 'claude' }];
+  // An explicit `worker` pin wins; otherwise resolve the difficulty tier (default
+  // weak) against the model config into per-executor candidates (each carrying its
+  // tier's model + effort). Router then still picks the executor by real quota.
+  const workers: WorkerPolicy[] = task.worker
+    ? [task.worker]
+    : tierWorkers(loadModelConfig(paths), task.tier ?? 'weak');
 
   const worktreeDir = paths.worktree(id, RUN);
   const branch = runBranch(id, RUN);
@@ -107,9 +111,12 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${RUN}`);
 
   const launcher = makeLauncher(used);
-  const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(safeRead(logPath));
+  const finalLog = safeRead(logPath);
+  const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null; // provider-reported only (no policy pricing table)
+  // A configured slug the executor rejected -> the tier config is likely stale.
+  const modelMismatch = exitClass !== 'ok' && detectModelMismatch(finalLog);
 
   const result: RunResult = {
     run_id: RUN,
@@ -123,9 +130,14 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
-    worker: model !== undefined ? { kind: used.kind, model } : { kind: used.kind },
+    worker: {
+      kind: used.kind,
+      ...(model !== undefined ? { model } : {}),
+      ...(used.effort !== undefined ? { effort: used.effort } : {}),
+    },
     base_sha: baseSha,
     ...(switches > 0 ? { executor_switches: switches } : {}),
+    ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
     ...(parsed.sessionId ? { session_id: parsed.sessionId } : {}),
@@ -171,7 +183,13 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, 'HEAD');
 
   const { task } = loadTask(paths, id);
-  const used: WorkerPolicy = prev.worker.model ? { kind: prev.worker.kind, model: prev.worker.model } : { kind: prev.worker.kind };
+  // Resume replays the prior run's exact executor pin (model + effort) so it
+  // re-attaches with the same model it dispatched under.
+  const used: WorkerPolicy = {
+    kind: prev.worker.kind,
+    ...(prev.worker.model ? { model: prev.worker.model } : {}),
+    ...(prev.worker.effort ? { effort: prev.worker.effort } : {}),
+  };
   const launcher = makeLauncher(used);
   const logPath = paths.workerLog(id, RUN);
   writeFileSync(logPath, '');
@@ -196,6 +214,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
 
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
+  const modelMismatch = exitClass !== 'ok' && detectModelMismatch(log);
   const result: RunResult = {
     run_id: RUN,
     task_id: id,
@@ -208,11 +227,16 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     started_at: new Date(o.startedAtMs).toISOString(),
     ended_at: new Date(o.endedAtMs).toISOString(),
     wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1000),
-    worker: model !== undefined ? { kind: used.kind, model } : { kind: used.kind },
+    worker: {
+      kind: used.kind,
+      ...(model !== undefined ? { model } : {}),
+      ...(used.effort !== undefined ? { effort: used.effort } : {}),
+    },
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
     ...(mismatch ? { resume_session_mismatch: true } : {}),
+    ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };

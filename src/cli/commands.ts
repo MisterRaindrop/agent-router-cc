@@ -13,6 +13,7 @@ import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.t
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, resumeTask } from '../app/dispatch.ts';
+import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { buildUsageReport, explainSavingsText, renderUsage } from '../app/usageReport.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
@@ -117,12 +118,17 @@ const dispatch: Handler = async (ctx) => {
       tokens: result.tokens ?? null,
       cost_usd: result.cost_usd ?? null,
       executor_switches: result.executor_switches ?? 0,
+      model_mismatch: result.model_mismatch ?? false,
     },
     () => {
       const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
       const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
       const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      return `${id}: ${v} (executor ${who}${sw}); ${next}`;
+      const warn = result.model_mismatch
+        ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
+          `(provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.`
+        : '';
+      return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
     },
   );
   return v === 'PASSED' ? 0 : 1;
@@ -299,6 +305,22 @@ const setupStatusline: Handler = (ctx) => {
   return 0;
 };
 
+// Print the resolved model-tier config (bundled default overlaid with any
+// .router/models.yaml). Read by the go/spec/review prompts to pick tier models
+// and the reviewer chain deterministically.
+const models: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const cfg = loadModelConfig(paths);
+  const spec = (s: { model: string; effort?: string }) => `${s.model}${s.effort ? `/${s.effort}` : ''}`;
+  emit(ctx.json, { ok: true, models: cfg }, () => {
+    const tier = (k: 'codex' | 'claude') => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
+    const review = cfg.review.map((r) => `${r.kind}:${r.model ?? '?'}${r.effort ? `/${r.effort}` : ''}`).join(' -> ');
+    const src = existsSync(modelsYamlPath(paths)) ? 'default + .router/models.yaml' : 'default';
+    return `model tiers (${src}):\n${tier('codex')}\n${tier('claude')}\n  review: ${review}`;
+  });
+  return 0;
+};
+
 export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
@@ -308,6 +330,7 @@ export const HANDLERS: Record<string, Handler> = {
   result,
   list,
   usage,
+  models,
   'setup-statusline': setupStatusline,
 };
 
@@ -326,6 +349,7 @@ export function helpText(): string {
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
     `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
+    `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
     `Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`

@@ -31,9 +31,10 @@ export interface WorkerLauncher {
 // model -> metrics). The binary is `codex` by default; ROUTER_CODEX_BIN overrides
 // it (used by tests to substitute a fake worker without real codex).
 
-export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLauncher {
+export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): WorkerLauncher {
   const bin = process.env.ROUTER_CODEX_BIN ?? 'codex';
   const model = worker.model;
+  const effort = worker.effort;
   return {
     kind: 'codex',
     ...(model !== undefined ? { model } : {}),
@@ -51,6 +52,7 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunch
         '--json',
       ];
       if (model !== undefined) argv.push('-m', model);
+      if (effort !== undefined) argv.push('-c', `model_reasoning_effort=${effort}`);
       return argv;
     },
     // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
@@ -71,6 +73,7 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunch
         '--json',
       ];
       if (model !== undefined) argv.push('-m', model);
+      if (effort !== undefined) argv.push('-c', `model_reasoning_effort=${effort}`);
       return argv;
     },
   };
@@ -81,9 +84,10 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunch
 // it has no Bash escape hatch. Router runs verification commands itself afterward.
 // Plan-auth comes from the user's Claude session; ROUTER_CLAUDE_BIN overrides the
 // binary in tests. Cost comes from the stream's total_cost_usd.
-export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLauncher {
+export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): WorkerLauncher {
   const bin = process.env.ROUTER_CLAUDE_BIN ?? 'claude';
   const model = worker.model;
+  const effort = worker.effort;
   return {
     kind: 'claude',
     ...(model !== undefined ? { model } : {}),
@@ -104,6 +108,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunc
         ctx.worktreeDir,
       ];
       if (model !== undefined) argv.push('--model', model);
+      if (effort !== undefined) argv.push('--effort', effort);
       return argv;
     },
     // `claude --resume <session-id> -p <feedback>` continues that session with its
@@ -127,6 +132,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model'>): WorkerLaunc
         worktreeDir,
       ];
       if (model !== undefined) argv.push('--model', model);
+      if (effort !== undefined) argv.push('--effort', effort);
       return argv;
     },
   };

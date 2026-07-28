@@ -3,7 +3,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countsAsAttempt, reclassifyEnvironmentFailure, reclassifyQuota } from '../src/core/exitTaxonomy.ts';
+import {
+  countsAsAttempt,
+  detectModelMismatch,
+  reclassifyEnvironmentFailure,
+  reclassifyQuota,
+} from '../src/core/exitTaxonomy.ts';
 
 test('countsAsAttempt: env_error and quota_exhausted do not count', () => {
   assert.equal(countsAsAttempt('ok'), true);
@@ -34,4 +39,14 @@ test('provider authentication failures are reclassified as env_error', () => {
   assert.equal(reclassifyEnvironmentFailure('task_failed', 'Failed to authenticate. API Error: 403'), 'env_error');
   assert.equal(reclassifyEnvironmentFailure('task_failed', 'AssertionError: expected 2'), 'task_failed');
   assert.equal(reclassifyEnvironmentFailure('quota_exhausted', 'Not logged in'), 'quota_exhausted');
+});
+
+test('detectModelMismatch flags a rejected slug but not ordinary failures', () => {
+  assert.equal(detectModelMismatch('error: unknown model "gpt-5.6-terra"'), true);
+  assert.equal(detectModelMismatch('Model not found'), true);
+  assert.equal(detectModelMismatch('the model gpt-x is not available on your plan'), true);
+  assert.equal(detectModelMismatch('invalid model: foo'), true);
+  // ordinary test/compile failures must NOT be flagged as a config problem
+  assert.equal(detectModelMismatch('AssertionError: expected 2 to equal 3'), false);
+  assert.equal(detectModelMismatch('npm test failed with exit code 1'), false);
 });

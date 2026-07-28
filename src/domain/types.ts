@@ -22,8 +22,29 @@ export interface WorkerPolicy {
   kind: WorkerKind;
   api_key_env?: string; // env var to whitelist into the worker (plan-auth CLIs need none)
   model?: string; // pinned model slug passed to the worker (-m / --model); recorded in runs
+  effort?: string; // reasoning-effort level (codex -c model_reasoning_effort= ; claude --effort)
   max_wall_minutes_default?: number;
   stall_minutes?: number;
+}
+
+// -- Tiered model routing (config-driven; see app/modelConfig.ts) ---------------
+// Opus judges each dispatch task's difficulty and tags a tier; the config maps
+// tier -> {model, effort} per executor, and router still picks the executor by
+// quota. spec/review always use the strongest, independent reviewer (config.review).
+export type ModelTier = 'weak' | 'strong';
+
+/** One model choice: a slug plus an optional reasoning-effort level. */
+export interface ModelSpec {
+  model: string;
+  effort?: string;
+}
+
+/** The model menu: per-executor weak/strong slugs + the ordered reviewer chain. */
+export interface ModelTierConfig {
+  codex: { weak: ModelSpec; strong: ModelSpec };
+  claude: { weak: ModelSpec; strong: ModelSpec };
+  /** spec/review reviewer candidates, strongest first (kind + model + effort). */
+  review: WorkerPolicy[];
 }
 
 // -- task.yaml (machine contract; schema-validated) ----------------------------
@@ -38,7 +59,9 @@ export interface TaskYaml {
   max_changed_lines?: number;
   /** The mechanical verify command(s) run on the diff (argv arrays; [] = none). */
   verify?: string[][];
-  /** Executor pinned for this task (kind + optional model); else quota-balanced default. */
+  /** Difficulty tier Opus assigns; resolves to per-executor model+effort via config. */
+  tier?: ModelTier;
+  /** Explicit executor pin (kind + optional model); overrides `tier` when set. */
   worker?: WorkerPolicy;
 }
 
@@ -109,8 +132,9 @@ export interface RunResult {
   started_at: string;
   ended_at: string;
   wall_seconds: number;
-  worker: { kind: WorkerKind; model?: string };
+  worker: { kind: WorkerKind; model?: string; effort?: string };
   executor_switches?: number; // times we fell back to the next executor (quota/env)
+  model_mismatch?: boolean; // executor rejected the configured slug -> config likely stale
   tokens?: { input: number; output: number };
   cost_usd?: number;
   verifier?: VerifierReport;

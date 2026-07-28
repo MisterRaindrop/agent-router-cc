@@ -43,6 +43,7 @@
         "items": { "type": "string", "minLength": 1 }
       }
     },
+    "tier": { "enum": ["weak", "strong"] },
     "worker": {
       "type": "object",
       "additionalProperties": false,
@@ -51,6 +52,7 @@
         "kind": { "enum": ["codex", "claude"] },
         "api_key_env": { "type": "string", "minLength": 1 },
         "model": { "type": "string", "minLength": 1 },
+        "effort": { "type": "string", "minLength": 1 },
         "max_wall_minutes_default": { "type": "integer", "minimum": 1 },
         "stall_minutes": { "type": "integer", "minimum": 1 }
       }

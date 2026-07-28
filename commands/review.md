@@ -13,9 +13,13 @@ it on judgment: correctness the tests miss, design, robustness, and whether the 
 meaningful.
 
 **You do not review your own work.** Launch an **independent reviewer -- a different model
-from yourself** (you are Claude, so prefer a non-Claude reviewer via `codex exec` or a
-`Task` subagent pinned to another model). Review the change (`git diff` of what
-`/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
+from yourself** (you are Claude, so prefer a non-Claude reviewer). Get the reviewer chain
+from `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models --json` (the `review` array,
+strongest + most independent first): launch the first entry, e.g.
+`codex exec -m <model> -c model_reasoning_effort=<effort>`. If codex is unavailable or out
+of quota, fall to the next same-strength entry (e.g. `claude ... --model <model> --effort
+<effort>`) -- keep the strength, don't drop to a weak model for adversarial review. Review
+the change (`git diff` of what `/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
 extra independence):
 
 **Architect lens (holistic / functional):** read end-to-end, not just the diff.
