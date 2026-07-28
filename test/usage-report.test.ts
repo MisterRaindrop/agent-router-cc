@@ -7,7 +7,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deriveCost, priceFor } from '../src/core/pricing.ts';
-import { buildUsageReport, explainSavingsText, renderUsage } from '../src/app/usageReport.ts';
+import { buildUsageReport, deriveSuggestions, explainSavingsText, renderUsage } from '../src/app/usageReport.ts';
 import type { RouterPaths } from '../src/io/paths.ts';
 
 function metricsPathWith(lines: object[]): RouterPaths {
@@ -135,4 +135,50 @@ test('renderUsage: includes header, TOTAL, and marks derived costs with ~', () =
   assert.match(text, /Router usage/);
   assert.match(text, /TOTAL/);
   assert.match(text, /~\$2\.25/); // derived cost carries the ~ estimate marker
+});
+
+test('optimized: savings>0 => ✓, savings===0 => not, unknown model => null', () => {
+  const paths = metricsPathWith([
+    { ts: '2026-07-26T00:00:00Z', task_id: 'cheap', run_id: 'run-001', model: 'gpt-5-mini', executor: 'codex',
+      verifier_result: 'PASSED', tokens_input: 1000, tokens_output: 1000, cost_usd: null, wall_seconds: 1, attempt_number: 1, env_error: false },
+    { ts: '2026-07-26T01:00:00Z', task_id: 'strong', run_id: 'run-001', model: 'claude-opus-4-8', executor: 'claude',
+      verifier_result: 'PASSED', tokens_input: 1000, tokens_output: 1000, cost_usd: null, wall_seconds: 1, attempt_number: 1, env_error: false },
+    { ts: '2026-07-26T02:00:00Z', task_id: 'mystery', run_id: 'run-001', model: 'who-knows', executor: 'codex',
+      verifier_result: 'PASSED', tokens_input: 100, tokens_output: 100, cost_usd: null, wall_seconds: 1, attempt_number: 1, env_error: false },
+  ]);
+  const byTask = Object.fromEntries(buildUsageReport(paths, NOW).rows.map((r) => [r.taskId, r]));
+  assert.equal(byTask.cheap!.optimized, true);
+  assert.equal(byTask.strong!.optimized, false);
+  assert.equal(byTask.mystery!.optimized, null);
+});
+
+test('deriveSuggestions reads real signals (fail / recover / strong-model / env / healthy)', () => {
+  const row = (over: Partial<Parameters<typeof deriveSuggestions>[0][number]>) => ({
+    ts: 't', taskId: 'x', executor: 'codex', model: 'm', tokensIn: 0, tokensOut: 0, tokensTotal: 0,
+    costUsd: null, costSource: 'none' as const, verifier: 'PASSED' as const, attemptNumber: 1,
+    envError: false, savingsUsd: 1, optimized: true, ...over,
+  });
+  assert.deepEqual(deriveSuggestions([]), []); // no dispatches -> no hints
+  // latest FAILED
+  assert.ok(deriveSuggestions([row({ taskId: 'a', verifier: 'FAILED' })]).some((s) => /a: last run FAILED/.test(s)));
+  // recovered: newest PASSED, older FAILED (rows are newest-first)
+  const recovered = deriveSuggestions([row({ taskId: 'b', verifier: 'PASSED' }), row({ taskId: 'b', verifier: 'FAILED' })]);
+  assert.ok(recovered.some((s) => /b: recovered after a failed attempt/.test(s)));
+  // strong-model (optimized false)
+  assert.ok(deriveSuggestions([row({ taskId: 'c', optimized: false })]).some((s) => /c ran on the strong model/.test(s)));
+  // env error
+  assert.ok(deriveSuggestions([row({ taskId: 'd', envError: true })]).some((s) => /d: environment error/.test(s)));
+  // all clean -> healthy
+  assert.deepEqual(deriveSuggestions([row({ taskId: 'e' })]), ['No waste -- healthy']);
+});
+
+test('renderUsage shows the opt column and a Suggestions section', () => {
+  const paths = metricsPathWith([
+    { ts: '2026-07-26T00:00:00Z', task_id: 'strong', run_id: 'run-001', model: 'claude-opus-4-8', executor: 'claude',
+      verifier_result: 'PASSED', tokens_input: 1000, tokens_output: 1000, cost_usd: 1, wall_seconds: 1, attempt_number: 1, env_error: false },
+  ]);
+  const text = renderUsage(buildUsageReport(paths, NOW));
+  assert.match(text, /opt/); // column header + legend
+  assert.match(text, /Suggestions:/);
+  assert.match(text, /strong ran on the strong model/); // opus dispatch -> route-cheaper hint
 });

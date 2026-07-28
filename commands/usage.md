@@ -5,8 +5,11 @@ allowed-tools: Bash(node:*), Read
 ---
 !`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" usage $ARGUMENTS`
 
-Present the usage report above: the per-dispatch tokens and cost, the TOTAL, the
-by-executor split, and the estimated savings versus an all-strong-model baseline.
+Present the usage report above: the per-dispatch tokens and cost, the `opt` column
+(✓ = ran on a model cheaper than the strong baseline, — = ran on the baseline, ? =
+unknown model), the TOTAL, the by-executor split, the estimated savings versus an
+all-strong-model baseline, and the **Suggestions** section (signal-derived hints
+like "sharpen the contract" or "route this to a cheaper tier" -- never fabricated).
 Be clear that the savings figure is a **list-price estimate, not a bill** -- the cheap
 executors run on plan subscriptions, so the real marginal cost is often lower. The
 default window is the last 7 days; mention `/router:usage --all` for older runs and
