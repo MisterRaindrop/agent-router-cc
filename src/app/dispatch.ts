@@ -51,6 +51,15 @@ export function orderByQuota(paths: RouterPaths, workers: readonly WorkerPolicy[
   return { order, quotas };
 }
 
+/** The run's executor record: kind + the model/effort it actually ran under (both optional). */
+function workerRecord(used: WorkerPolicy, model: string | undefined): RunResult['worker'] {
+  return {
+    kind: used.kind,
+    ...(model !== undefined ? { model } : {}),
+    ...(used.effort !== undefined ? { effort: used.effort } : {}),
+  };
+}
+
 /** Run one task synchronously to a verified (or failed) result on its run branch. */
 export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
   const { paths, clock } = deps;
@@ -130,11 +139,7 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
-    worker: {
-      kind: used.kind,
-      ...(model !== undefined ? { model } : {}),
-      ...(used.effort !== undefined ? { effort: used.effort } : {}),
-    },
+    worker: workerRecord(used, model),
     base_sha: baseSha,
     ...(switches > 0 ? { executor_switches: switches } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
@@ -227,11 +232,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     started_at: new Date(o.startedAtMs).toISOString(),
     ended_at: new Date(o.endedAtMs).toISOString(),
     wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1000),
-    worker: {
-      kind: used.kind,
-      ...(model !== undefined ? { model } : {}),
-      ...(used.effort !== undefined ? { effort: used.effort } : {}),
-    },
+    worker: workerRecord(used, model),
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,

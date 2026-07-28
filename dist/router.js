@@ -9550,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.8" : "0.0.0-dev";
+var VERSION = true ? "0.6.9" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -10763,6 +10763,13 @@ function orderByQuota(paths, workers) {
   const order = [...workers].sort((a, b) => a.kind === picked ? -1 : b.kind === picked ? 1 : 0);
   return { order, quotas };
 }
+function workerRecord(used, model) {
+  return {
+    kind: used.kind,
+    ...model !== void 0 ? { model } : {},
+    ...used.effort !== void 0 ? { effort: used.effort } : {}
+  };
+}
 async function dispatchTask(deps, id) {
   const { paths, clock } = deps;
   const baseSha = resolveCommit(paths.repoRoot, "HEAD");
@@ -10824,11 +10831,7 @@ async function dispatchTask(deps, id) {
     started_at: new Date(outcome.startedAtMs).toISOString(),
     ended_at: new Date(outcome.endedAtMs).toISOString(),
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
-    worker: {
-      kind: used.kind,
-      ...model !== void 0 ? { model } : {},
-      ...used.effort !== void 0 ? { effort: used.effort } : {}
-    },
+    worker: workerRecord(used, model),
     base_sha: baseSha,
     ...switches > 0 ? { executor_switches: switches } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
@@ -10906,11 +10909,7 @@ async function resumeTask(deps, id, feedback) {
     started_at: new Date(o.startedAtMs).toISOString(),
     ended_at: new Date(o.endedAtMs).toISOString(),
     wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1e3),
-    worker: {
-      kind: used.kind,
-      ...model !== void 0 ? { model } : {},
-      ...used.effort !== void 0 ? { effort: used.effort } : {}
-    },
+    worker: workerRecord(used, model),
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
