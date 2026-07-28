@@ -29,9 +29,14 @@ export interface UsageRow {
   costUsd: number | null;
   costSource: CostSource;
   verifier: 'PASSED' | 'FAILED' | null;
+  attemptNumber: number; // >1 means this run was a resume of the same task
+  envError: boolean; // an environment/setup failure, not a task failure
   // Estimated saving vs the strong-model baseline: (tokens re-priced at baseline) minus
   // (tokens re-priced at this dispatch's own model). null if the model is unknown.
   savingsUsd: number | null;
+  // Did this dispatch use a model cheaper than the strong baseline? Derived from
+  // savingsUsd: >0 -> optimized; ===0 -> ran on the baseline model; null -> unknown model.
+  optimized: boolean | null;
 }
 
 export interface ExecutorRollup {
@@ -54,6 +59,7 @@ export interface UsageReport {
   estimatedSavingsUsd: number; // sum of per-row savings vs the strong-model baseline (ESTIMATE)
   savingsComplete: boolean; // false if any row's model was unknown (savings could not be estimated)
   baselineModel: string; // the strong-model baseline savings are measured against
+  suggestions: string[]; // signal-derived optimization hints (never fabricated)
 }
 
 export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all?: boolean } = {}): UsageReport {
@@ -93,7 +99,10 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
       costUsd,
       costSource,
       verifier: r.verifier_result,
+      attemptNumber: r.attempt_number,
+      envError: r.env_error,
       savingsUsd,
+      optimized: savingsUsd === null ? null : savingsUsd > 0,
     });
   }
   rows.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0)); // newest first
@@ -135,7 +144,41 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
     estimatedSavingsUsd,
     savingsComplete,
     baselineModel: STRONG_BASELINE_MODEL,
+    suggestions: deriveSuggestions(rows),
   };
+}
+
+// Optimization hints derived from real signals in the dispatch history -- never
+// fabricated. Groups by task (rows are newest-first, so each group's [0] is the
+// latest run) and reads: did the last run fail, did it recover after a failure,
+// was there an environment error, did it run on the strong baseline instead of a
+// cheaper model. Returns "No waste -- healthy" when nothing warrants a hint.
+export function deriveSuggestions(rows: UsageRow[]): string[] {
+  if (rows.length === 0) return [];
+  const byTask = new Map<string, UsageRow[]>();
+  for (const r of rows) {
+    const g = byTask.get(r.taskId);
+    if (g) g.push(r);
+    else byTask.set(r.taskId, [r]);
+  }
+  const out: string[] = [];
+  for (const [task, rs] of byTask) {
+    const latest = rs[0]!; // newest run for this task
+    const anyFailed = rs.some((r) => r.verifier === 'FAILED');
+    if (rs.some((r) => r.envError)) {
+      out.push(`${task}: environment error (auth/executor) -- not a task failure; fix setup`);
+    }
+    if (latest.verifier === 'FAILED') {
+      out.push(`${task}: last run FAILED -- see \`router result ${task}\``);
+    } else if (anyFailed) {
+      out.push(`${task}: recovered after a failed attempt -- sharpen the contract to pass first-try`);
+    }
+    if (latest.optimized === false) {
+      out.push(`${task} ran on the strong model -- if it's mechanical, route it to a cheaper tier next time`);
+    }
+  }
+  if (out.length === 0) out.push('No waste -- healthy');
+  return out;
 }
 
 /** The assumptions that make the savings figure an ESTIMATE, printed by `--explain-savings`. */
@@ -172,6 +215,9 @@ function shortModel(m: string | null): string {
   if (!m) return '';
   return m.length > 18 ? m.slice(0, 17) + '…' : m;
 }
+function optSymbol(optimized: boolean | null): string {
+  return optimized === null ? '?' : optimized ? '✓' : '—';
+}
 
 export function renderUsage(report: UsageReport): string {
   const win = report.windowDays === null ? 'all time' : `last ${report.windowDays} days`;
@@ -182,7 +228,9 @@ export function renderUsage(report: UsageReport): string {
   const lines: string[] = [];
   lines.push(`Router usage — ${win}    ${report.rows.length} dispatch(es) · ${report.byExecutor.length} executor(s)`);
   lines.push(bar);
-  lines.push(pad('Task', 16) + pad('executor/model', 28) + pad('In', 8) + pad('Out', 8) + pad('Tokens', 9) + 'Cost');
+  lines.push(
+    pad('Task', 16) + pad('executor/model', 28) + pad('In', 8) + pad('Out', 8) + pad('Tokens', 9) + pad('Cost', 9) + 'opt',
+  );
   for (const r of report.rows) {
     const who = `${r.executor}${r.model ? `/${shortModel(r.model)}` : ''}`;
     lines.push(
@@ -191,7 +239,8 @@ export function renderUsage(report: UsageReport): string {
         pad(fmtTokens(r.tokensIn), 8) +
         pad(fmtTokens(r.tokensOut), 8) +
         pad(fmtTokens(r.tokensTotal), 9) +
-        fmtCost(r.costUsd, r.costSource),
+        pad(fmtCost(r.costUsd, r.costSource), 9) +
+        optSymbol(r.optimized),
     );
   }
   lines.push(bar);
@@ -210,5 +259,10 @@ export function renderUsage(report: UsageReport): string {
   const savings = `~$${report.estimatedSavingsUsd.toFixed(2)}${report.savingsComplete ? '' : '+'}`;
   lines.push(`Estimated saved vs all-${report.baselineModel} (list price, est): ${savings}  (--explain-savings for caveats)`);
   lines.push('Cost: provider-reported where available; ~ = list-price estimate (src/core/pricing.ts); "tokens" = unknown model.');
+  lines.push('opt: ✓ used a model cheaper than the baseline · — ran on the baseline model · ? unknown model.');
+  if (report.suggestions.length > 0) {
+    lines.push('Suggestions:');
+    for (const s of report.suggestions) lines.push(`  · ${s}`);
+  }
   return lines.join('\n');
 }

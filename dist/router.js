@@ -9550,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.7" : "0.0.0-dev";
+var VERSION = true ? "0.6.8" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -11038,7 +11038,10 @@ function buildUsageReport(paths, nowIso, opts = {}) {
       costUsd,
       costSource,
       verifier: r.verifier_result,
-      savingsUsd
+      attemptNumber: r.attempt_number,
+      envError: r.env_error,
+      savingsUsd,
+      optimized: savingsUsd === null ? null : savingsUsd > 0
     });
   }
   rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
@@ -11074,8 +11077,36 @@ function buildUsageReport(paths, nowIso, opts = {}) {
     byExecutor: [...byExec.values()].sort((a, b) => b.tokensTotal - a.tokensTotal),
     estimatedSavingsUsd,
     savingsComplete,
-    baselineModel: STRONG_BASELINE_MODEL
+    baselineModel: STRONG_BASELINE_MODEL,
+    suggestions: deriveSuggestions(rows)
   };
+}
+function deriveSuggestions(rows) {
+  if (rows.length === 0) return [];
+  const byTask = /* @__PURE__ */ new Map();
+  for (const r of rows) {
+    const g = byTask.get(r.taskId);
+    if (g) g.push(r);
+    else byTask.set(r.taskId, [r]);
+  }
+  const out2 = [];
+  for (const [task, rs] of byTask) {
+    const latest = rs[0];
+    const anyFailed = rs.some((r) => r.verifier === "FAILED");
+    if (rs.some((r) => r.envError)) {
+      out2.push(`${task}: environment error (auth/executor) -- not a task failure; fix setup`);
+    }
+    if (latest.verifier === "FAILED") {
+      out2.push(`${task}: last run FAILED -- see \`router result ${task}\``);
+    } else if (anyFailed) {
+      out2.push(`${task}: recovered after a failed attempt -- sharpen the contract to pass first-try`);
+    }
+    if (latest.optimized === false) {
+      out2.push(`${task} ran on the strong model -- if it's mechanical, route it to a cheaper tier next time`);
+    }
+  }
+  if (out2.length === 0) out2.push("No waste -- healthy");
+  return out2;
 }
 function explainSavingsText(baselineModel) {
   return [
@@ -11107,6 +11138,9 @@ function shortModel(m) {
   if (!m) return "";
   return m.length > 18 ? m.slice(0, 17) + "\u2026" : m;
 }
+function optSymbol(optimized) {
+  return optimized === null ? "?" : optimized ? "\u2713" : "\u2014";
+}
 function renderUsage(report) {
   const win = report.windowDays === null ? "all time" : `last ${report.windowDays} days`;
   if (report.rows.length === 0) {
@@ -11117,11 +11151,13 @@ No dispatches recorded yet.`;
   const lines = [];
   lines.push(`Router usage \u2014 ${win}    ${report.rows.length} dispatch(es) \xB7 ${report.byExecutor.length} executor(s)`);
   lines.push(bar);
-  lines.push(pad("Task", 16) + pad("executor/model", 28) + pad("In", 8) + pad("Out", 8) + pad("Tokens", 9) + "Cost");
+  lines.push(
+    pad("Task", 16) + pad("executor/model", 28) + pad("In", 8) + pad("Out", 8) + pad("Tokens", 9) + pad("Cost", 9) + "opt"
+  );
   for (const r of report.rows) {
     const who = `${r.executor}${r.model ? `/${shortModel(r.model)}` : ""}`;
     lines.push(
-      pad(r.taskId, 16) + pad(who, 28) + pad(fmtTokens(r.tokensIn), 8) + pad(fmtTokens(r.tokensOut), 8) + pad(fmtTokens(r.tokensTotal), 9) + fmtCost(r.costUsd, r.costSource)
+      pad(r.taskId, 16) + pad(who, 28) + pad(fmtTokens(r.tokensIn), 8) + pad(fmtTokens(r.tokensOut), 8) + pad(fmtTokens(r.tokensTotal), 9) + pad(fmtCost(r.costUsd, r.costSource), 9) + optSymbol(r.optimized)
     );
   }
   lines.push(bar);
@@ -11134,6 +11170,11 @@ No dispatches recorded yet.`;
   const savings = `~$${report.estimatedSavingsUsd.toFixed(2)}${report.savingsComplete ? "" : "+"}`;
   lines.push(`Estimated saved vs all-${report.baselineModel} (list price, est): ${savings}  (--explain-savings for caveats)`);
   lines.push('Cost: provider-reported where available; ~ = list-price estimate (src/core/pricing.ts); "tokens" = unknown model.');
+  lines.push("opt: \u2713 used a model cheaper than the baseline \xB7 \u2014 ran on the baseline model \xB7 ? unknown model.");
+  if (report.suggestions.length > 0) {
+    lines.push("Suggestions:");
+    for (const s of report.suggestions) lines.push(`  \xB7 ${s}`);
+  }
   return lines.join("\n");
 }
 
