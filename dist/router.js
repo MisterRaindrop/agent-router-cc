@@ -9550,7 +9550,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.6.9" : "0.0.0-dev";
+var VERSION = true ? "0.7.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9650,6 +9650,21 @@ function splitNul(s) {
   if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
   return parts;
 }
+function parseRawModes(out2) {
+  const toks = splitNul(out2);
+  const map = /* @__PURE__ */ new Map();
+  let i = 0;
+  while (i < toks.length) {
+    const meta = toks[i++];
+    if (!meta.startsWith(":")) continue;
+    const fields = meta.slice(1).split(" ");
+    const dstMode = fields[1] ?? "";
+    const status = fields[4] ?? "";
+    const path = status.startsWith("R") || status.startsWith("C") ? (i++, toks[i++]) : toks[i++];
+    if (path !== void 0 && dstMode !== "") map.set(path, dstMode);
+  }
+  return map;
+}
 function parseNameStatus(out2) {
   const toks = splitNul(out2);
   const map = /* @__PURE__ */ new Map();
@@ -9699,20 +9714,40 @@ function collectDiff(cwd, base, head) {
   const numstat = parseNumstat(
     git(cwd, ["diff", "--numstat", "-z", "--find-renames", "--find-copies", ...range])
   );
+  const modes = parseRawModes(
+    git(cwd, ["diff", "--raw", "-z", "--find-renames", "--find-copies", ...range])
+  );
   const entries = [];
   for (const [path, ns] of nameStatus) {
     const num2 = numstat.get(path);
+    const mode = modes.get(path);
     entries.push({
       status: ns.status,
       path,
       ...ns.oldPath !== void 0 ? { oldPath: ns.oldPath } : {},
       added: num2?.added ?? 0,
       deleted: num2?.deleted ?? 0,
-      binary: num2?.binary ?? false
+      binary: num2?.binary ?? false,
+      ...mode !== void 0 ? { newMode: mode } : {}
     });
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));
   return entries;
+}
+function listDirFileModes(cwd, sha, dir) {
+  const spec = dir === "" || dir === "." ? `${sha}:` : `${sha}:${dir}`;
+  const r = tryGit(cwd, ["ls-tree", "-z", spec]);
+  if (!r.ok) return [];
+  const out2 = [];
+  for (const line of splitNul(r.stdout)) {
+    const tab = line.indexOf("	");
+    if (tab < 0) continue;
+    const [mode, type] = line.slice(0, tab).split(" ");
+    if (type !== "blob" || mode === void 0) continue;
+    const full = line.slice(tab + 1);
+    out2.push({ name: full.slice(full.lastIndexOf("/") + 1), mode });
+  }
+  return out2;
 }
 function rawDiff(cwd, base, head) {
   const range = head !== void 0 ? [base, head] : [base];
@@ -10646,6 +10681,34 @@ function scanSecrets(diffText, extraPatterns = []) {
   return findings;
 }
 
+// src/core/execBit.ts
+var EXEC_MODE = "100755";
+var NON_EXEC_MODE = "100644";
+function findExecBitViolations(inputs, opts = {}) {
+  const minSiblings = opts.minSiblings ?? 3;
+  const threshold = opts.threshold ?? 0.9;
+  const out2 = [];
+  for (const input of inputs) {
+    if (input.newMode !== NON_EXEC_MODE) continue;
+    const totalSiblings = input.siblingModes.length;
+    if (totalSiblings < minSiblings) continue;
+    const execSiblings = input.siblingModes.filter((m) => m === EXEC_MODE).length;
+    if (execSiblings / totalSiblings >= threshold) {
+      out2.push({ path: input.path, execSiblings, totalSiblings });
+    }
+  }
+  return out2;
+}
+function extensionOf(path) {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+  return dot <= 0 ? "" : name.slice(dot);
+}
+function dirOf(path) {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
 // src/io/proc.ts
 import { spawnSync } from "node:child_process";
 function runCommand(argv, opts) {
@@ -10722,6 +10785,22 @@ function verifyTask(req) {
     return { result: "FAILED", checks, changed_lines: verdict.changedLines };
   }
   checks.push(pass("secret_scan"));
+  const execCandidates = [];
+  for (const c of changes) {
+    if (c.status !== "A" && c.status !== "M" || c.newMode === void 0) continue;
+    const ext = extensionOf(c.path);
+    if (ext === "") continue;
+    const base = c.path.slice(c.path.lastIndexOf("/") + 1);
+    const siblingModes = listDirFileModes(req.worktreeDir, req.baseSha, dirOf(c.path)).filter((s) => s.name !== base && s.name.endsWith(ext)).map((s) => s.mode);
+    execCandidates.push({ path: c.path, newMode: c.newMode, siblingModes });
+  }
+  const execViolations = findExecBitViolations(execCandidates);
+  if (execViolations.length > 0) {
+    const detail = execViolations.map((v) => `${v.path} is 100644 but ${v.execSiblings}/${v.totalSiblings} siblings are executable`).join("; ");
+    checks.push(fail("exec_bit", detail));
+    return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass("exec_bit"));
   for (const [i, argv] of req.verify.entries()) {
     if (argv.length === 0) continue;
     const r = runCommand(argv, {
@@ -11267,6 +11346,16 @@ _What to accomplish._
 ## Definition of Done
 
 - [ ] ...
+
+## Test hygiene (applies whenever this task adds or changes tests)
+
+- [ ] Every shared or globally-scoped thing the test creates (server-wide entities,
+      fixed table/user/file names, paths outside a per-run temp dir) is namespaced per
+      run, so the same test running twice -- in parallel or repeated -- cannot collide.
+- [ ] The test cleans up what it created **including on the failure path**: a test that
+      aborts at its first failed assertion must not leave state that breaks later runs.
+- [ ] A test script meant to be executed carries the executable bit (match the mode of
+      the other test scripts in that directory).
 `;
 var init = (ctx) => {
   const { paths } = depsFor(ctx);
@@ -11362,9 +11451,15 @@ var land = (ctx) => {
     mergeAbort(paths.repoRoot);
     throw new CliError(`merge failed (aborted, tree restored): ${e.message}`, 1);
   }
+  const mergeCommit = resolveCommit(paths.repoRoot, "HEAD");
   worktreeRemove(paths.repoRoot, paths.worktree(id, RUN2));
   deleteBranch(paths.repoRoot, branch);
-  emit(ctx.json, { ok: true, id, merged: branch }, () => `${id} landed (${branch})`);
+  writeResult(paths, id, RUN2, { ...result2, merge_commit: mergeCommit });
+  emit(
+    ctx.json,
+    { ok: true, id, merged: branch, merge_commit: mergeCommit },
+    () => `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`
+  );
   return 0;
 };
 var result = (ctx) => {

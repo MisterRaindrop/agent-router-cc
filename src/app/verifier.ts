@@ -7,7 +7,15 @@ import { join } from 'node:path';
 import type { VerifierCheck, VerifierReport } from '../domain/types.ts';
 import { evaluateScope } from '../core/scope.ts';
 import { scanSecrets } from '../core/secrets.ts';
-import { applyCheck, collectDiff, rawDiff, worktreeAddDetached, worktreeRemove } from '../io/git.ts';
+import { dirOf, extensionOf, findExecBitViolations, type ExecBitInput } from '../core/execBit.ts';
+import {
+  applyCheck,
+  collectDiff,
+  listDirFileModes,
+  rawDiff,
+  worktreeAddDetached,
+  worktreeRemove,
+} from '../io/git.ts';
 import { runCommand } from '../io/proc.ts';
 
 // The mechanical verifier (policy-free). The task carries its own scope and verify
@@ -82,6 +90,30 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
     return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
   }
   checks.push(pass('secret_scan'));
+
+  // exec_bit: a file added without the executable bit into a directory whose existing
+  // same-extension files are executable. Environment-free and deterministic, and the
+  // failure it prevents ("permission denied" in CI) is invisible to every other gate.
+  const execCandidates: ExecBitInput[] = [];
+  for (const c of changes) {
+    if ((c.status !== 'A' && c.status !== 'M') || c.newMode === undefined) continue;
+    const ext = extensionOf(c.path);
+    if (ext === '') continue; // no extension -> no sibling grouping to compare against
+    const base = c.path.slice(c.path.lastIndexOf('/') + 1);
+    const siblingModes = listDirFileModes(req.worktreeDir, req.baseSha, dirOf(c.path))
+      .filter((s) => s.name !== base && s.name.endsWith(ext))
+      .map((s) => s.mode);
+    execCandidates.push({ path: c.path, newMode: c.newMode, siblingModes });
+  }
+  const execViolations = findExecBitViolations(execCandidates);
+  if (execViolations.length > 0) {
+    const detail = execViolations
+      .map((v) => `${v.path} is 100644 but ${v.execSiblings}/${v.totalSiblings} siblings are executable`)
+      .join('; ');
+    checks.push(fail('exec_bit', detail));
+    return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+  }
+  checks.push(pass('exec_bit'));
 
   for (const [i, argv] of req.verify.entries()) {
     if (argv.length === 0) continue;

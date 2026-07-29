@@ -5,7 +5,7 @@
 A Claude Code plugin that routes coding subtasks to the cheapest capable model to save
 Opus tokens. You plan with the main session (Opus); it decomposes the plan, dispatches
 the clear subtasks to a cheaper executor (the `codex` or `claude` CLI) running in an
-isolated git worktree, gates each diff (scope + secrets), then reviews it and verifies
+isolated git worktree, gates each diff (scope + secrets + exec bit), then reviews it and verifies
 the build/tests in your real environment; you approve and merge. The cheap models do the
 execution; Opus plans, reviews, verifies, and merges.
 
@@ -17,7 +17,7 @@ execution; Opus plans, reviews, verifies, and merges.
 | ---------------------- | ---------------------------------- | -------------------------------------------------------------- |
 | **Who executes**       | Opus (expensive)                   | the cheaper executor with more quota (codex / sonnet)          |
 | **Change scope**       | bounded only by the prompt         | enforced on the diff: allowed globs + changed-line cap         |
-| **Correctness**        | you check by hand                  | CLI gates the diff (scope + secret scan); Opus runs the build/tests in your real env |
+| **Correctness**        | you check by hand                  | CLI gates the diff (scope + secret scan + exec bit); Opus runs the build/tests in your real env |
 | **...and laziness**    | trust the model's word             | ...**plus** the main session reviews the diff for lazy/wrong work |
 | **Where edits land**   | your working tree, immediately     | an isolated worktree; your tree changes only on `land`         |
 | **Quota / rate limit** | the run stalls                     | balances codex vs claude by real remaining quota; 429 fallover |
@@ -90,8 +90,9 @@ For each *clear* task in between, the work is split between two actors:
 
 - **The router CLI** runs the task on the quota-picked executor inside an isolated
   worktree and applies **fast, environment-free gates** to the resulting diff — it applies
-  cleanly, stays within its allowed file scope, and leaks no secrets. It does **not** run
-  your build or tests.
+  cleanly, stays within its allowed file scope, leaks no secrets, and a script added where
+  its siblings are executable carries the executable bit. It does **not** run your build or
+  tests.
 - **Opus** then **reads and reviews the diff** for laziness or wrong work — hardcoded
   values, skipped or hollow tests, misread intent (a cheap model can clear a shallow gate
   while still being wrong). And **Opus owns verification**: for anything risky it runs the
@@ -143,7 +144,7 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   never the full parent environment (which might hold unrelated `AWS_*`, proxy, or API
   credentials).
 - **Verification you own.** The CLI applies fast, *environment-free* gates to every diff
-  (applies cleanly, within `allowed_globs`, no secrets) — the deterministic guarantees a
+  (applies cleanly, within `allowed_globs`, no secrets, executable bit on new scripts) — the deterministic guarantees a
   cheap model can't fake. The real build/tests are run by the main session (Opus) in
   *your* actual environment (Docker and all): risk-driven per task, and always as a
   mandatory full-chain gate before "done". Opus reads the complete output and judges it —

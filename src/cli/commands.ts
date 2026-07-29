@@ -9,7 +9,7 @@ import { dump, load } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
-import { deleteBranch, mergeAbort, mergeNoFF, worktreeRemove } from '../io/git.ts';
+import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, resumeTask } from '../app/dispatch.ts';
@@ -75,8 +75,21 @@ function taskTemplate(id: string, title: string): string {
     { lineWidth: 120 },
   );
 }
+// The test-hygiene block is boilerplate on purpose: these are the mistakes BOTH cheap
+// and strong models make (measured, not guessed) -- a fixed global resource name that
+// collides when a test runner repeats the test, state left behind when a test aborts
+// mid-way, and a test script created without its executable bit. Keep this block short:
+// a longer contract gets skimmed, which defeats the point.
 const contractTemplate = (id: string, title: string): string =>
-  `# ${title}\n\ntask: ${id}\n\n## Goal\n\n_What to accomplish._\n\n## Definition of Done\n\n- [ ] ...\n`;
+  `# ${title}\n\ntask: ${id}\n\n## Goal\n\n_What to accomplish._\n\n## Definition of Done\n\n- [ ] ...\n` +
+  `\n## Test hygiene (applies whenever this task adds or changes tests)\n\n` +
+  `- [ ] Every shared or globally-scoped thing the test creates (server-wide entities,\n` +
+  `      fixed table/user/file names, paths outside a per-run temp dir) is namespaced per\n` +
+  `      run, so the same test running twice -- in parallel or repeated -- cannot collide.\n` +
+  `- [ ] The test cleans up what it created **including on the failure path**: a test that\n` +
+  `      aborts at its first failed assertion must not leave state that breaks later runs.\n` +
+  `- [ ] A test script meant to be executed carries the executable bit (match the mode of\n` +
+  `      the other test scripts in that directory).\n`;
 
 // -- verbs ------------------------------------------------------------------
 
@@ -179,9 +192,16 @@ const land: Handler = (ctx) => {
     mergeAbort(paths.repoRoot);
     throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}`, 1);
   }
+  // The run branch is deleted right after the merge, so record the merge commit: it is
+  // the only durable handle on what this task changed (`git show <sha>`). Without it a
+  // later review or post-mortem has no way back to the task's diff.
+  const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
   worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
   deleteBranch(paths.repoRoot, branch);
-  emit(ctx.json, { ok: true, id, merged: branch }, () => `${id} landed (${branch})`);
+  store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
+  emit(ctx.json, { ok: true, id, merged: branch, merge_commit: mergeCommit }, () =>
+    `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`,
+  );
   return 0;
 };
 

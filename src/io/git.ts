@@ -76,6 +76,25 @@ function splitNul(s: string): string[] {
   return parts;
 }
 
+// raw -z: ":<srcmode> <dstmode> <srcsha> <dstsha> <status>" \0 path \0
+// (rename/copy: ... R### \0 old \0 new \0). Only the destination mode is kept: the
+// exec-bit gate needs to know how the executor actually created/left the file.
+function parseRawModes(out: string): Map<string, string> {
+  const toks = splitNul(out);
+  const map = new Map<string, string>();
+  let i = 0;
+  while (i < toks.length) {
+    const meta = toks[i++]!;
+    if (!meta.startsWith(':')) continue; // defensive: ignore anything unexpected
+    const fields = meta.slice(1).split(' ');
+    const dstMode = fields[1] ?? '';
+    const status = fields[4] ?? '';
+    const path = status.startsWith('R') || status.startsWith('C') ? (i++, toks[i++]) : toks[i++];
+    if (path !== undefined && dstMode !== '') map.set(path, dstMode);
+  }
+  return map;
+}
+
 // name-status -z: STATUS \0 path \0   (rename/copy: R### \0 old \0 new \0)
 function parseNameStatus(out: string): Map<string, { status: DiffStatus; oldPath?: string }> {
   const toks = splitNul(out);
@@ -137,10 +156,14 @@ export function collectDiff(cwd: string, base: string, head?: string): DiffEntry
   const numstat = parseNumstat(
     git(cwd, ['diff', '--numstat', '-z', '--find-renames', '--find-copies', ...range]),
   );
+  const modes = parseRawModes(
+    git(cwd, ['diff', '--raw', '-z', '--find-renames', '--find-copies', ...range]),
+  );
 
   const entries: DiffEntry[] = [];
   for (const [path, ns] of nameStatus) {
     const num = numstat.get(path);
+    const mode = modes.get(path);
     entries.push({
       status: ns.status,
       path,
@@ -148,10 +171,32 @@ export function collectDiff(cwd: string, base: string, head?: string): DiffEntry
       added: num?.added ?? 0,
       deleted: num?.deleted ?? 0,
       binary: num?.binary ?? false,
+      ...(mode !== undefined ? { newMode: mode } : {}),
     });
   }
   entries.sort((a, b) => a.path.localeCompare(b.path));
   return entries;
+}
+
+/**
+ * File modes of the blobs directly inside `dir` at `sha` (non-recursive; `dir` = ''
+ * means the repo root). Missing/unreadable directory -> empty list, never throws:
+ * the exec-bit gate treats "no evidence" as "no opinion".
+ */
+export function listDirFileModes(cwd: string, sha: string, dir: string): { name: string; mode: string }[] {
+  const spec = dir === '' || dir === '.' ? `${sha}:` : `${sha}:${dir}`;
+  const r = tryGit(cwd, ['ls-tree', '-z', spec]);
+  if (!r.ok) return [];
+  const out: { name: string; mode: string }[] = [];
+  for (const line of splitNul(r.stdout)) {
+    const tab = line.indexOf('\t');
+    if (tab < 0) continue;
+    const [mode, type] = line.slice(0, tab).split(' ');
+    if (type !== 'blob' || mode === undefined) continue;
+    const full = line.slice(tab + 1);
+    out.push({ name: full.slice(full.lastIndexOf('/') + 1), mode });
+  }
+  return out;
 }
 
 /** Raw unified patch text for base..head (head defaults to the working tree). */

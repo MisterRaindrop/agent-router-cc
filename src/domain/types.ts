@@ -84,6 +84,7 @@ export interface DiffEntry {
   added: number;
   deleted: number;
   binary: boolean;
+  newMode?: string; // git file mode of the new blob, e.g. '100644' / '100755'
 }
 
 export type ScopeViolationKind =
@@ -143,6 +144,10 @@ export interface RunResult {
   resumed?: boolean; // this run continued a prior executor session
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
   base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
+  // `land` merges the run branch with --no-ff and then deletes it, so this merge
+  // commit is the only durable handle on what the task changed:
+  // `git show <merge_commit>` / `git diff <merge_commit>^1 <merge_commit>`.
+  merge_commit?: string;
 }
 
 export interface MetricRecord {
