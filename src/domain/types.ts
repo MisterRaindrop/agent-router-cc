@@ -192,11 +192,20 @@ export interface Sym {
   endLine: number;
 }
 
+/** One syntactic call edge: `caller` (enclosing function) calls something named `callee`.
+ *  Name-based and APPROXIMATE -- reference only, never authoritative (see core/symbols). */
+export interface CallEdge {
+  caller: string; // enclosing function's (qualified) name, or "<global>"
+  callee: string; // simple name of the called symbol (trailing identifier)
+  line: number;
+}
+
 /** Symbols of one file, plus the mtime used for query-time incremental refresh. */
 export interface FileSymbols {
   file: string; // repo-relative path
   mtimeMs: number; // source mtime at index time; a change triggers re-parse
   symbols: Sym[];
+  calls?: CallEdge[]; // syntactic call edges (optional; absent in older caches)
 }
 
 /** The whole index. `grammar` stamps the parser/grammar version for cache busting. */

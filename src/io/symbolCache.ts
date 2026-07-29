@@ -102,7 +102,7 @@ export async function buildIndex(
     }
     const parsed = await parseSymbols(src);
     grammar = parsed.grammar;
-    out.push({ file: rel, mtimeMs: st.mtimeMs, symbols: parsed.syms });
+    out.push({ file: rel, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     symbols += parsed.syms.length;
     reparsed++;
   }
@@ -144,7 +144,7 @@ export async function refreshIndex(cachePath: string, repoRoot: string): Promise
     }
     const parsed = await parseSymbols(readFileSync(abs, 'utf8'));
     grammar = parsed.grammar;
-    out.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms });
+    out.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
     changed = true;
   }

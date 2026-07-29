@@ -20,7 +20,26 @@ need not restate the dirs):
 - `router symbol find <name>` -- where a symbol is defined/declared (`path:line kind name`)
 - `router symbol enclosing <file> <line>` -- the class/function that contains a line
 - `router symbol methods <Class>` -- a class's members, without reading its header
+- `router symbol callers <name>` -- functions that call `name` (approximate; see below)
+- `router symbol callees <fn>` -- names called by `fn` (approximate; see below)
 - add `--json` for structured output, `--limit N` to cap rows
+
+## The call graph (`callers` / `callees`) is a REFERENCE ONLY -- hard rule
+
+It is a name-based, syntactic approximation. Treat it as a fast hint that points you at
+where to look, NEVER as an authoritative or complete answer. Concretely:
+
+- **Over-approximation** (same-named different symbols): every result carries the count
+  of definitions sharing the name; when >1, the callers of several symbols are mixed --
+  the banner says so. Open a candidate to see if it's the one you mean.
+- **Under-approximation** (it can MISS callers via macros, function pointers, virtual
+  dispatch, or template-dependent calls): so it is NEVER complete. For any
+  completeness-critical judgment -- "all callers", "blast radius of changing X", "is it
+  safe to delete/change this" -- you MUST confirm with `rg` (a text scan that won't miss
+  a textual occurrence) and read the actual code. The graph only makes you faster at
+  getting there; the conclusion rests on rg + reading, not on the graph.
+- Every `callers`/`callees` result prints a `[reference only ...]` banner. Do not strip
+  it, and do not present graph output as a definitive caller list.
 
 ## Discipline (this is where the token saving comes from)
 

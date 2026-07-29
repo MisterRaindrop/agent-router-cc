@@ -4,9 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  calleesOf,
+  callersOf,
   enclosing,
   findSymbol,
   methodsOf,
+  renderCallers,
   renderEnclosing,
   renderFind,
   renderMethods,
@@ -150,4 +153,61 @@ test('renderMethods: class header then indented members', () => {
   const lines = text.split('\n');
   assert.match(lines[0]!, /^IcebergSchemaProcessor \(/);
   assert.match(lines[1]!, /^ {2}\d+\t/);
+});
+
+// -- approximate call graph (reference only) --
+const cgIdx: SymbolIndex = {
+  grammar: 'test',
+  files: [
+    {
+      file: 'src/a.cpp',
+      mtimeMs: 1,
+      symbols: [sym({ kind: 'fn', name: 'A::run', line: 10, endLine: 20 })],
+      calls: [
+        { caller: 'A::run', callee: 'getColumnMapperById', line: 12 },
+        { caller: 'A::run', callee: 'getName', line: 13 },
+      ],
+    },
+    {
+      file: 'src/b.cpp',
+      mtimeMs: 1,
+      symbols: [
+        sym({ kind: 'fn', name: 'B::getName', line: 5, endLine: 8 }),
+        sym({ kind: 'fn', name: 'C::getName', line: 30, endLine: 33 }), // same simple name
+      ],
+      calls: [{ caller: 'B::getName', callee: 'getColumnMapperById', line: 6 }],
+    },
+  ],
+};
+
+test('callersOf: finds callers, always flagged reference-only', () => {
+  const r = callersOf(cgIdx, 'getColumnMapperById');
+  assert.equal(r.referenceOnly, true);
+  assert.deepEqual(r.rows.map((x) => x.fn).sort(), ['A::run', 'B::getName']);
+});
+
+test('callersOf: ambiguity counts definitions sharing the simple name', () => {
+  const r = callersOf(cgIdx, 'getName');
+  assert.equal(r.ambiguity, 2); // B::getName and C::getName share "getName"
+  assert.equal(r.rows.length, 1); // A::run calls getName
+});
+
+test('renderCallers: banner is mandatory and warns to confirm with rg', () => {
+  const text = renderCallers(callersOf(cgIdx, 'getName'));
+  assert.match(text, /reference only/i);
+  assert.match(text, /NOT authoritative/);
+  assert.match(text, /rg/);
+  assert.match(text, /2 symbols share the name/);
+});
+
+test('callersOf: no caller found still carries the banner and an rg hint', () => {
+  const text = renderCallers(callersOf(cgIdx, 'neverCalled'));
+  assert.match(text, /no caller found/);
+  assert.match(text, /reference only/i);
+});
+
+test('calleesOf: names called by a function', () => {
+  const r = calleesOf(cgIdx, 'A::run');
+  assert.equal(r.referenceOnly, true);
+  assert.deepEqual(r.rows.map((x) => x.fn).sort(), ['getColumnMapperById', 'getName']);
 });

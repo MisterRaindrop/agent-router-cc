@@ -109,6 +109,70 @@ export function methodsOf(idx: SymbolIndex, className: string, limit = 40): Meth
   return { cls, members, truncated: Math.max(0, all.length - members.length) };
 }
 
+// -- approximate call graph (REFERENCE ONLY, never authoritative) --
+// Name-based syntactic edges. It makes navigation faster but is only a hint: over-
+// approximation costs a wasted read; under-approximation (macros, function pointers,
+// template-dependent calls) means it can MISS a caller. Therefore every result is
+// labeled reference-only and, for completeness-critical judgments, defers to rg. This
+// constraint is the point -- results never stand on the graph alone.
+
+export interface CallRow {
+  file: string;
+  line: number;
+  fn: string; // the caller (for callers query) or callee (for callees query)
+}
+export interface CallResult {
+  name: string;
+  rows: CallRow[];
+  ambiguity: number; // #definitions sharing this simple name; >1 => results mix symbols
+  truncated: number;
+  referenceOnly: true; // ALWAYS true: a hint, not ground truth; confirm with rg + read
+}
+
+const simpleName = (n: string): string => n.split('::').pop() ?? n;
+
+function defCount(idx: SymbolIndex, name: string): number {
+  let n = 0;
+  for (const f of idx.files) for (const s of f.symbols) if (simpleName(s.name) === name) n++;
+  return n;
+}
+
+/** Functions that call `name` (approximate, name-based). Reference only. */
+export function callersOf(idx: SymbolIndex, name: string, limit = 20): CallResult {
+  const rows: CallRow[] = [];
+  for (const f of idx.files) for (const e of f.calls ?? []) if (e.callee === name) rows.push({ file: f.file, line: e.line, fn: e.caller });
+  const shown = rows.slice(0, Math.max(0, limit));
+  return { name, rows: shown, ambiguity: defCount(idx, name), truncated: Math.max(0, rows.length - shown.length), referenceOnly: true };
+}
+
+/** Names called by function `fnName` (approximate). Reference only. */
+export function calleesOf(idx: SymbolIndex, fnName: string, limit = 40): CallResult {
+  const target = simpleName(fnName);
+  const rows: CallRow[] = [];
+  for (const f of idx.files) for (const e of f.calls ?? []) if (e.caller === fnName || simpleName(e.caller) === target) rows.push({ file: f.file, line: e.line, fn: e.callee });
+  const shown = rows.slice(0, Math.max(0, limit));
+  return { name: fnName, rows: shown, ambiguity: defCount(idx, target), truncated: Math.max(0, rows.length - shown.length), referenceOnly: true };
+}
+
+// The reference-only banner is mandatory on every call-graph result -- it is the
+// constraint that makes an approximate graph safe: it can never be read as complete.
+function callBanner(r: CallResult): string {
+  const amb = r.ambiguity > 1 ? ` ${r.ambiguity} symbols share the name "${r.name}" -- results mix them.` : '';
+  return `[reference only -- approximate call graph, NOT authoritative.${amb} Confirm completeness with rg and read the code before concluding.]`;
+}
+
+export function renderCallers(r: CallResult): string {
+  const head = r.rows.length === 0 ? `no caller found for ${r.name} (may be called via macro/pointer -- verify with rg)` : r.rows.map((x) => `${x.file}:${x.line}\t${x.fn}`).join('\n');
+  const more = r.truncated > 0 ? `\n... (${r.truncated} more)` : '';
+  return `${head}${more}\n${callBanner(r)}`;
+}
+
+export function renderCallees(r: CallResult): string {
+  const head = r.rows.length === 0 ? `no callee found for ${r.name}` : r.rows.map((x) => `${x.file}:${x.line}\t${x.fn}`).join('\n');
+  const more = r.truncated > 0 ? `\n... (${r.truncated} more)` : '';
+  return `${head}${more}\n${callBanner(r)}`;
+}
+
 // -- rendering (pure): the SAME bounded text CLI prints and JSON mode mirrors --
 
 export function renderFind(r: FindResult): string {

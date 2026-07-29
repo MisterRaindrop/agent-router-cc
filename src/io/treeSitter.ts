@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { Sym, SymbolKind } from '../domain/types.ts';
+import type { CallEdge, Sym, SymbolKind } from '../domain/types.ts';
 
 // tree-sitter (WASM) symbol extraction. IMPURE (fs + wasm). This is the ONLY place a
 // parser is loaded; queries never touch it (they read a prebuilt cache). Zero-config:
@@ -106,38 +106,67 @@ function funcName(fn: WtsNode, src: string): string | null {
   return null;
 }
 
-function collect(node: WtsNode, src: string, out: Sym[], depth: number): void {
+// The trailing identifier of a call target: `foo()`, `a->foo()`, `A::foo()` -> "foo".
+function calleeName(callNode: WtsNode, src: string): string | null {
+  const f = callNode.childForFieldName('function');
+  if (f === null) return null;
+  if (f.type === 'field_expression') {
+    const fld = f.childForFieldName('field');
+    return fld !== null ? text(fld, src) : null;
+  }
+  if (f.type === 'qualified_identifier') {
+    const name = f.childForFieldName('name');
+    return name !== null ? text(name, src).split('::').pop() ?? null : null;
+  }
+  if (f.type === 'identifier') return text(f, src);
+  return null;
+}
+
+// Single traversal: gather symbols AND call edges. `stack` tracks the enclosing function
+// so each call is attributed to its caller. Full recursion (no depth cap) so calls deep
+// in a body are not missed.
+function extract(node: WtsNode, src: string, syms: Sym[], calls: CallEdge[], stack: string[]): void {
   const t = node.type;
+  let pushed = false;
   if (t === 'class_specifier' || t === 'struct_specifier') {
     const name = node.childForFieldName('name');
     if (name !== null) {
       const kind: SymbolKind = t === 'class_specifier' ? 'class' : 'struct';
-      out.push({ kind, name: text(name, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+      syms.push({ kind, name: text(name, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
     }
   } else if (t === 'function_definition') {
     const nm = funcName(node, src);
-    if (nm !== null) out.push({ kind: 'fn', name: nm, line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+    if (nm !== null) {
+      syms.push({ kind: 'fn', name: nm, line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+      stack.push(nm);
+      pushed = true;
+    }
   } else if (t === 'field_declaration' || t === 'declaration') {
     // function DECLARATIONS (no body) -- important for headers (overrides, interfaces).
     const d = node.childForFieldName('declarator');
     if (d !== null && d.type === 'function_declarator') {
       const inner = d.childForFieldName('declarator');
       if (inner !== null)
-        out.push({ kind: 'decl', name: text(inner, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+        syms.push({ kind: 'decl', name: text(inner, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
     }
+  } else if (t === 'call_expression') {
+    const callee = calleeName(node, src);
+    if (callee !== null) calls.push({ caller: stack[stack.length - 1] ?? '<global>', callee, line: node.startPosition.row + 1 });
   }
-  if (depth < 8) for (const c of node.namedChildren) collect(c, src, out, depth + 1);
+  for (const c of node.namedChildren) extract(c, src, syms, calls, stack);
+  if (pushed) stack.pop();
 }
 
-/** Parse one C++ source string into its symbols. `grammar` stamps the ABI for cache busting. */
-export async function parseSymbols(src: string): Promise<{ syms: Sym[]; grammar: string }> {
+/** Parse one C++ source string into its symbols and (approximate) call edges. */
+export async function parseSymbols(src: string): Promise<{ syms: Sym[]; calls: CallEdge[]; grammar: string }> {
   const { parser, grammar } = await getParser();
   const tree = parser.parse(src);
   const syms: Sym[] = [];
+  const calls: CallEdge[] = [];
   try {
-    collect(tree.rootNode, src, syms, 0);
+    extract(tree.rootNode, src, syms, calls, []);
   } finally {
     tree.delete(); // free the wasm tree so a full-project build doesn't balloon the heap
   }
-  return { syms, grammar };
+  return { syms, calls, grammar };
 }

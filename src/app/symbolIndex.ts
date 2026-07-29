@@ -5,9 +5,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { resolve } from 'node:path';
 import { load, JSON_SCHEMA } from 'js-yaml';
 import {
+  calleesOf,
+  callersOf,
   enclosing,
   findSymbol,
   methodsOf,
+  renderCallees,
+  renderCallers,
   renderEnclosing,
   renderFind,
   renderMethods,
@@ -153,7 +157,15 @@ export async function runQuery(
     const r = methodsOf(index, args.cls ?? '', args.limit);
     return { text: renderMethods(r), data: r, reparsed };
   }
-  return { degraded: true, reason: `unknown symbol subcommand '${sub}' (use index|find|enclosing|methods)` };
+  if (sub === 'callers') {
+    const r = callersOf(index, args.name ?? '', args.limit);
+    return { text: renderCallers(r), data: r, reparsed };
+  }
+  if (sub === 'callees') {
+    const r = calleesOf(index, args.name ?? '', args.limit);
+    return { text: renderCallees(r), data: r, reparsed };
+  }
+  return { degraded: true, reason: `unknown symbol subcommand '${sub}' (use index|find|enclosing|methods|callers|callees)` };
 }
 
 /** LRU-ish cleanup: drop symbol caches not touched in `maxAgeMs`. Returns count removed. */

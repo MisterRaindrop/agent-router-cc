@@ -11108,6 +11108,43 @@ function methodsOf(idx, className, limit = 40) {
   const members = all.slice(0, Math.max(0, limit));
   return { cls, members, truncated: Math.max(0, all.length - members.length) };
 }
+var simpleName = (n) => n.split("::").pop() ?? n;
+function defCount(idx, name) {
+  let n = 0;
+  for (const f of idx.files) for (const s of f.symbols) if (simpleName(s.name) === name) n++;
+  return n;
+}
+function callersOf(idx, name, limit = 20) {
+  const rows = [];
+  for (const f of idx.files) for (const e of f.calls ?? []) if (e.callee === name) rows.push({ file: f.file, line: e.line, fn: e.caller });
+  const shown = rows.slice(0, Math.max(0, limit));
+  return { name, rows: shown, ambiguity: defCount(idx, name), truncated: Math.max(0, rows.length - shown.length), referenceOnly: true };
+}
+function calleesOf(idx, fnName, limit = 40) {
+  const target = simpleName(fnName);
+  const rows = [];
+  for (const f of idx.files) for (const e of f.calls ?? []) if (e.caller === fnName || simpleName(e.caller) === target) rows.push({ file: f.file, line: e.line, fn: e.callee });
+  const shown = rows.slice(0, Math.max(0, limit));
+  return { name: fnName, rows: shown, ambiguity: defCount(idx, target), truncated: Math.max(0, rows.length - shown.length), referenceOnly: true };
+}
+function callBanner(r) {
+  const amb = r.ambiguity > 1 ? ` ${r.ambiguity} symbols share the name "${r.name}" -- results mix them.` : "";
+  return `[reference only -- approximate call graph, NOT authoritative.${amb} Confirm completeness with rg and read the code before concluding.]`;
+}
+function renderCallers(r) {
+  const head = r.rows.length === 0 ? `no caller found for ${r.name} (may be called via macro/pointer -- verify with rg)` : r.rows.map((x) => `${x.file}:${x.line}	${x.fn}`).join("\n");
+  const more = r.truncated > 0 ? `
+... (${r.truncated} more)` : "";
+  return `${head}${more}
+${callBanner(r)}`;
+}
+function renderCallees(r) {
+  const head = r.rows.length === 0 ? `no callee found for ${r.name}` : r.rows.map((x) => `${x.file}:${x.line}	${x.fn}`).join("\n");
+  const more = r.truncated > 0 ? `
+... (${r.truncated} more)` : "";
+  return `${head}${more}
+${callBanner(r)}`;
+}
 function renderFind(r) {
   if (r.rows.length === 0) return "no matching symbol";
   const lines = r.rows.map((h) => `${h.file}:${h.line}	${h.kind} ${h.name}`);
@@ -11182,37 +11219,61 @@ function funcName(fn, src) {
   }
   return null;
 }
-function collect(node, src, out2, depth) {
+function calleeName(callNode, src) {
+  const f = callNode.childForFieldName("function");
+  if (f === null) return null;
+  if (f.type === "field_expression") {
+    const fld = f.childForFieldName("field");
+    return fld !== null ? text(fld, src) : null;
+  }
+  if (f.type === "qualified_identifier") {
+    const name = f.childForFieldName("name");
+    return name !== null ? text(name, src).split("::").pop() ?? null : null;
+  }
+  if (f.type === "identifier") return text(f, src);
+  return null;
+}
+function extract(node, src, syms, calls, stack) {
   const t = node.type;
+  let pushed = false;
   if (t === "class_specifier" || t === "struct_specifier") {
     const name = node.childForFieldName("name");
     if (name !== null) {
       const kind = t === "class_specifier" ? "class" : "struct";
-      out2.push({ kind, name: text(name, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+      syms.push({ kind, name: text(name, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
     }
   } else if (t === "function_definition") {
     const nm = funcName(node, src);
-    if (nm !== null) out2.push({ kind: "fn", name: nm, line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+    if (nm !== null) {
+      syms.push({ kind: "fn", name: nm, line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+      stack.push(nm);
+      pushed = true;
+    }
   } else if (t === "field_declaration" || t === "declaration") {
     const d = node.childForFieldName("declarator");
     if (d !== null && d.type === "function_declarator") {
       const inner = d.childForFieldName("declarator");
       if (inner !== null)
-        out2.push({ kind: "decl", name: text(inner, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+        syms.push({ kind: "decl", name: text(inner, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
     }
+  } else if (t === "call_expression") {
+    const callee = calleeName(node, src);
+    if (callee !== null) calls.push({ caller: stack[stack.length - 1] ?? "<global>", callee, line: node.startPosition.row + 1 });
   }
-  if (depth < 8) for (const c of node.namedChildren) collect(c, src, out2, depth + 1);
+  for (const c of node.namedChildren) extract(c, src, syms, calls, stack);
+  if (pushed) stack.pop();
 }
 async function parseSymbols(src) {
   const { parser, grammar } = await getParser();
   const tree = parser.parse(src);
   const syms = [];
+  const calls = [];
   try {
-    collect(tree.rootNode, src, syms, 0);
+    extract(tree.rootNode, src, syms, calls, []);
   } finally {
     tree.delete();
   }
-  return { syms, grammar };
+  return { syms, calls, grammar };
 }
 
 // src/io/symbolCache.ts
@@ -11276,7 +11337,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
     }
     const parsed = await parseSymbols(src);
     grammar = parsed.grammar;
-    out2.push({ file: rel, mtimeMs: st.mtimeMs, symbols: parsed.syms });
+    out2.push({ file: rel, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     symbols += parsed.syms.length;
     reparsed++;
   }
@@ -11308,7 +11369,7 @@ async function refreshIndex(cachePath, repoRoot) {
     }
     const parsed = await parseSymbols(readFileSync8(abs, "utf8"));
     grammar = parsed.grammar;
-    out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms });
+    out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
     changed = true;
   }
@@ -11408,7 +11469,15 @@ async function runQuery(paths, cfg, sub, args) {
     const r = methodsOf(index, args.cls ?? "", args.limit);
     return { text: renderMethods(r), data: r, reparsed };
   }
-  return { degraded: true, reason: `unknown symbol subcommand '${sub}' (use index|find|enclosing|methods)` };
+  if (sub === "callers") {
+    const r = callersOf(index, args.name ?? "", args.limit);
+    return { text: renderCallers(r), data: r, reparsed };
+  }
+  if (sub === "callees") {
+    const r = calleesOf(index, args.name ?? "", args.limit);
+    return { text: renderCallees(r), data: r, reparsed };
+  }
+  return { degraded: true, reason: `unknown symbol subcommand '${sub}' (use index|find|enclosing|methods|callers|callees)` };
 }
 
 // src/core/pricing.ts
@@ -11966,8 +12035,8 @@ var symbol = async (ctx) => {
     );
     return 0;
   }
-  if (sub !== "find" && sub !== "enclosing" && sub !== "methods") {
-    throw new CliError(`usage: router symbol index|find|enclosing|methods`, 2);
+  if (sub !== "find" && sub !== "enclosing" && sub !== "methods" && sub !== "callers" && sub !== "callees") {
+    throw new CliError(`usage: router symbol index|find|enclosing|methods|callers|callees`, 2);
   }
   const p1 = ctx.args.positionals[1];
   const p2 = ctx.args.positionals[2];
@@ -12053,7 +12122,7 @@ Usage: router <command> [options]
   list                   list tasks with last status + whether a worktree remains
   usage [--all]          token/cost usage across recent dispatches (last 7 days)
   models                 print the resolved model-tier config (default + .router/models.yaml)
-  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class>
+  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>
   doctor                 self-check the code-intelligence layer (config, wasm, cache)
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use

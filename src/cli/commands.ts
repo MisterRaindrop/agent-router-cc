@@ -366,8 +366,8 @@ const symbol: Handler = async (ctx) => {
     return 0;
   }
 
-  if (sub !== 'find' && sub !== 'enclosing' && sub !== 'methods') {
-    throw new CliError(`usage: router symbol index|find|enclosing|methods`, 2);
+  if (sub !== 'find' && sub !== 'enclosing' && sub !== 'methods' && sub !== 'callers' && sub !== 'callees') {
+    throw new CliError(`usage: router symbol index|find|enclosing|methods|callers|callees`, 2);
   }
   const p1 = ctx.args.positionals[1];
   const p2 = ctx.args.positionals[2];
@@ -457,7 +457,7 @@ export function helpText(): string {
     `  list                   list tasks with last status + whether a worktree remains\n` +
     `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
-    `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class>\n` +
+    `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>\n` +
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +

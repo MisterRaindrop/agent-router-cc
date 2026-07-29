@@ -87,6 +87,18 @@ test('disabled by config: master switch off -> loud degrade', () => {
   assert.match(r.out, /disabled by config/);
 });
 
+test('symbol callers: finds a caller and ALWAYS prints the reference-only banner', () => {
+  const dir = repoWithSource();
+  // widget.cpp: Widget::run() calls run()? add a caller relationship.
+  writeFileSync(join(dir, 'src', 'widget.cpp'), CPP + '\nvoid caller() { Widget w; w.run(); }\n');
+  router(dir, ['symbol', 'index', 'src']);
+  const r = router(dir, ['symbol', 'callers', 'run']);
+  assert.equal(r.code, 0);
+  assert.match(r.out, /reference only/i);
+  assert.match(r.out, /NOT authoritative/);
+  assert.match(r.out, /rg/); // must tell the agent to confirm completeness with rg
+});
+
 test('symbol: unknown subcommand exits 2', () => {
   const dir = repoWithSource();
   const r = router(dir, ['symbol', 'bogus']);
