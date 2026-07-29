@@ -2982,7 +2982,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve5.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3009,7 +3009,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve5(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3640,55 +3640,55 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve5(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative, options, skipNormalization) {
+    function resolveComponent(base, relative2, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse(serialize(base, options), options);
-        relative = parse(serialize(relative, options), options);
+        relative2 = parse(serialize(relative2, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative.scheme) {
-        target.scheme = relative.scheme;
-        target.userinfo = relative.userinfo;
-        target.host = relative.host;
-        target.port = relative.port;
-        target.path = removeDotSegments(relative.path || "");
-        target.query = relative.query;
+      if (!options.tolerant && relative2.scheme) {
+        target.scheme = relative2.scheme;
+        target.userinfo = relative2.userinfo;
+        target.host = relative2.host;
+        target.port = relative2.port;
+        target.path = removeDotSegments(relative2.path || "");
+        target.query = relative2.query;
       } else {
-        if (relative.userinfo !== void 0 || relative.host !== void 0 || relative.port !== void 0) {
-          target.userinfo = relative.userinfo;
-          target.host = relative.host;
-          target.port = relative.port;
-          target.path = removeDotSegments(relative.path || "");
-          target.query = relative.query;
+        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
+          target.userinfo = relative2.userinfo;
+          target.host = relative2.host;
+          target.port = relative2.port;
+          target.path = removeDotSegments(relative2.path || "");
+          target.query = relative2.query;
         } else {
-          if (!relative.path) {
+          if (!relative2.path) {
             target.path = base.path;
-            if (relative.query !== void 0) {
-              target.query = relative.query;
+            if (relative2.query !== void 0) {
+              target.query = relative2.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative.path[0] === "/") {
-              target.path = removeDotSegments(relative.path);
+            if (relative2.path[0] === "/") {
+              target.path = removeDotSegments(relative2.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative.path;
+                target.path = "/" + relative2.path;
               } else if (!base.path) {
-                target.path = relative.path;
+                target.path = relative2.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative.query;
+            target.query = relative2.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3696,7 +3696,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative.fragment;
+      target.fragment = relative2.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -3898,7 +3898,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve5,
       resolveComponent,
       equal,
       serialize,
@@ -4313,7 +4313,7 @@ var require_core = __commonJS({
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
         if (!errors || errors.length === 0)
           return "No errors";
-        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text, msg) => text + separator + msg);
+        return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
       }
       $dataMetaSchema(metaSchema, keywordsJsonPointers) {
         const rules = this.RULES.all;
@@ -6581,6 +6581,7 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "attempt",
   "since",
   "router-dir",
+  "limit",
   "tokens-in",
   "tokens-out",
   "cost-usd",
@@ -6632,10 +6633,10 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync7, writeFileSync as writeFileSync3 } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { existsSync as existsSync9, mkdirSync as mkdirSync5, readdirSync as readdirSync4, readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname5, join as join8, resolve as resolve2 } from "node:path";
+import { dirname as dirname6, join as join9, resolve as resolve4 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -9808,6 +9809,9 @@ function routerPaths(routerDir) {
     metrics: join2(root, "metrics.jsonl"),
     tasksDir,
     worktreesDir: join2(root, "worktrees"),
+    symbolsDir: join2(root, "symbols"),
+    symbolLatest: join2(root, "symbols", "latest"),
+    symbolCache: (hash) => join2(root, "symbols", `${hash}.json`),
     taskDir,
     taskYaml: (id) => join2(taskDir(id), "task.yaml"),
     contractMd: (id) => join2(taskDir(id), "TASK_CONTRACT.md"),
@@ -10098,7 +10102,7 @@ function superviseWorker(spec) {
   const heartbeatIntervalMs = spec.heartbeatIntervalMs ?? 2e4;
   const pollIntervalMs = spec.pollIntervalMs ?? 1e3;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 1e4;
-  return new Promise((resolve3) => {
+  return new Promise((resolve5) => {
     mkdirSync3(dirname4(spec.logPath), { recursive: true });
     mkdirSync3(dirname4(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
@@ -10136,7 +10140,7 @@ function superviseWorker(spec) {
         exitCode: o.rc,
         signal: o.signal
       });
-      resolve3({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
+      resolve5({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
     };
     child.on("error", (err2) => {
       finish({ rc: null, signal: null, timedOut: false, stalled: false, spawnError: err2.message });
@@ -11046,6 +11050,363 @@ function appendMetric2(deps, result2) {
   appendMetric(deps.paths, metric);
 }
 
+// src/app/symbolIndex.ts
+import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync3, rmSync as rmSync2, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { resolve as resolve3 } from "node:path";
+
+// src/core/symbols.ts
+var MEMBER_NOISE = /^(TSA_GUARDED_BY|TSA_PT_GUARDED_BY|DECLARE_|__)/;
+function matchFile(idx, file) {
+  return idx.files.find((e) => e.file === file || e.file.endsWith("/" + file));
+}
+function findSymbol(idx, needle, limit = 20) {
+  const hits = [];
+  for (const f of idx.files) {
+    for (const s of f.symbols) {
+      if (s.name.includes(needle)) {
+        hits.push({ file: f.file, line: s.line, kind: s.kind, name: s.name });
+      }
+    }
+  }
+  hits.sort((a, b) => {
+    const da = a.kind === "decl" ? 1 : 0;
+    const db = b.kind === "decl" ? 1 : 0;
+    if (da !== db) return da - db;
+    if (a.file !== b.file) return a.file < b.file ? -1 : 1;
+    return a.line - b.line;
+  });
+  const rows = hits.slice(0, Math.max(0, limit));
+  return { rows, truncated: Math.max(0, hits.length - rows.length) };
+}
+function enclosing(idx, file, line) {
+  const f = matchFile(idx, file);
+  if (f === void 0) return null;
+  let best = null;
+  for (const s of f.symbols) {
+    if (s.line <= line && line <= s.endLine) {
+      if (best === null || s.endLine - s.line < best.endLine - best.line) best = s;
+    }
+  }
+  if (best === null) return null;
+  return { file: f.file, kind: best.kind, name: best.name, line: best.line, endLine: best.endLine };
+}
+function methodsOf(idx, className, limit = 40) {
+  let cls = null;
+  let clsFile;
+  for (const f of idx.files) {
+    for (const s of f.symbols) {
+      if ((s.kind === "class" || s.kind === "struct") && s.name === className) {
+        cls = { file: f.file, kind: s.kind, name: s.name, line: s.line, endLine: s.endLine };
+        clsFile = f;
+      }
+    }
+  }
+  if (cls === null || clsFile === void 0) return { cls: null, members: [], truncated: 0 };
+  const all = clsFile.symbols.filter(
+    (s) => (s.kind === "fn" || s.kind === "decl") && s.line > cls.line && s.endLine <= cls.endLine && !MEMBER_NOISE.test(s.name)
+  );
+  const members = all.slice(0, Math.max(0, limit));
+  return { cls, members, truncated: Math.max(0, all.length - members.length) };
+}
+function renderFind(r) {
+  if (r.rows.length === 0) return "no matching symbol";
+  const lines = r.rows.map((h) => `${h.file}:${h.line}	${h.kind} ${h.name}`);
+  if (r.truncated > 0) lines.push(`... (${r.truncated} more; refine the name)`);
+  return lines.join("\n");
+}
+function renderEnclosing(r) {
+  if (r === null) return "no enclosing class/function";
+  return `${r.file}:${r.line}-${r.endLine}	${r.kind} ${r.name}`;
+}
+function renderMethods(r) {
+  if (r.cls === null) return "class not found";
+  const lines = [`${r.cls.name} (${r.cls.file}:${r.cls.line}-${r.cls.endLine})`];
+  for (const m of r.members) lines.push(`  ${m.line}	${m.name}`);
+  if (r.truncated > 0) lines.push(`  ... (${r.truncated} more)`);
+  return lines.join("\n");
+}
+
+// src/io/symbolCache.ts
+import { createHash as createHash2 } from "node:crypto";
+import { existsSync as existsSync7, readdirSync as readdirSync2, readFileSync as readFileSync8, statSync as statSync4 } from "node:fs";
+import { relative, resolve as resolve2 } from "node:path";
+
+// src/io/treeSitter.ts
+import { readFileSync as readFileSync7 } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname as dirname5, join as join8 } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+function locateRuntime() {
+  try {
+    const req = createRequire(import.meta.url);
+    const cjs = req.resolve("web-tree-sitter");
+    const dir = dirname5(cjs);
+    return {
+      moduleHref: pathToFileURL(join8(dir, "tree-sitter.js")).href,
+      tsWasm: join8(dir, "tree-sitter.wasm"),
+      cppWasm: req.resolve("tree-sitter-wasms/out/tree-sitter-cpp.wasm")
+    };
+  } catch {
+    const vendor = fileURLToPath(new URL("./vendor/", import.meta.url));
+    return {
+      moduleHref: pathToFileURL(join8(vendor, "tree-sitter.js")).href,
+      tsWasm: join8(vendor, "tree-sitter.wasm"),
+      cppWasm: join8(vendor, "tree-sitter-cpp.wasm")
+    };
+  }
+}
+var ready = null;
+async function getParser() {
+  if (ready === null) {
+    ready = (async () => {
+      const rt = locateRuntime();
+      const mod = await import(rt.moduleHref);
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync7(rt.tsWasm)) });
+      const parser = new mod.Parser();
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync7(rt.cppWasm)));
+      parser.setLanguage(cpp);
+      return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
+    })();
+  }
+  return ready;
+}
+var text = (n, src) => src.slice(n.startIndex, n.endIndex);
+function funcName(fn, src) {
+  let d = fn.childForFieldName("declarator");
+  for (let hops = 0; d !== null && hops < 6; hops++) {
+    if (d.type === "function_declarator") {
+      const inner = d.childForFieldName("declarator");
+      return inner !== null ? text(inner, src) : null;
+    }
+    d = d.childForFieldName("declarator") ?? d.namedChildren[0] ?? null;
+  }
+  return null;
+}
+function collect(node, src, out2, depth) {
+  const t = node.type;
+  if (t === "class_specifier" || t === "struct_specifier") {
+    const name = node.childForFieldName("name");
+    if (name !== null) {
+      const kind = t === "class_specifier" ? "class" : "struct";
+      out2.push({ kind, name: text(name, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+    }
+  } else if (t === "function_definition") {
+    const nm = funcName(node, src);
+    if (nm !== null) out2.push({ kind: "fn", name: nm, line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+  } else if (t === "field_declaration" || t === "declaration") {
+    const d = node.childForFieldName("declarator");
+    if (d !== null && d.type === "function_declarator") {
+      const inner = d.childForFieldName("declarator");
+      if (inner !== null)
+        out2.push({ kind: "decl", name: text(inner, src), line: node.startPosition.row + 1, endLine: node.endPosition.row + 1 });
+    }
+  }
+  if (depth < 8) for (const c of node.namedChildren) collect(c, src, out2, depth + 1);
+}
+async function parseSymbols(src) {
+  const { parser, grammar } = await getParser();
+  const tree = parser.parse(src);
+  const syms = [];
+  collect(tree.rootNode, src, syms, 0);
+  return { syms, grammar };
+}
+
+// src/io/symbolCache.ts
+var SRC_RE = /\.(cpp|h|hpp|cc|cxx|hh)$/;
+var SKIP_DIR = /* @__PURE__ */ new Set([".git", "node_modules", ".router", "dist"]);
+function hashRoots(roots) {
+  const norm = roots.map((r) => resolve2(r)).sort();
+  return createHash2("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
+}
+function walkFiles(root, acc) {
+  let st;
+  try {
+    st = statSync4(root);
+  } catch {
+    return;
+  }
+  if (st.isFile()) {
+    if (SRC_RE.test(root)) acc.push(root);
+    return;
+  }
+  if (!st.isDirectory()) return;
+  for (const name of readdirSync2(root)) {
+    if (SKIP_DIR.has(name)) continue;
+    walkFiles(resolve2(root, name), acc);
+  }
+}
+function loadRaw(cachePath) {
+  try {
+    return JSON.parse(readFileSync8(cachePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function buildIndex(roots, cachePath, repoRoot, limits) {
+  const files = [];
+  for (const r of roots) walkFiles(resolve2(r), files);
+  if (files.length > limits.maxFiles) {
+    return { files: files.length, symbols: 0, reparsed: 0, degraded: { reason: `scope too large: ${files.length} files > maxFiles ${limits.maxFiles}` } };
+  }
+  const prev = loadRaw(cachePath);
+  const prevByFile = /* @__PURE__ */ new Map();
+  if (prev !== null) for (const f of prev.files) prevByFile.set(f.file, f);
+  const out2 = [];
+  let grammar = prev?.grammar ?? "";
+  let symbols = 0;
+  let reparsed = 0;
+  let bytes = 0;
+  for (const abs of files) {
+    const rel = relative(repoRoot, abs);
+    const st = statSync4(abs);
+    const cached = prevByFile.get(rel);
+    if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
+      out2.push(cached);
+      symbols += cached.symbols.length;
+      continue;
+    }
+    const src = readFileSync8(abs, "utf8");
+    bytes += src.length;
+    if (bytes > limits.maxBytes) {
+      return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
+    }
+    const parsed = await parseSymbols(src);
+    grammar = parsed.grammar;
+    out2.push({ file: rel, mtimeMs: st.mtimeMs, symbols: parsed.syms });
+    symbols += parsed.syms.length;
+    reparsed++;
+  }
+  writeJsonAtomic(cachePath, { grammar, files: out2 });
+  return { files: files.length, symbols, reparsed };
+}
+function loadIndex(cachePath) {
+  return loadRaw(cachePath);
+}
+async function refreshIndex(cachePath, repoRoot) {
+  const idx = loadRaw(cachePath);
+  if (idx === null) return null;
+  const out2 = [];
+  let grammar = idx.grammar;
+  let reparsed = 0;
+  let changed = false;
+  for (const f of idx.files) {
+    const abs = resolve2(repoRoot, f.file);
+    let st;
+    try {
+      st = statSync4(abs);
+    } catch {
+      changed = true;
+      continue;
+    }
+    if (st.mtimeMs === f.mtimeMs) {
+      out2.push(f);
+      continue;
+    }
+    const parsed = await parseSymbols(readFileSync8(abs, "utf8"));
+    grammar = parsed.grammar;
+    out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms });
+    reparsed++;
+    changed = true;
+  }
+  const refreshed = { grammar, files: out2 };
+  if (changed && existsSync7(cachePath)) writeJsonAtomic(cachePath, refreshed);
+  return { index: refreshed, reparsed };
+}
+
+// src/app/symbolIndex.ts
+var DEFAULT_CODE_INTEL = {
+  enabled: true,
+  index: { enabled: true, scope: ["."], maxFiles: 2e4, maxBytes: 5e8, refresh: "query" },
+  lsp: { enabled: true }
+};
+function loadCodeIntelConfig(paths) {
+  const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
+  let raw;
+  try {
+    raw = load(readFileSync9(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+  } catch {
+    return cfg;
+  }
+  const o = raw?.codeIntelligence;
+  if (typeof o !== "object" || o === null) return cfg;
+  const c = o;
+  if (typeof c.enabled === "boolean") cfg.enabled = c.enabled;
+  const idx = c.index;
+  if (idx !== void 0) {
+    if (typeof idx.enabled === "boolean") cfg.index.enabled = idx.enabled;
+    if (Array.isArray(idx.scope)) cfg.index.scope = idx.scope.filter((s) => typeof s === "string");
+    if (typeof idx.maxFiles === "number") cfg.index.maxFiles = idx.maxFiles;
+    if (typeof idx.maxBytes === "number") cfg.index.maxBytes = idx.maxBytes;
+    if (idx.refresh === "query" || idx.refresh === "manual") cfg.index.refresh = idx.refresh;
+  }
+  const lsp = c.lsp;
+  if (lsp !== void 0 && typeof lsp.enabled === "boolean") cfg.lsp.enabled = lsp.enabled;
+  return cfg;
+}
+function isDegraded(x) {
+  return typeof x === "object" && x !== null && x.degraded === true;
+}
+function indexEnabled(cfg) {
+  if (!cfg.enabled) return { degraded: true, reason: "code intelligence disabled by config (codeIntelligence.enabled=false); using rg" };
+  if (!cfg.index.enabled) return { degraded: true, reason: "symbol index disabled by config (codeIntelligence.index.enabled=false); using rg" };
+  return null;
+}
+function rootsFor(paths, cfg, dirs) {
+  const chosen = dirs.length > 0 ? dirs : cfg.index.scope;
+  return chosen.map((d) => resolve3(paths.repoRoot, d));
+}
+async function runIndex(paths, cfg, dirs) {
+  const gate = indexEnabled(cfg);
+  if (gate !== null) return gate;
+  const roots = rootsFor(paths, cfg, dirs);
+  const hash = hashRoots(roots);
+  const cache2 = paths.symbolCache(hash);
+  const r = await buildIndex(roots, cache2, paths.repoRoot, { maxFiles: cfg.index.maxFiles, maxBytes: cfg.index.maxBytes });
+  if (r.degraded !== void 0) return { degraded: true, reason: `${r.degraded.reason}; narrow codeIntelligence.index.scope / raise maxFiles / disable; using rg` };
+  mkdirSync4(paths.symbolsDir, { recursive: true });
+  writeFileSync3(paths.symbolLatest, hash);
+  return { files: r.files, symbols: r.symbols, reparsed: r.reparsed, cache: cache2 };
+}
+async function runQuery(paths, cfg, sub, args) {
+  const gate = indexEnabled(cfg);
+  if (gate !== null) return gate;
+  let cache2;
+  if (args.dirs.length > 0) {
+    cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
+  } else if (existsSync8(paths.symbolLatest)) {
+    cache2 = paths.symbolCache(readFileSync9(paths.symbolLatest, "utf8").trim());
+  } else {
+    cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
+  }
+  if (!existsSync8(cache2)) {
+    return { degraded: true, reason: "no symbol index yet; run `router symbol index [dirs]` first; using rg" };
+  }
+  let index;
+  let reparsed = 0;
+  if (cfg.index.refresh === "query") {
+    const r = await refreshIndex(cache2, paths.repoRoot);
+    if (r === null) return { degraded: true, reason: "symbol index unreadable; rebuild with `router symbol index`; using rg" };
+    index = r.index;
+    reparsed = r.reparsed;
+  } else {
+    index = loadIndex(cache2);
+    if (index === null) return { degraded: true, reason: "symbol index unreadable; rebuild with `router symbol index`; using rg" };
+  }
+  if (sub === "find") {
+    const r = findSymbol(index, args.name ?? "", args.limit);
+    return { text: renderFind(r), data: r, reparsed };
+  }
+  if (sub === "enclosing") {
+    const r = enclosing(index, args.file ?? "", args.line ?? 0);
+    return { text: renderEnclosing(r), data: r, reparsed };
+  }
+  if (sub === "methods") {
+    const r = methodsOf(index, args.cls ?? "", args.limit);
+    return { text: renderMethods(r), data: r, reparsed };
+  }
+  return { degraded: true, reason: `unknown symbol subcommand '${sub}' (use index|find|enclosing|methods)` };
+}
+
 // src/core/pricing.ts
 var TABLE = [
   // Anthropic (Claude)
@@ -11303,13 +11664,13 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const found = explicit ?? findRouterDir(ctx.cwd);
-  const rd = found ?? join8(ctx.cwd, ROUTER_DIR);
+  const rd = found ?? join9(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync7(d)) mkdirSync4(d, { recursive: true });
+    if (!existsSync9(d)) mkdirSync5(d, { recursive: true });
   }
-  const gi = join8(paths.root, ".gitignore");
-  if (!existsSync7(gi)) writeFileSync3(gi, "*\n");
+  const gi = join9(paths.root, ".gitignore");
+  if (!existsSync9(gi)) writeFileSync4(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -11370,9 +11731,9 @@ var newTask = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
-  mkdirSync4(paths.taskDir(id), { recursive: true });
-  if (!existsSync7(paths.taskYaml(id))) writeFileSync3(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync7(paths.contractMd(id))) writeFileSync3(paths.contractMd(id), contractTemplate(id, title));
+  mkdirSync5(paths.taskDir(id), { recursive: true });
+  if (!existsSync9(paths.taskYaml(id))) writeFileSync4(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync9(paths.contractMd(id))) writeFileSync4(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -11470,7 +11831,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync7(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync10(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -11484,16 +11845,16 @@ ${tail}`;
 };
 var list = (ctx) => {
   const { paths } = depsFor(ctx);
-  const ids = existsSync7(paths.tasksDir) ? readdirSync2(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync9(paths.tasksDir) ? readdirSync4(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync7(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync10(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
     const res = readResult(paths, id, RUN2);
     const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
-    const worktree = existsSync7(paths.worktree(id, RUN2));
+    const worktree = existsSync9(paths.worktree(id, RUN2));
     return { id, title, status, worktree };
   });
   emit(ctx.json, { ok: true, tasks: rows }, () => {
@@ -11521,13 +11882,13 @@ ${explainSavingsText(report.baselineModel)}` : body;
   return 0;
 };
 var setupStatusline = (ctx) => {
-  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join8(homedir2(), ".claude", "settings.json");
-  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve2(dirname5(fileURLToPath(import.meta.url)), "..", "statusline", "router-usage.mjs");
+  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join9(homedir2(), ".claude", "settings.json");
+  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync7(settingsPath)) {
+  if (existsSync9(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync7(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync10(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }
@@ -11540,7 +11901,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync7(statuslinePath);
+  const missing = !existsSync9(statuslinePath);
   emit(
     ctx.json,
     {
@@ -11573,13 +11934,90 @@ var models = (ctx) => {
   emit(ctx.json, { ok: true, models: cfg }, () => {
     const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
     const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
-    const src = existsSync7(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    const src = existsSync9(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
     return `model tiers (${src}):
 ${tier("codex")}
 ${tier("claude")}
   review: ${review}`;
   });
   return 0;
+};
+var symbol = async (ctx) => {
+  const { paths } = depsFor(ctx);
+  const cfg = loadCodeIntelConfig(paths);
+  const sub = ctx.args.positionals[0] ?? "";
+  const limitStr = flagStr(ctx.args.flags, "limit");
+  const limit = limitStr !== void 0 ? Number(limitStr) : void 0;
+  if (sub === "index") {
+    const dirs = ctx.args.positionals.slice(1);
+    const r2 = await runIndex(paths, cfg, dirs);
+    if (isDegraded(r2)) {
+      emit(ctx.json, { ok: false, degraded: true, reason: r2.reason }, () => `code-intel: ${r2.reason}`);
+      return 0;
+    }
+    emit(
+      ctx.json,
+      { ok: true, files: r2.files, symbols: r2.symbols, reparsed: r2.reparsed, cache: r2.cache },
+      () => `indexed ${r2.files} files, ${r2.symbols} symbols (${r2.reparsed} parsed) -> ${r2.cache}`
+    );
+    return 0;
+  }
+  if (sub !== "find" && sub !== "enclosing" && sub !== "methods") {
+    throw new CliError(`usage: router symbol index|find|enclosing|methods`, 2);
+  }
+  const p1 = ctx.args.positionals[1];
+  const p2 = ctx.args.positionals[2];
+  const r = await runQuery(paths, cfg, sub, {
+    name: p1,
+    file: p1,
+    line: p2 !== void 0 ? Number(p2) : void 0,
+    cls: p1,
+    limit,
+    dirs: []
+  });
+  if (isDegraded(r)) {
+    emit(ctx.json, { ok: false, degraded: true, reason: r.reason }, () => `code-intel: ${r.reason}`);
+    return 0;
+  }
+  const note = r.reparsed > 0 ? `
+  (refreshed ${r.reparsed} file${r.reparsed === 1 ? "" : "s"})` : "";
+  emit(ctx.json, { ok: true, result: r.data, reparsed: r.reparsed }, () => `${r.text}${note}`);
+  return 0;
+};
+var doctor = async (ctx) => {
+  const { paths } = depsFor(ctx);
+  const cfg = loadCodeIntelConfig(paths);
+  let wasmOk = false;
+  let wasmDetail = "";
+  try {
+    const parsed = await parseSymbols("class Probe { void m(); };");
+    wasmOk = parsed.syms.length > 0;
+    wasmDetail = `grammar ${parsed.grammar}`;
+  } catch (e) {
+    wasmDetail = e.message;
+  }
+  const cacheWritable = existsSync9(paths.root);
+  emit(
+    ctx.json,
+    {
+      ok: wasmOk,
+      node: process.version,
+      code_intelligence: { enabled: cfg.enabled, index: cfg.index.enabled, lsp: cfg.lsp.enabled },
+      scope: cfg.index.scope,
+      wasm_ok: wasmOk,
+      wasm_detail: wasmDetail,
+      symbols_dir: paths.symbolsDir,
+      cache_writable: cacheWritable
+    },
+    () => `router doctor
+  node:          ${process.version}
+  code intel:    master=${cfg.enabled} index=${cfg.index.enabled} lsp=${cfg.lsp.enabled}
+  index scope:   ${cfg.index.scope.join(", ")}  (maxFiles ${cfg.index.maxFiles})
+  tree-sitter:   ${wasmOk ? "OK" : "UNAVAILABLE"} (${wasmDetail})
+  symbols dir:   ${paths.symbolsDir} ${cacheWritable ? "(writable)" : "(missing)"}
+` + (wasmOk ? "" : "  -> symbol index unavailable; spec/review/go will use rg.\n")
+  );
+  return wasmOk ? 0 : 1;
 };
 var HANDLERS = {
   init,
@@ -11591,6 +12029,8 @@ var HANDLERS = {
   list,
   usage,
   models,
+  symbol,
+  doctor,
   "setup-statusline": setupStatusline
 };
 function versionText() {
@@ -11609,10 +12049,12 @@ Usage: router <command> [options]
   list                   list tasks with last status + whether a worktree remains
   usage [--all]          token/cost usage across recent dispatches (last 7 days)
   models                 print the resolved model-tier config (default + .router/models.yaml)
+  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class>
+  doctor                 self-check the code-intelligence layer (config, wasm, cache)
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
+Flags: --json, --all, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 

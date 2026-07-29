@@ -20,6 +20,13 @@ the build pass", "did the changelog change") -- do not spend the review on those
 it on judgment: correctness the tests miss, design, robustness, and whether the tests are
 meaningful.
 
+**Navigate with the symbol index, not by reading whole files** (see `/router:symbol`):
+`router symbol index <dirs>` once, then `symbol find` / `enclosing` / `methods` to locate
+definitions, a line's enclosing scope, and class members with a few lines each; open only
+bounded slices to confirm exact code. Call-sites are a grep job (`find` returns definitions
+only); if a query degrades to "using rg", fall back to rg. This keeps the review's context
+small so its budget goes to judgment.
+
 **You do not review your own work.** Launch an **independent reviewer -- a different model
 from yourself** (you are Claude, so prefer a non-Claude reviewer). Get the reviewer chain
 from `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models --json` (the `review` array,

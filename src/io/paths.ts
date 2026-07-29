@@ -14,6 +14,9 @@ export interface RouterPaths {
   readonly metrics: string;
   readonly tasksDir: string;
   readonly worktreesDir: string;
+  readonly symbolsDir: string; // code-intelligence symbol caches (gitignored, per-repo)
+  readonly symbolLatest: string; // pointer file: hash of the most recently built index
+  symbolCache(hash: string): string;
   taskDir(id: string): string;
   taskYaml(id: string): string;
   contractMd(id: string): string;
@@ -46,6 +49,9 @@ export function routerPaths(routerDir: string): RouterPaths {
     metrics: join(root, 'metrics.jsonl'),
     tasksDir,
     worktreesDir: join(root, 'worktrees'),
+    symbolsDir: join(root, 'symbols'),
+    symbolLatest: join(root, 'symbols', 'latest'),
+    symbolCache: (hash: string) => join(root, 'symbols', `${hash}.json`),
     taskDir,
     taskYaml: (id) => join(taskDir(id), 'task.yaml'),
     contractMd: (id) => join(taskDir(id), 'TASK_CONTRACT.md'),
