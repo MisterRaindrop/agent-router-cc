@@ -15,6 +15,7 @@ const VALUE_FLAGS = new Set([
   'attempt',
   'since',
   'router-dir',
+  'limit',
   'tokens-in',
   'tokens-out',
   'cost-usd',

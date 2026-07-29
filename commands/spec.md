@@ -18,6 +18,11 @@ user can see it. You do not decide which objections are valid, and you do not si
 revise the plan on the reviewer's say-so -- the user does. Revisions happen here, in
 this session, between you and the user.
 
+When you need to check a plan claim against the codebase, navigate with the symbol index
+rather than reading whole files (see `/router:symbol`): `router symbol index <dirs>` once,
+then `symbol find` / `enclosing` / `methods`, opening only bounded slices. It keeps this
+session's context small.
+
 ## Each round
 
 1. Hand the reviewer the current plan plus this instruction:

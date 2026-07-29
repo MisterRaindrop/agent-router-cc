@@ -175,3 +175,57 @@ export interface ExecutorQuota {
   resets_at: number | null; // unix seconds when the binding window resets, if known
   available: boolean; // false when a hard limit was hit (reactive 429 / reached_type)
 }
+
+// -- code intelligence: symbol index (P1) --
+// The persisted, out-of-context symbol map. io/ builds it (tree-sitter), core/
+// queries it (pure), app/ serializes it. Kept out of the model's context on
+// purpose: only per-query results (a few lines) are ever surfaced. See
+// docs/design/code-intelligence-design.md.
+
+export type SymbolKind = 'class' | 'struct' | 'fn' | 'decl';
+
+/** One extracted symbol. Lines are 1-based; endLine is the node's last line. */
+export interface Sym {
+  kind: SymbolKind;
+  name: string; // may be qualified, e.g. "IcebergMetadata::getColumnMapperForObject"
+  line: number;
+  endLine: number;
+}
+
+/** One syntactic call edge: `caller` (enclosing function) calls something named `callee`.
+ *  Name-based and APPROXIMATE -- reference only, never authoritative (see core/symbols). */
+export interface CallEdge {
+  caller: string; // enclosing function's (qualified) name, or "<global>"
+  callee: string; // simple name of the called symbol (trailing identifier)
+  line: number;
+}
+
+/** Symbols of one file, plus the mtime used for query-time incremental refresh. */
+export interface FileSymbols {
+  file: string; // repo-relative path
+  mtimeMs: number; // source mtime at index time; a change triggers re-parse
+  symbols: Sym[];
+  calls?: CallEdge[]; // syntactic call edges (optional; absent in older caches)
+}
+
+/** The whole index. `grammar` stamps the parser/grammar version for cache busting. */
+export interface SymbolIndex {
+  grammar: string;
+  files: FileSymbols[];
+}
+
+/** Code-intelligence config (bundled default + optional .router/models.yaml override).
+ *  Three switches, all default ON. `enabled` is the master; index/lsp are per-layer. */
+export interface CodeIntelConfig {
+  enabled: boolean; // master switch: false => whole layer off, spec/review/go use rg
+  index: {
+    enabled: boolean; // tree-sitter symbol index (P1)
+    scope: string[]; // default roots to index when none given (repo-relative)
+    maxFiles: number; // hard cap: over it => loud degrade, never silently index the world
+    maxBytes: number;
+    refresh: 'query' | 'manual'; // query = re-stat + reparse dirty before each query
+  };
+  lsp: {
+    enabled: boolean; // precise-semantics LSP layer (P2); can be off while index stays on
+  };
+}

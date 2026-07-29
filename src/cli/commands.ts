@@ -14,6 +14,8 @@ import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPa
 import * as store from '../io/store.ts';
 import { dispatchTask, resumeTask } from '../app/dispatch.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
+import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
+import { parseSymbols } from '../io/treeSitter.ts';
 import { buildUsageReport, explainSavingsText, renderUsage } from '../app/usageReport.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
@@ -341,6 +343,89 @@ const models: Handler = (ctx) => {
   return 0;
 };
 
+// Code-intelligence symbol index (P1). Out-of-context: `index` prints only a summary
+// (the map never enters context); queries return a bounded handful of lines. Every
+// unavailable path degrades LOUDLY to a "use rg" message, never a silent empty result.
+const symbol: Handler = async (ctx) => {
+  const { paths } = depsFor(ctx);
+  const cfg = loadCodeIntelConfig(paths);
+  const sub = ctx.args.positionals[0] ?? '';
+  const limitStr = flagStr(ctx.args.flags, 'limit');
+  const limit = limitStr !== undefined ? Number(limitStr) : undefined;
+
+  if (sub === 'index') {
+    const dirs = ctx.args.positionals.slice(1);
+    const r = await runIndex(paths, cfg, dirs);
+    if (isDegraded(r)) {
+      emit(ctx.json, { ok: false, degraded: true, reason: r.reason }, () => `code-intel: ${r.reason}`);
+      return 0; // graceful: caller falls back to rg
+    }
+    emit(ctx.json, { ok: true, files: r.files, symbols: r.symbols, reparsed: r.reparsed, cache: r.cache }, () =>
+      `indexed ${r.files} files, ${r.symbols} symbols (${r.reparsed} parsed) -> ${r.cache}`,
+    );
+    return 0;
+  }
+
+  if (sub !== 'find' && sub !== 'enclosing' && sub !== 'methods' && sub !== 'callers' && sub !== 'callees') {
+    throw new CliError(`usage: router symbol index|find|enclosing|methods|callers|callees`, 2);
+  }
+  const p1 = ctx.args.positionals[1];
+  const p2 = ctx.args.positionals[2];
+  const r = await runQuery(paths, cfg, sub, {
+    name: p1,
+    file: p1,
+    line: p2 !== undefined ? Number(p2) : undefined,
+    cls: p1,
+    limit,
+    dirs: [],
+  });
+  if (isDegraded(r)) {
+    emit(ctx.json, { ok: false, degraded: true, reason: r.reason }, () => `code-intel: ${r.reason}`);
+    return 0;
+  }
+  const note = r.reparsed > 0 ? `\n  (refreshed ${r.reparsed} file${r.reparsed === 1 ? '' : 's'})` : '';
+  emit(ctx.json, { ok: true, result: r.data, reparsed: r.reparsed }, () => `${r.text}${note}`);
+  return 0;
+};
+
+// Self-check the code-intelligence layer: config switches, wasm loadable, cache dir.
+const doctor: Handler = async (ctx) => {
+  const { paths } = depsFor(ctx);
+  const cfg = loadCodeIntelConfig(paths);
+  let wasmOk = false;
+  let wasmDetail = '';
+  try {
+    const parsed = await parseSymbols('class Probe { void m(); };');
+    wasmOk = parsed.syms.length > 0;
+    wasmDetail = `grammar ${parsed.grammar}`;
+  } catch (e) {
+    wasmDetail = (e as Error).message;
+  }
+  const cacheWritable = existsSync(paths.root);
+  emit(
+    ctx.json,
+    {
+      ok: wasmOk,
+      node: process.version,
+      code_intelligence: { enabled: cfg.enabled, index: cfg.index.enabled, lsp: cfg.lsp.enabled },
+      scope: cfg.index.scope,
+      wasm_ok: wasmOk,
+      wasm_detail: wasmDetail,
+      symbols_dir: paths.symbolsDir,
+      cache_writable: cacheWritable,
+    },
+    () =>
+      `router doctor\n` +
+      `  node:          ${process.version}\n` +
+      `  code intel:    master=${cfg.enabled} index=${cfg.index.enabled} lsp=${cfg.lsp.enabled}\n` +
+      `  index scope:   ${cfg.index.scope.join(', ')}  (maxFiles ${cfg.index.maxFiles})\n` +
+      `  tree-sitter:   ${wasmOk ? 'OK' : 'UNAVAILABLE'} (${wasmDetail})\n` +
+      `  symbols dir:   ${paths.symbolsDir} ${cacheWritable ? '(writable)' : '(missing)'}\n` +
+      (wasmOk ? '' : '  -> symbol index unavailable; spec/review/go will use rg.\n'),
+  );
+  return wasmOk ? 0 : 1;
+};
+
 export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
@@ -351,6 +436,8 @@ export const HANDLERS: Record<string, Handler> = {
   list,
   usage,
   models,
+  symbol,
+  doctor,
   'setup-statusline': setupStatusline,
 };
 
@@ -370,8 +457,10 @@ export function helpText(): string {
     `  list                   list tasks with last status + whether a worktree remains\n` +
     `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
+    `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>\n` +
+    `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --all, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }
