@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { chmodSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import * as fx from '../testkit/gitRepo.ts';
 import {
@@ -11,6 +11,7 @@ import {
   branchExists,
   collectDiff,
   commitAll,
+  listDirFileModes,
   rawDiff,
   resolveCommit,
   showFileAtRev,
@@ -82,6 +83,38 @@ test('collectDiff parses A/M/D/R + binary + spaced/unicode paths', () => {
     assert.equal(m.get('bin.dat')?.binary, true);
     assert.equal(m.get('bin.dat')?.added, 0);
     assert.equal(m.get('bin.dat')?.deleted, 0);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('collectDiff reports the new file mode; listDirFileModes reads a directory convention', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'sh/one.sh', '#!/bin/sh\ntrue\n');
+    fx.write(dir, 'sh/two.sh', '#!/bin/sh\ntrue\n');
+    chmodSync(join(dir, 'sh/one.sh'), 0o755);
+    chmodSync(join(dir, 'sh/two.sh'), 0o755);
+    const base = fx.addCommit(dir, 'base');
+
+    fx.write(dir, 'sh/three.sh', '#!/bin/sh\ntrue\n'); // added non-executable
+    fx.write(dir, 'sh/four.sh', '#!/bin/sh\ntrue\n');
+    chmodSync(join(dir, 'sh/four.sh'), 0o755);
+    const head = fx.addCommit(dir, 'add scripts');
+
+    const m = byPath(collectDiff(dir, base, head));
+    assert.equal(m.get('sh/three.sh')?.newMode, '100644');
+    assert.equal(m.get('sh/four.sh')?.newMode, '100755');
+
+    const modes = listDirFileModes(dir, base, 'sh');
+    assert.deepEqual(
+      modes.sort((a, b) => a.name.localeCompare(b.name)),
+      [
+        { name: 'one.sh', mode: '100755' },
+        { name: 'two.sh', mode: '100755' },
+      ],
+    );
+    assert.deepEqual(listDirFileModes(dir, base, 'does/not/exist'), []); // no evidence, no throw
   } finally {
     fx.cleanup(dir);
   }

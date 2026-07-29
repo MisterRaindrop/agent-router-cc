@@ -2,7 +2,7 @@
 
 router routes coding subtasks to the cheapest capable model to save Opus tokens. You
 plan with Opus; it dispatches the clear subtasks to a cheaper executor, gates each diff
-(scope + secrets), then reviews it and verifies the build/tests in your real environment;
+(scope + secrets + exec bit), then reviews it and verifies the build/tests in your real environment;
 you approve and merge. There is no `init`, no policy file, and no commit step -- router
 auto-creates a gitignored `.router/` on first use.
 
@@ -29,9 +29,12 @@ points:
 2. **Unclear tasks** -- Opus handles these interactively; they are not sent to a cheap
    model.
 3. **Review + land** -- Opus reviews each diff (and verifies anything risky in your real
-   environment as it goes), then runs a mandatory full-chain CI in your real environment
-   before reporting done; it shows you the diffs and the tokens saved, and you approve
-   each land.
+   environment as it goes), then runs a mandatory full-chain CI in your real environment,
+   **exactly as your CI invokes it and without fixing the environment to make it pass**.
+   That is the *floor*: it shows you the diffs and the tokens saved, and hands the stage
+   back to you. `/router:review` is the **next stage** -- a strict, independent review of
+   the landed code -- so you can confirm the direction first instead of paying for a strict
+   review of the wrong thing.
 
 ## The primitives
 
@@ -46,7 +49,7 @@ points:
 Or from a shell (same thing): `router dispatch <id>`, `router land <id>`.
 
 Claude executors run with worktree-scoped `Read`/`Edit`/`Write` tools only. The CLI
-applies environment-free gates to the diff (applies + scope + secrets); the real
+applies environment-free gates to the diff (applies + scope + secrets + exec bit); the real
 build/tests are run by Opus in your actual environment, not by the CLI.
 
 ## The task contract
@@ -76,6 +79,7 @@ A dispatched diff must clear the CLI's environment-free gates, in order:
 | `diff_applies` | applies cleanly onto the base commit |
 | `scope`        | only `allowed_globs` changed, under the line cap, no test deletion |
 | `secret_scan`  | no leaked keys/secrets in the added lines |
+| `exec_bit`     | a script added where its same-extension siblings are executable carries the executable bit (a test script created `100644` dies with "permission denied" in CI before running one assertion) |
 | `verify`       | optional: any `verify` command(s) exit 0 (skipped when `verify: []`) |
 
 These are the deterministic guarantees a cheap model can't fake. **The real build/tests

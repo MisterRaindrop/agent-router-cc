@@ -8,7 +8,8 @@ plan you both just agreed on, using the full context you already have.
 
 **Division of labor.** The **router CLI** owns only the mechanism it alone can provide:
 an isolated `git worktree`, process supervision, and fast *environment-free* gates on the
-diff (it applies cleanly, stays within `allowed_globs`, leaks no secrets). **YOU (Opus)**
+diff (it applies cleanly, stays within `allowed_globs`, leaks no secrets, and a script added
+where its siblings are executable carries the executable bit). **YOU (Opus)**
 own every judgment -- how to split the work, whether a diff is correct, whether it needs
 verifying, and, crucially, **running the real build/tests yourself in this session's real
 environment** (you have Bash, Docker, and the full toolchain; the sandboxed executor does
@@ -41,7 +42,7 @@ and the pass/fail verdict -- stays with you, never with the executor and never c
 2. **Run the clear tasks one at a time, in dependency order:**
    `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" dispatch <id> --json`
    router picks the executor with more real remaining quota, runs it in an isolated worktree,
-   and clears the environment-free gates (diff applies + scope + secret scan). **Then YOU read
+   and clears the environment-free gates (diff applies + scope + secret scan + exec bit). **Then YOU read
    the diff and review it:** is the implementation correct? did it drift from the change you
    specified? **are the tests real assertions rather than hollow or hardcoded stubs?** is the
    changed code actually covered? Judge the risk. Then branch:
@@ -59,23 +60,43 @@ and the pass/fail verdict -- stays with you, never with the executor and never c
 3. **Touchpoint 2:** handle any UNCLEAR task directly with the user (clarify, then implement it
    yourself). Never dispatch it to a cheap model.
 
-4. **Touchpoint 3 -- final acceptance (mandatory; you do all of it yourself):** once every clear
-   task has landed and every unclear task is done:
+4. **Touchpoint 3 -- stage gate (mandatory; you do all of it yourself).** This is the
+   **floor**, not the final word: enough to say "this stage holds together", so the user can
+   confirm the direction before anyone spends a strict review on it. Once every clear task has
+   landed and every unclear task is done:
    - **Work out how to build and test this project yourself** by reading `package.json` /
      `Makefile` / CI config / etc. The user does not supply build/test commands and there is no
      manifest -- discover them.
    - Confirm **every changed line is covered by a test** (key paths and all modified code; aim for
      complete coverage, allowing only what genuinely cannot be covered). Fill any gap -- write the
      missing tests yourself, or dispatch a focused test-writing task (which must then pass too).
-   - **Run the full-chain CI/build/tests in the real environment** (Docker included). **Read the
-     complete output yourself, uncompressed, and decide** whether everything ran and passed.
-   - Only when the whole chain is green **and** your review is satisfied do you report "done" to
-     the user, with the combined diffs and roughly the tokens saved. If anything fails, return to
-     the step-2 fix loop. **Land nothing the user has not approved.**
+   - **Run the full-chain CI/build/tests in the real environment** (Docker included), **exactly as
+     this project's CI invokes them**. **Read the complete output yourself, uncompressed, and
+     decide** whether everything ran and passed.
+   - **Never make the environment cooperate.** Do not `chmod` a file, hand-edit a config, install
+     an undeclared dependency, pre-create a directory, or touch fixtures to get a test to run. If
+     something fails on such a detail (a missing executable bit, a wrong file mode, an undeclared
+     dependency, leftover state from a previous run), **that is a defect in the diff** -- fix it in
+     the diff and re-run. A gate you helped pass verifies your workaround, not the change: it stops
+     being evidence.
+   - Do a **floor review** of the combined change yourself: does it do what the user asked, is
+     anything obviously wrong or out of scope, are the tests real assertions?
+
+   Then **stop and hand the stage back to the user**: report the combined diffs, that the full
+   chain is green in the real environment, roughly the tokens saved, and state plainly that this
+   was the **floor check, not a strict review**. Recommend `/router:review` as the **next stage**
+   -- an independent, adversarial review of the landed code -- and let the user decide when to
+   spend it: if the direction turns out to differ from what they wanted, a strict review now is
+   wasted work. **Land nothing the user has not approved.**
 
 You planned, decomposed, reviewed, verified in the real environment, and merged; the cheap models
 did the execution -- that is the token saving.
 
-Bookends (optional, independent second opinions): run `/router:spec` **before** `go` to
-adversarially review the plan, and `/router:review` **after** the final tests pass to
-adversarially review the code.
+**Why the review is a separate stage.** A green suite is weak evidence about judgment. Measured on
+real bugs: a cheap executor's fix passed the held-out oracle test, every regression test, and this
+floor review -- and an independent reviewer still found its guard condition was one notch too
+broad, silently disabling an optimization the tests could not see. The floor catches "is it
+broken"; the strict review catches "is it right". Keep them as two stages so the user gets to
+confirm direction between them.
+
+Optional first bookend: run `/router:spec` **before** `go` to adversarially review the plan.

@@ -46,6 +46,13 @@ test('dispatch -> land: synchronous run to a verified diff, then merge', () => {
     const l = router(dir, ['land', 'demo']);
     assert.equal(l.code, 0, l.out);
     assert.match(readFileSync(join(dir, 'src', 'a.ts'), 'utf8'), /fake codex/);
+    // land deletes the run branch, so it must hand back the merge commit -- the only
+    // remaining handle on what the task changed.
+    const sha = /-> ([0-9a-f]{12})/.exec(l.out)?.[1];
+    assert.ok(sha !== undefined, `land output should carry the merge commit: ${l.out}`);
+    assert.match(fx.git(dir, ['show', '--stat', sha]), /src\/a\.ts/);
+    const landed = JSON.parse(readFileSync(join(dir, '.router', 'tasks', 'demo', 'runs', 'run-001', 'result.json'), 'utf8'));
+    assert.match(landed.merge_commit, new RegExp(`^${sha}`));
   } finally {
     fx.cleanup(dir);
   }
