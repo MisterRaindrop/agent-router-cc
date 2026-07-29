@@ -38,9 +38,13 @@ interface WtsNode {
   namedChildren: WtsNode[];
   childForFieldName(name: string): WtsNode | null;
 }
+interface WtsTree {
+  rootNode: WtsNode;
+  delete(): void; // frees the wasm-side tree; without this the emscripten heap grows unbounded
+}
 interface WtsParser {
   setLanguage(lang: WtsLanguage): void;
-  parse(src: string): { rootNode: WtsNode };
+  parse(src: string): WtsTree;
 }
 
 interface Runtime {
@@ -130,6 +134,10 @@ export async function parseSymbols(src: string): Promise<{ syms: Sym[]; grammar:
   const { parser, grammar } = await getParser();
   const tree = parser.parse(src);
   const syms: Sym[] = [];
-  collect(tree.rootNode, src, syms, 0);
+  try {
+    collect(tree.rootNode, src, syms, 0);
+  } finally {
+    tree.delete(); // free the wasm tree so a full-project build doesn't balloon the heap
+  }
   return { syms, grammar };
 }

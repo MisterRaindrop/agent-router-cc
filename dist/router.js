@@ -11207,7 +11207,11 @@ async function parseSymbols(src) {
   const { parser, grammar } = await getParser();
   const tree = parser.parse(src);
   const syms = [];
-  collect(tree.rootNode, src, syms, 0);
+  try {
+    collect(tree.rootNode, src, syms, 0);
+  } finally {
+    tree.delete();
+  }
   return { syms, grammar };
 }
 
