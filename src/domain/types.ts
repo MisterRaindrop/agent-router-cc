@@ -51,6 +51,8 @@ export interface ModelTierConfig {
 export interface TaskYaml {
   schema_version: 1;
   id: string;
+  /** Dispatch-plan identifier; absent for tasks created before plan grouping. */
+  plan_id?: string;
   title: string;
   base_sha: string | null; // null until a diff is produced against a base commit (40-hex)
   max_wall_minutes: number;
@@ -153,6 +155,10 @@ export interface RunResult {
 export interface MetricRecord {
   ts: string;
   task_id: string;
+  /** Dispatch-plan identifier; absent on metrics recorded before plan grouping. */
+  plan_id?: string;
+  /** Whether this metric is for the main model or an executor. */
+  role?: 'executor' | 'orchestrator';
   run_id: string;
   attempt_number: number;
   model: string | null;

@@ -14,9 +14,11 @@ import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPa
 import * as store from '../io/store.ts';
 import { dispatchTask, resumeTask } from '../app/dispatch.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
+import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
 import { buildUsageReport, explainSavingsText, renderUsage } from '../app/usageReport.ts';
+import { STRONG_BASELINE_MODEL } from '../core/pricing.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -272,6 +274,67 @@ const usage: Handler = (ctx) => {
   return 0;
 };
 
+const orchestratorUsage: Handler = (ctx) => {
+  const planId = flagStr(ctx.args.flags, 'plan');
+  if (planId === undefined || planId === '') throw new CliError('orchestrator-usage needs --plan <id>', 2);
+  const sinceIso = flagStr(ctx.args.flags, 'since');
+  if (sinceIso === undefined || sinceIso === '')
+    throw new CliError('orchestrator-usage needs --since <iso>', 2);
+
+  const { paths, clock } = depsFor(ctx);
+  const untilIso = flagStr(ctx.args.flags, 'until');
+  const transcriptPath = flagStr(ctx.args.flags, 'transcript');
+  const projectsDir = flagStr(ctx.args.flags, 'projects-dir');
+  const model = flagStr(ctx.args.flags, 'model') ?? STRONG_BASELINE_MODEL;
+  const recorded = recordOrchestratorUsage(paths, clock, {
+    planId,
+    sinceIso,
+    model,
+    ...(untilIso !== undefined ? { untilIso } : {}),
+    ...(transcriptPath !== undefined ? { transcriptPath } : {}),
+    ...(projectsDir !== undefined ? { projectsDir } : {}),
+  });
+
+  if (!recorded.recorded) {
+    const message = `orchestrator usage not recorded: ${recorded.reason}; usage will show execution side only`;
+    emit(
+      ctx.json,
+      {
+        ok: true,
+        recorded: false,
+        plan: planId,
+        tokens_input: 0,
+        tokens_output: 0,
+        cost_usd: null,
+        reason: recorded.reason,
+        message,
+      },
+      () => message,
+    );
+    return 0;
+  }
+
+  emit(
+    ctx.json,
+    {
+      ok: true,
+      recorded: true,
+      plan: planId,
+      tokens_input: recorded.inputTokens,
+      tokens_output: recorded.outputTokens,
+      cost_usd: recorded.cost_usd,
+    },
+    () => {
+      const cost = recorded.cost_usd === null ? 'unknown' : `$${recorded.cost_usd.toFixed(6)} est`;
+      return (
+        `orchestrator usage recorded: plan ${planId}; ` +
+        `${recorded.inputTokens} tokens in, ${recorded.outputTokens} tokens out; cost ${cost}`
+      );
+    },
+  );
+  return 0;
+};
+
 // Wire router's usage-snapshot wrapper into Claude Code's statusLine so the quota
 // balancer can read claude-side remaining quota. Chains any existing statusline.
 const setupStatusline: Handler = (ctx) => {
@@ -435,6 +498,7 @@ export const HANDLERS: Record<string, Handler> = {
   result,
   list,
   usage,
+  'orchestrator-usage': orchestratorUsage,
   models,
   symbol,
   doctor,
@@ -456,6 +520,7 @@ export function helpText(): string {
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
     `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
+    `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
     `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>\n` +
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +

@@ -48,6 +48,11 @@ Therefore:
    difficulty itself; that judgment is yours. (An explicit `worker: { kind, model }` still
    overrides the tier for a task that must run on a specific executor/model.)
 
+   **Give every task in this plan the same `plan_id`** in its `task.yaml` (a short slug,
+   e.g. the feature name), so `router usage` can group the plan and show main-vs-executor
+   cost. Also **note the current ISO timestamp now** (`date -u +%Y-%m-%dT%H:%M:%SZ`) as the
+   plan's start -- you will pass it to `orchestrator-usage` at the end.
+
    **Touchpoint 1:** show the user the task list -- each clear task with its scope, its tier
    (weak/strong), and the note that it carries its own tests; each unclear task -- and wait
    for their go-ahead. (In plan mode this gate is the `ExitPlanMode` approval above -- one
@@ -96,12 +101,23 @@ Therefore:
    - Do a **floor review** of the combined change yourself: does it do what the user asked, is
      anything obviously wrong or out of scope, are the tests real assertions?
 
+   - **Record the orchestrator's own spend** so `router usage` can show main-model-vs-executor
+     for this plan: run
+     `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" orchestrator-usage --plan <plan_id> --since <the start timestamp you noted in step 1>`.
+     It sums this session's main-model turns since then from the Claude transcript and records
+     one approximate orchestrator row. If it reports "no transcript", pass `--transcript <path
+     to this session's .jsonl>` (or `--projects-dir`). It is best-effort and approximate
+     (it includes any interleaved chat and excludes pre-`go` planning) -- report the tokens
+     saved from `router usage`, not a fabricated number, and never present the approximate
+     orchestrator figure as exact.
+
    Then **stop and hand the stage back to the user**: report the combined diffs, that the full
-   chain is green in the real environment, roughly the tokens saved, and state plainly that this
-   was the **floor check, not a strict review**. Recommend `/router:review` as the **next stage**
-   -- an independent, adversarial review of the landed code -- and let the user decide when to
-   spend it: if the direction turns out to differ from what they wanted, a strict review now is
-   wasted work. **Land nothing the user has not approved.**
+   chain is green in the real environment, the per-plan main-vs-executor cost from `router usage`
+   (actual total vs the all-baseline estimate), and state plainly that this was the **floor
+   check, not a strict review**. Recommend `/router:review` as the **next stage** -- an
+   independent, adversarial review of the landed code -- and let the user decide when to spend
+   it: if the direction turns out to differ from what they wanted, a strict review now is wasted
+   work. **Land nothing the user has not approved.**
 
 You planned, decomposed, reviewed, verified in the real environment, and merged; the cheap models
 did the execution -- that is the token saving.

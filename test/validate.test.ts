@@ -28,6 +28,18 @@ test('valid task round-trips (base_sha null pre-dispatch)', () => {
   assert.deepEqual(r.value?.verify, [['npm', 'test']]);
 });
 
+test('task accepts an optional plan_id without requiring one', () => {
+  const withPlanId = parse(GOOD_TASK) as Record<string, unknown>;
+  withPlanId.plan_id = 'plan-123';
+  const withPlanIdResult = validateTaskYaml(withPlanId);
+  assert.ok(withPlanIdResult.ok, withPlanIdResult.errors.join('; '));
+  assert.equal(withPlanIdResult.value?.plan_id, 'plan-123');
+
+  const withoutPlanIdResult = validateTaskYaml(parse(GOOD_TASK));
+  assert.ok(withoutPlanIdResult.ok, withoutPlanIdResult.errors.join('; '));
+  assert.equal(withoutPlanIdResult.value?.plan_id, undefined);
+});
+
 test('task with a filled 40-hex base_sha validates', () => {
   const t = parse(GOOD_TASK) as Record<string, unknown>;
   t.base_sha = 'a'.repeat(40);
