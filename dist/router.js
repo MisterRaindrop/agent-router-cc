@@ -10386,22 +10386,23 @@ import { readFileSync as readFileSync4 } from "node:fs";
 import { join as join5 } from "node:path";
 var DEFAULT_MODEL_CONFIG = {
   codex: {
-    weak: { model: "gpt-5.6-terra", effort: "xhigh" },
-    strong: { model: "gpt-5.6-sol", effort: "max" }
+    weak: { model: "gpt-5.6-terra", effort: "medium" },
+    strong: { model: "gpt-5.6-sol", effort: "high" }
   },
   claude: {
-    weak: { model: "haiku", effort: "xhigh" },
-    strong: { model: "opus", effort: "xhigh" }
+    weak: { model: "haiku", effort: "medium" },
+    strong: { model: "opus", effort: "high" }
   },
   // spec/review: strongest + independent (non-Claude first); fall to a same-strength
-  // Claude reviewer if codex is unavailable/out of quota. Effort is xhigh, not max:
-  // plan/code review rewards breadth of judgment over deep single-chain deduction, so
-  // max's marginal gain is small while its latency (~15 min) risks timing out and
-  // yielding nothing, and slows the human-in-the-loop iteration. max is an explicit
-  // opt-in for a rare final high-stakes pass (run in the background), not the default.
+  // Claude reviewer if codex is unavailable/out of quota. Review runs in the
+  // background, so its effort buys judgment rather than blocking the human -- but a
+  // reviewer that thinks for fifteen minutes also slows the round trip it exists to
+  // serve, and plan/code review rewards breadth over deep single-chain deduction.
+  // `high` is the default; `xhigh` or `max` is an explicit opt-in for a rare final
+  // high-stakes pass, set in `.router/models.yaml`.
   review: [
-    { kind: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-    { kind: "claude", model: "opus", effort: "xhigh" }
+    { kind: "codex", model: "gpt-5.6-sol", effort: "high" },
+    { kind: "claude", model: "opus", effort: "high" }
   ]
 };
 function modelsYamlPath(paths) {
