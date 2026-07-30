@@ -1,6 +1,6 @@
 ---
 description: Execute the plan we just discussed -- dispatch clear subtasks to cheaper models, then YOU review and verify in the real environment before merge
-allowed-tools: Bash, Read, Edit, Write, Task
+allowed-tools: Bash, Read, Edit, Write, Task, ExitPlanMode
 ---
 The user has finished planning WITH YOU in this conversation and now wants router to
 execute. Do NOT re-plan from scratch or shell a separate planner -- YOU decompose the
@@ -15,6 +15,19 @@ verifying, and, crucially, **running the real build/tests yourself in this sessi
 environment** (you have Bash, Docker, and the full toolchain; the sandboxed executor does
 not). A cheap model can clear a shallow gate while being lazy or wrong, so verification --
 and the pass/fail verdict -- stays with you, never with the executor and never compressed.
+
+**Plan-mode gate (check this FIRST).** `/router:go` executes: it authors task files and
+dispatches, and both mutate -- so both are BLOCKED while the session is in plan mode.
+Therefore:
+- **If you are in plan mode:** do the read-only decomposition below (work out the tasks,
+  scopes, and tiers in your head -- but do NOT run `router new` or edit any file yet;
+  those writes are blocked). Then present the task list via **`ExitPlanMode`** as the
+  approval gate. That single approval both exits plan mode and authorizes execution -- it
+  **IS Touchpoint 1**, so do not ask again. Only AFTER the user approves and plan mode
+  exits do you run `router new`, edit `task.yaml`, and dispatch. **Never attempt `router
+  new`/`dispatch` while still in plan mode** -- it will fail and leave the user unsure
+  whether anything ran.
+- **If you are not in plan mode:** proceed normally; Touchpoint 1 is a plain confirmation.
 
 1. **Decompose** the agreed plan into the smallest **well-defined, serially-ordered**
    subtasks (one executor runs at a time; land a prerequisite before dispatching a task
@@ -37,7 +50,8 @@ and the pass/fail verdict -- stays with you, never with the executor and never c
 
    **Touchpoint 1:** show the user the task list -- each clear task with its scope, its tier
    (weak/strong), and the note that it carries its own tests; each unclear task -- and wait
-   for their go-ahead.
+   for their go-ahead. (In plan mode this gate is the `ExitPlanMode` approval above -- one
+   approval exits plan mode AND authorizes execution; do not double-ask.)
 
 2. **Run the clear tasks one at a time, in dependency order:**
    `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" dispatch <id> --json`
