@@ -21,11 +21,14 @@ type CostSource = 'provider' | 'derived' | 'none';
 export interface UsageRow {
   ts: string;
   taskId: string;
+  planId: string | null;
+  role: 'executor' | 'orchestrator';
   executor: string;
   model: string | null;
   tokensIn: number;
   tokensOut: number;
   tokensTotal: number;
+  wallSeconds: number;
   costUsd: number | null;
   costSource: CostSource;
   verifier: 'PASSED' | 'FAILED' | null;
@@ -47,9 +50,24 @@ export interface ExecutorRollup {
   costComplete: boolean; // false if some rows had an unknown-model cost
 }
 
+export interface PlanRollup {
+  planId: string;
+  executorRows: UsageRow[];
+  orchestrator: UsageRow | null;
+  executorCostUsd: number;
+  orchestratorCostUsd: number;
+  actualTotalUsd: number;
+  savedUsd: number;
+  allBaselineUsd: number;
+  wallSecondsExecutors: number;
+  orchestratorMeasured: boolean;
+  costComplete: boolean;
+}
+
 export interface UsageReport {
   windowDays: number | null; // null = all time
   rows: UsageRow[];
+  plans: PlanRollup[];
   totalTokensIn: number;
   totalTokensOut: number;
   totalTokens: number;
@@ -91,11 +109,14 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
     rows.push({
       ts: r.ts,
       taskId: r.task_id,
+      planId: r.plan_id ?? null,
+      role: r.role ?? 'executor',
       executor: r.executor ?? 'unknown',
       model: r.model,
       tokensIn,
       tokensOut,
       tokensTotal: tokensIn + tokensOut,
+      wallSeconds: r.wall_seconds ?? 0,
       costUsd,
       costSource,
       verifier: r.verifier_result,
@@ -106,6 +127,46 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
     });
   }
   rows.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0)); // newest first
+
+  const byPlan = new Map<string, Pick<PlanRollup, 'planId' | 'executorRows' | 'orchestrator'>>();
+  for (const row of rows) {
+    if (row.planId === null) continue;
+    const plan = byPlan.get(row.planId) ?? { planId: row.planId, executorRows: [], orchestrator: null };
+    if (row.role === 'orchestrator') {
+      // Metrics contain at most one orchestrator row per plan. Keep the newest
+      // if malformed input contains more than one (rows are newest-first).
+      if (plan.orchestrator === null) plan.orchestrator = row;
+    } else {
+      plan.executorRows.push(row);
+    }
+    byPlan.set(row.planId, plan);
+  }
+  const plans: PlanRollup[] = [...byPlan.values()].map((plan) => {
+    let executorCostUsd = 0;
+    let savedUsd = 0;
+    let wallSecondsExecutors = 0;
+    let costComplete = true;
+    for (const row of plan.executorRows) {
+      if (row.costUsd === null) costComplete = false;
+      else executorCostUsd += row.costUsd;
+      if (row.savingsUsd === null) costComplete = false;
+      else savedUsd += row.savingsUsd;
+      wallSecondsExecutors += row.wallSeconds;
+    }
+    const orchestratorCostUsd = plan.orchestrator?.costUsd ?? 0;
+    const actualTotalUsd = executorCostUsd + orchestratorCostUsd;
+    return {
+      ...plan,
+      executorCostUsd,
+      orchestratorCostUsd,
+      actualTotalUsd,
+      savedUsd,
+      allBaselineUsd: actualTotalUsd + savedUsd,
+      wallSecondsExecutors,
+      orchestratorMeasured: plan.orchestrator !== null,
+      costComplete,
+    };
+  });
 
   let totalTokensIn = 0;
   let totalTokensOut = 0;
@@ -135,6 +196,7 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
   return {
     windowDays,
     rows,
+    plans,
     totalTokensIn,
     totalTokensOut,
     totalTokens: totalTokensIn + totalTokensOut,
@@ -206,10 +268,17 @@ function fmtTokens(n: number): string {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return String(n);
 }
+function fmtWall(seconds: number): string {
+  return seconds < 60 ? `${Math.round(seconds)}s` : `${(seconds / 60).toFixed(1)}m`;
+}
 function fmtCost(costUsd: number | null, source: CostSource): string {
   if (costUsd === null) return 'tokens';
   const s = `$${costUsd.toFixed(2)}`;
   return source === 'derived' ? `~${s}` : s;
+}
+function fmtAggregateCost(costUsd: number, rows: UsageRow[], complete: boolean): string {
+  const estimated = !complete || rows.some((row) => row.costSource === 'derived');
+  return `${estimated ? '~' : ''}$${costUsd.toFixed(2)}${complete ? '' : '+'}`;
 }
 function shortModel(m: string | null): string {
   if (!m) return '';
@@ -263,6 +332,35 @@ export function renderUsage(report: UsageReport): string {
   if (report.suggestions.length > 0) {
     lines.push('Suggestions:');
     for (const s of report.suggestions) lines.push(`  · ${s}`);
+  }
+  if (report.plans.length > 0) {
+    lines.push(bar);
+    lines.push('By plan:');
+    for (const plan of report.plans) {
+      lines.push(`  Plan ${plan.planId}`);
+      for (const row of plan.executorRows) {
+        lines.push(
+          `    ${row.taskId} · ${row.model ?? 'unknown model'} · in ${fmtTokens(row.tokensIn)} · out ${fmtTokens(row.tokensOut)} · ${fmtCost(row.costUsd, row.costSource)} · wall ${fmtWall(row.wallSeconds)}`,
+        );
+      }
+      const executorTokens = plan.executorRows.reduce((sum, row) => sum + row.tokensTotal, 0);
+      lines.push(
+        `    executors: ${plan.executorRows.length} · ${fmtTokens(executorTokens)} · ${fmtAggregateCost(plan.executorCostUsd, plan.executorRows, plan.costComplete)}`,
+      );
+      if (plan.orchestrator !== null) {
+        lines.push(
+          `    orchestrator (${report.baselineModel}, main, approx): ${fmtTokens(plan.orchestrator.tokensTotal)} · ${fmtCost(plan.orchestrator.costUsd, plan.orchestrator.costSource)}`,
+        );
+      } else {
+        lines.push('    orchestrator (main model): not measured — comparison is execution-side only');
+      }
+      const actualRows = plan.orchestrator === null ? plan.executorRows : [...plan.executorRows, plan.orchestrator];
+      const actualCostComplete = plan.costComplete && (plan.orchestrator?.costUsd !== null);
+      lines.push(
+        `    actual total: ${fmtAggregateCost(plan.actualTotalUsd, actualRows, actualCostComplete)} ; if all on ${report.baselineModel} (est): ~$${plan.allBaselineUsd.toFixed(2)}${plan.costComplete ? '' : '+'} ; saved (est): ~$${plan.savedUsd.toFixed(2)}${plan.costComplete ? '' : '+'}`,
+      );
+      lines.push(`    execution wall: ${fmtWall(plan.wallSecondsExecutors)}`);
+    }
   }
   return lines.join('\n');
 }

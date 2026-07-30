@@ -192,7 +192,7 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result);
+  appendMetric(deps, result, task.plan_id);
   return result;
 }
 
@@ -343,7 +343,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result);
+  appendMetric(deps, result, task.plan_id);
   return result;
 }
 
@@ -355,10 +355,12 @@ function safeRead(path: string): string {
   }
 }
 
-function appendMetric(deps: DispatchDeps, result: RunResult): void {
+function appendMetric(deps: DispatchDeps, result: RunResult, planId: string | undefined): void {
   const metric: MetricRecord = {
     ts: deps.clock.nowIso(),
     task_id: result.task_id,
+    ...(planId !== undefined ? { plan_id: planId } : {}),
+    role: 'executor',
     run_id: result.run_id,
     attempt_number: 1,
     model: result.worker.model ?? null,

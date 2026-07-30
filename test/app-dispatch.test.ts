@@ -7,6 +7,8 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fx from '../testkit/gitRepo.ts';
+import type { MetricRecord } from '../src/domain/types.ts';
+import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, resolvePoolSize, runPrepared } from '../src/app/dispatch.ts';
@@ -76,6 +78,7 @@ test('dispatchTask runs the executor synchronously to a PASSED verifier result',
   chmodSync(FAKE_CODEX, 0o755);
   const { repo, paths, deps } = setup();
   const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
   process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
   process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions'); // force fallback (no quota data)
   try {
@@ -86,10 +89,38 @@ test('dispatchTask runs the executor synchronously to a PASSED verifier result',
     assert.equal(result.worker.kind, 'codex');
     // the verified diff is on the run branch inside the worktree
     assert.match(readFileSync(join(paths.worktree('t1', 'run-001'), 'src', 'a.ts'), 'utf8'), /fake codex/);
+    const metrics = readJsonl<MetricRecord>(paths.metrics);
+    assert.equal(metrics.length, 1);
+    assert.equal(metrics[0]!.role, 'executor');
+    assert.equal('plan_id' in metrics[0]!, false);
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
-    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatchTask records the task plan ID on its executor metric', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths, TASK_YAML.replace('id: t1\n', 'id: t1\nplan_id: plan-test-001\n'));
+    await dispatchTask(deps, 't1');
+    const metrics = readJsonl<MetricRecord>(paths.metrics);
+    assert.equal(metrics.length, 1);
+    assert.equal(metrics[0]!.plan_id, 'plan-test-001');
+    assert.equal(metrics[0]!.role, 'executor');
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
     fx.cleanup(repo);
   }
 });
