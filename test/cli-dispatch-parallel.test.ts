@@ -72,12 +72,14 @@ test('batch dispatch overlaps executor runs and preserves input-ordered results'
     const out = JSON.parse(d.out) as {
       ok: boolean;
       parallel: number;
-      results: { id: string; verifier: string }[];
+      results: { id: string; verifier: string; delivery: string | null; delivery_header: string }[];
     };
     assert.equal(out.ok, true);
     assert.equal(out.parallel, 2);
     assert.deepEqual(out.results.map((result) => result.id), ['p1', 'p2']);
     assert.deepEqual(out.results.map((result) => result.verifier), ['PASSED', 'PASSED']);
+    assert.deepEqual(out.results.map((result) => result.delivery), [null, null]);
+    assert.deepEqual(out.results.map((result) => result.delivery_header), ['missing', 'missing']);
     assert.equal(existsSync(join(dir, '.router', 'worktrees', 'p1', 'run-001')), true);
     assert.equal(existsSync(join(dir, '.router', 'worktrees', 'p2', 'run-001')), true);
     const branches = fx.git(dir, ['branch', '--format=%(refname:short)']);

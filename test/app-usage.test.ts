@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseClaudeLog, parseCodexLog } from '../src/app/usage.ts';
+import { parseClaudeLog, parseCodexLog, parseDeliveryHeader } from '../src/app/usage.ts';
 
 test('parseCodexLog sums turn.completed usage across turns', () => {
   const log = [
@@ -34,10 +34,90 @@ test('parseCodexLog returns usage and model in a single pass', () => {
   assert.deepEqual(r.usage, { input: 10, output: 2, cached: 0 });
 });
 
+test('parseCodexLog returns the last completed agent message', () => {
+  const log = [
+    '{"type":"item.completed","item":{"type":"agent_message","text":"first"}}',
+    '{"type":"item.completed","item":{"type":"command_execution","text":"ignored"}}',
+    '{"type":"item.completed","item":{"type":"agent_message","text":"final delivery"}}',
+  ].join('\n');
+  assert.equal(parseCodexLog(log).finalMessage, 'final delivery');
+});
+
 test('parseClaudeLog reads usage + total_cost_usd from the result event', () => {
   const log =
     '{"type":"assistant"}\n{"type":"result","subtype":"success","total_cost_usd":0.02,"usage":{"input_tokens":800,"output_tokens":60,"cache_read_input_tokens":100}}\n';
   const r = parseClaudeLog(log);
   assert.deepEqual(r.usage, { input: 800, output: 60, cached: 100 });
   assert.equal(r.costUsd, 0.02);
+});
+
+test('parseClaudeLog reads final assistant text from stream-json events', () => {
+  const log = [
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"draft"}]}}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"final "},{"type":"text","text":"delivery"}]}}',
+    '{"type":"result","result":"terminal delivery"}',
+  ].join('\n');
+  assert.equal(parseClaudeLog(log).finalMessage, 'terminal delivery');
+});
+
+test('parseDeliveryHeader accepts a valid block and ignores unknown keys', () => {
+  const message = `Summary.
+\`\`\`router-delivery
+task: p0a
+plan_revision: plan-2
+gate_ran: true
+scope_drift: false
+escalate_review: true
+future_key: ignored
+\`\`\``;
+  assert.deepEqual(parseDeliveryHeader(message), {
+    task: 'p0a',
+    plan_revision: 'plan-2',
+    gate_ran: true,
+    scope_drift: false,
+    escalate_review: true,
+  });
+});
+
+test('parseDeliveryHeader fails closed for absent, incomplete, or malformed blocks', () => {
+  assert.equal(parseDeliveryHeader('no delivery block'), null);
+  assert.equal(
+    parseDeliveryHeader(`\`\`\`router-delivery
+task: p0a
+gate_ran: true
+scope_drift: false
+\`\`\``),
+    null,
+  );
+  assert.equal(
+    parseDeliveryHeader(`\`\`\`router-delivery
+task: p0a
+gate_ran: yes
+scope_drift: false
+escalate_review: false
+\`\`\``),
+    null,
+  );
+});
+
+test('parseDeliveryHeader uses the last fenced block', () => {
+  const message = `\`\`\`router-delivery
+task: first
+gate_ran: false
+scope_drift: true
+escalate_review: true
+\`\`\`
+text between
+\`\`\`router-delivery
+task: last
+gate_ran: true
+scope_drift: false
+escalate_review: false
+\`\`\``;
+  assert.deepEqual(parseDeliveryHeader(message), {
+    task: 'last',
+    gate_ran: true,
+    scope_drift: false,
+    escalate_review: false,
+  });
 });

@@ -123,6 +123,14 @@ export interface VerifierReport {
 }
 
 // -- Run result + metrics ------------------------------------------------------
+export interface DeliveryHeader {
+  task: string;
+  plan_revision?: string;
+  gate_ran: boolean;
+  scope_drift: boolean;
+  escalate_review: boolean;
+}
+
 export interface RunResult {
   run_id: string;
   task_id: string;
@@ -146,6 +154,14 @@ export interface RunResult {
   resumed?: boolean; // this run continued a prior executor session
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
   base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
+  // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
+  // Set so a caller can recover work from a run that was killed after it had finished.
+  uncommitted_changes?: boolean;
+  delivery?: {
+    path: string;
+    header: DeliveryHeader | null;
+    header_error?: string;
+  };
   // `land` merges the run branch with --no-ff and then deletes it, so this merge
   // commit is the only durable handle on what the task changed:
   // `git show <merge_commit>` / `git diff <merge_commit>^1 <merge_commit>`.

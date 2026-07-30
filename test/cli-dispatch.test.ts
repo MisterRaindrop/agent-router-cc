@@ -12,6 +12,7 @@ import * as fx from '../testkit/gitRepo.ts';
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
 const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
+const FAKE_DELIVERY = fileURLToPath(new URL('./fixtures/fakeCodexDelivery.mjs', import.meta.url));
 const NODE = process.execPath;
 
 function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): { code: number; out: string } {
@@ -112,6 +113,63 @@ test('dispatch rejects --max-parallel below one', () => {
     const d = router(dir, ['dispatch', 'demo', '--max-parallel', '0']);
     assert.equal(d.code, 2, d.out);
     assert.match(d.out, /--max-parallel must be an integer >= 1/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('dispatch persists delivery reports and surfaces header status', () => {
+  chmodSync(FAKE_DELIVERY, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_DELIVERY, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    const dispatchJson = (id: string): Record<string, unknown> => {
+      router(dir, ['new', id], env);
+      const result = router(dir, ['dispatch', id, '--json'], env);
+      assert.equal(result.code, 0, result.out);
+      return JSON.parse(result.out) as Record<string, unknown>;
+    };
+
+    const missing = dispatchJson('delivery-missing');
+    assert.equal(missing.delivery_header, 'missing');
+    assert.match(String(missing.delivery), /\/\.router\/tasks\/delivery-missing\/runs\/run-001\/DELIVERY\.md$/);
+    assert.equal(readFileSync(missing.delivery as string, 'utf8'), 'Delivery report for delivery-missing.');
+    const missingPatch = readFileSync(
+      join(dir, '.router', 'tasks', 'delivery-missing', 'runs', 'run-001', 'diff.patch'),
+      'utf8',
+    );
+    assert.doesNotMatch(missingPatch, /DELIVERY\.md|Delivery report/);
+
+    const valid = dispatchJson('delivery-valid');
+    assert.equal(valid.delivery_header, 'ok');
+    const validResult = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'delivery-valid', 'runs', 'run-001', 'result.json'), 'utf8'),
+    ) as { delivery: { header: { task: string }; header_error?: string } };
+    assert.equal(validResult.delivery.header.task, 'delivery-valid');
+    assert.equal(validResult.delivery.header_error, undefined);
+
+    const mismatch = dispatchJson('delivery-mismatch');
+    assert.match(String(mismatch.delivery_header), /task mismatch/);
+    const mismatchResult = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'delivery-mismatch', 'runs', 'run-001', 'result.json'), 'utf8'),
+    ) as { verifier: { result: string }; delivery: { path: string; header_error: string } };
+    assert.equal(mismatchResult.verifier.result, 'PASSED');
+    assert.match(mismatchResult.delivery.header_error, /^task mismatch:/);
+    assert.equal(readFileSync(mismatchResult.delivery.path, 'utf8').includes('another-task'), true);
+
+    router(dir, ['new', 'delivery-plan-mismatch'], env);
+    const planTask = join(dir, '.router', 'tasks', 'delivery-plan-mismatch', 'task.yaml');
+    writeFileSync(planTask, readFileSync(planTask, 'utf8').replace('id: delivery-plan-mismatch\n', 'id: delivery-plan-mismatch\nplan_id: expected-plan\n'));
+    const planMismatchRun = router(dir, ['dispatch', 'delivery-plan-mismatch', '--json'], env);
+    assert.equal(planMismatchRun.code, 0, planMismatchRun.out);
+    assert.match(String((JSON.parse(planMismatchRun.out) as Record<string, unknown>).delivery_header), /plan_revision mismatch/);
+
+    router(dir, ['new', 'delivery-line'], env);
+    const line = router(dir, ['dispatch', 'delivery-line'], env);
+    assert.equal(line.code, 0, line.out);
+    assert.match(line.out, / report: .*DELIVERY\.md \[delivery_header: missing\]$/m);
   } finally {
     fx.cleanup(dir);
   }

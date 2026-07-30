@@ -69,23 +69,28 @@ Therefore:
      **note the current ISO timestamp now** (`date -u +%Y-%m-%dT%H:%M:%SZ`) as the plan's
      start -- you will pass it to `orchestrator-usage` at the end.
 
-   Make each package's Definition of Done include **writing tests for the code it changes**
-   (the cheap model produces a first cut; you vet them).
+   Write each package's `TASK_CONTRACT.md` with **all seven faces** -- goal, invariants,
+   frozen interfaces/dependencies, definition of done (including **its own tests**), blast
+   radius, stop conditions, version binding. **If you cannot write all seven, it is still a
+   decision, not a task: keep it and do it with the user** (that is Touchpoint 2). Rate its
+   risk `Low | Normal | High` per `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`; when
+   unsure, escalate -- never downgrade a tier to justify fewer checks.
 
-   **The deterministic gate (`verify`).** Decide once per plan: does this project have a
-   fast, self-contained gate -- a build/test command that runs from a clean checkout in
-   seconds to a few minutes, with no Docker and no network? Check it **empirically, once**: a
-   run worktree lives under the repo (`.router/worktrees/<id>/<run>`), so ancestor dependency
-   resolution (`node_modules`, a venv) usually just works. If it does, put that command in
-   `verify:` for every package (e.g. `verify: [["npm", "run", "check"]]`). The executor's
-   diff then arrives already proven to compile and pass, a failure returns as FAILED with a
-   log tail instead of costing you turns to discover, and your review goes on judgment
-   instead of on breakage. If the project's real gate needs Docker or CI (a large C++ build,
-   say), leave `verify: []` and run it yourself at the stage gate. Either way `verify` is
-   mechanical: it answers "did it run and pass", never "is it right".
+   **The deterministic gate (`verify`).** Where the real build/tests can run is a property of
+   the project, not of the task, so decide it once and **check it empirically once**: if a
+   fast self-contained gate runs inside a run worktree (`.router/worktrees/<id>/<run>` sits
+   under the repo, so ancestor dependency resolution usually just works), put that command in
+   `verify:` for every package (e.g. `verify: [["npm", "run", "check"]]`) -- the diff then
+   arrives already proven to compile and pass, and your review goes on judgment instead of on
+   breakage. If the real gate needs Docker, a single shared build directory, or CI, leave
+   `verify: []`; the executor must then be told it cannot build there, and you run the gate
+   yourself. Either way `verify` is mechanical: it answers "did it run and pass", never "is it
+   right". **`${CLAUDE_PLUGIN_ROOT}/references/work-package.md` has the full rules** -- the
+   seven faces, risk-to-review mapping, both gate modes (including borrowing the main checkout
+   safely), the delivery-report and `CONTRACT_CONFLICT` protocols, and the session policy.
 
    **Touchpoint 1:** show the user the package list -- each package with its scope, its tier,
-   whether it carries a deterministic `verify`, which packages you intend to run
+   its risk, whether it carries a deterministic `verify`, which packages you intend to run
    concurrently, and the note that each carries its own tests -- plus any unclear work. Then
    wait for their go-ahead. (In plan mode this gate is the `ExitPlanMode` approval above --
    one approval exits plan mode AND authorizes execution; do not double-ask.)
@@ -106,11 +111,24 @@ Therefore:
    turn, the expensive thing here. Packages that DO depend on each other stay serial: land
    the prerequisite, then dispatch the next.
 
-   **Then YOU read the diffs and review them** -- in as few turns as you can: read, judge,
-   and land in the same turn where nothing forces a split, and never re-read a file already
-   in your context. For each package: is the implementation correct? did it drift from the
-   change you specified? **are the tests real assertions rather than hollow or hardcoded
-   stubs?** is the changed code actually covered? Judge the risk. Then branch:
+   **A `CONTRACT_CONFLICT` result means the plan is wrong, not the code.** The executor is
+   forbidden to quietly work around a bad contract; when it reports one, nothing lands. Read
+   its evidence, decide the depth -- this package's contract only, this package plus its
+   declared dependents, or the whole milestone -- and take it to the user. Invalidate only the
+   affected subgraph; a conflict is not a reason to redo the plan.
+
+   **Then YOU read the delivery report and the diff, and review them** -- in as few turns as
+   you can: read, judge, and land in the same turn where nothing forces a split, and never
+   re-read a file already in your context. Start with the run's `DELIVERY.md` (what it did,
+   which checks ran, what it flags), then **read the complete diff -- every risk tier, every
+   time**. Do **not** read raw build/test output: the verifier's per-check result and the
+   report's summary are the evidence, and anything you read is re-read on every later turn.
+   Treat `delivery_header: missing`, `gate_ran: false`, or `scope_drift: true` as a reason to
+   look harder, never as "probably fine". For each package: is the implementation correct? did
+   it drift from the change you specified? **are the tests real assertions rather than hollow
+   or hardcoded stubs?** is the changed code actually covered? At `Normal` and `High` risk also
+   run an **independent contract review** (a different model -- see `/router:review`) and judge
+   its findings yourself. **Never merge on green alone.** Then branch:
    - **Low-risk and the review is clean** ->
      `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" land <id> [<id> ...]`
      merges them into your working branch in the order given -- batch the lands you have
@@ -123,9 +141,18 @@ Therefore:
      Fail -> find the root cause and prefer
      `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" resume <id> --feedback "<what is wrong>"`,
      which continues that executor's session with its context intact instead of paying
-     another cold start; re-dispatch only when the contract itself was wrong (once -- if it
-     still fails, take the package over yourself). For correctness-critical paths, write or
-     harden the tests yourself rather than trusting the executor's.
+     another cold start. Send it a **precise error summary, not a log dump**. Cap this at
+     **two resume attempts**, then take the package over or bring it to the user;
+     re-dispatch only when the contract itself was wrong. For correctness-critical paths,
+     write or harden the tests yourself rather than trusting the executor's.
+
+   **Session policy.** `resume` is for the *same* task -- same worktree, same `base_sha`. For a
+   *different* task always start a fresh session: a reused one diffs against a stale base (so
+   the next diff would carry the previous task's changes, destroying "one task, one auditable
+   diff") and it revives plans it already discarded. **Wanting to reuse a session across tasks
+   means the packages were split too finely -- merge them into one package instead.** Warm
+   repository knowledge travels as artifacts, not sessions: the symbol index (`/router:symbol`)
+   gives a fresh session the same knowledge without inheriting stale beliefs.
 
 3. **Touchpoint 2:** handle any UNCLEAR work directly with the user (clarify, then implement it
    yourself). Never dispatch it to a cheap model.

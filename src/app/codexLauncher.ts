@@ -150,13 +150,56 @@ export function makeLauncher(worker: WorkerPolicy): WorkerLauncher {
   }
 }
 
+// The executor owns the whole task, so the prompt says so explicitly: implement, test, run
+// the gate, and fix to green inside this one session. Splitting that loop across dispatches
+// costs a cold start (the executor re-reads the repository from scratch) plus an orchestrator
+// review round trip, and the orchestrator's turns are the expensive resource.
+//
+// Two protocols ride along, both carried by the FINAL message so nothing is ever written into
+// the worktree (which would show up in the diff and trip the scope gate): a delivery report,
+// and `CONTRACT_CONFLICT` for when the code contradicts the plan. An executor that quietly
+// works around a wrong contract is the failure this exists to prevent.
 function buildPrompt(ctx: WorkerContext): string {
   const scope = ctx.task.allowed_globs.join(', ');
+  const gate = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(' '));
+  const gateStep =
+    gate.length > 0
+      ? `run the project gate yourself (${gate.map((g) => `\`${g}\``).join(', ')}), read what it ` +
+        `reports and fix until it passes`
+      : `note that NO gate runs here -- the orchestrator runs the real build and tests later in ` +
+        `its own environment, so write the tests but do not try to build this project`;
+  const planRevision = ctx.task.plan_id ?? 'none';
   return (
     `${ctx.contractMdText.trim()}\n\n` +
+    `You own this task start to finish: read the code you are about to change, decide your own\n` +
+    `internal steps, implement it, write tests for what you changed, ${gateStep}, then check your\n` +
+    `own diff against the scope below before finishing.\n\n` +
     `Constraints:\n` +
     `- Change ONLY files matching: ${scope}\n` +
     `- Do not touch tests except to make them pass legitimately.\n` +
-    `- Leave changes in the working tree; the orchestrator will commit them.\n`
+    `- Leave changes in the working tree; the orchestrator will commit them.\n` +
+    `- Do NOT set up the environment to make a check run: no installing dependencies, no\n` +
+    `  creating directories, no editing configuration. If a check cannot run here, say so in\n` +
+    `  the report -- an honest "did not run" is useful, a claimed pass that never ran is not.\n` +
+    `- Do NOT change the plan or this contract. If the code contradicts it -- a stated\n` +
+    `  assumption is false, a public interface would have to change, an invariant cannot hold,\n` +
+    `  the acceptance bar conflicts with what the platform can do, or the work does not fit the\n` +
+    `  scope -- then STOP, undo any experiment, and make your final message begin with the\n` +
+    `  single line CONTRACT_CONFLICT followed by: the original assumption, the evidence you\n` +
+    `  found, which plan item or invariant it conflicts with, which other work this affects,\n` +
+    `  the options you see, and whether any experimental code is left behind.\n\n` +
+    `Finish with a DELIVERY REPORT as your final message: a few sentences a human can read --\n` +
+    `what you implemented, which modules you touched, which checks you ran and their results,\n` +
+    `and anything risky or unresolved -- followed by exactly this block:\n\n` +
+    '```router-delivery\n' +
+    `task: ${ctx.task.id}\n` +
+    `plan_revision: ${planRevision}\n` +
+    `gate_ran: true|false\n` +
+    `scope_drift: true|false\n` +
+    `escalate_review: true|false\n` +
+    '```\n\n' +
+    `\`gate_ran\` is whether you actually ran the gate above and it passed. \`scope_drift\` is\n` +
+    `whether you had to touch anything outside the scope. \`escalate_review\` is whether this\n` +
+    `deserves a closer review than usual. Report all three honestly; they are read, not audited.\n`
   );
 }

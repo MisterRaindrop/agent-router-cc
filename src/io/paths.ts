@@ -24,6 +24,7 @@ export interface RouterPaths {
   heartbeat(id: string, runId: string): string;
   resultJson(id: string, runId: string): string;
   diffPatch(id: string, runId: string): string;
+  delivery(id: string, runId: string): string;
   workerLog(id: string, runId: string): string;
   worktree(id: string, runId: string): string;
 }
@@ -59,6 +60,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     heartbeat: (id, run) => join(runDir(id, run), 'heartbeat'),
     resultJson: (id, run) => join(runDir(id, run), 'result.json'),
     diffPatch: (id, run) => join(runDir(id, run), 'diff.patch'),
+    delivery: (id, run) => join(runDir(id, run), 'DELIVERY.md'),
     workerLog: (id, run) => join(runDir(id, run), 'logs', 'worker.log'),
     worktree: (id, run) => join(root, 'worktrees', id, run),
   };

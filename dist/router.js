@@ -9780,6 +9780,10 @@ function commitAll(cwd, message) {
   git(cwd, ["-c", "user.name=router", "-c", "user.email=router@localhost", "commit", "-q", "-m", message]);
   return true;
 }
+function worktreeDirty(cwd) {
+  const r = tryGit(cwd, ["status", "--porcelain"]);
+  return r.ok && r.stdout.trim() !== "";
+}
 function resetHard(cwd, sha) {
   git(cwd, ["reset", "--hard", sha]);
   git(cwd, ["clean", "-fd"]);
@@ -9824,6 +9828,7 @@ function routerPaths(routerDir) {
     heartbeat: (id, run) => join2(runDir(id, run), "heartbeat"),
     resultJson: (id, run) => join2(runDir(id, run), "result.json"),
     diffPatch: (id, run) => join2(runDir(id, run), "diff.patch"),
+    delivery: (id, run) => join2(runDir(id, run), "DELIVERY.md"),
     workerLog: (id, run) => join2(runDir(id, run), "logs", "worker.log"),
     worktree: (id, run) => join2(root, "worktrees", id, run)
   };
@@ -9916,19 +9921,42 @@ function classifyExit(o) {
   if (o.exitCode === 0) return "ok";
   return "task_failed";
 }
+function executorDiagnostics(logText) {
+  const kept = [];
+  for (const line of logText.split("\n")) {
+    const t = line.trim();
+    if (t === "") continue;
+    if (!t.startsWith("{")) {
+      kept.push(line);
+      continue;
+    }
+    let type;
+    try {
+      type = JSON.parse(t).type;
+    } catch {
+      kept.push(line);
+      continue;
+    }
+    if (typeof type === "string" && (type.startsWith("item.") || type === "assistant" || type === "user")) {
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
 var DEFAULT_QUOTA_PATTERN = "\\b(rate.?limit|rate_limited|usage limit|usage_limit_reached|quota|insufficient_quota|too many requests|429)\\b";
 function reclassifyQuota(exitClass, logText, pattern = DEFAULT_QUOTA_PATTERN) {
   if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
-  return new RegExp(pattern, "i").test(logText) ? "quota_exhausted" : exitClass;
+  return new RegExp(pattern, "i").test(executorDiagnostics(logText)) ? "quota_exhausted" : exitClass;
 }
 var DEFAULT_ENV_ERROR_PATTERN = "\\b(not logged in|please run /login|authentication[_ -]?failed|failed to authenticate|invalid api key|no api key found|oauth token expired)\\b";
 function reclassifyEnvironmentFailure(exitClass, logText, pattern = DEFAULT_ENV_ERROR_PATTERN) {
   if (exitClass !== "task_failed" && exitClass !== "worker_crash") return exitClass;
-  return new RegExp(pattern, "i").test(logText) ? "env_error" : exitClass;
+  return new RegExp(pattern, "i").test(executorDiagnostics(logText)) ? "env_error" : exitClass;
 }
-var DEFAULT_MODEL_MISMATCH_PATTERN = "\\b(unknown model|model not found|no such model|model .*not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b";
+var DEFAULT_MODEL_MISMATCH_PATTERN = "\\b(unknown model|model not found|no such model|model[^\\n]{0,40}?not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b";
 function detectModelMismatch(logText, pattern = DEFAULT_MODEL_MISMATCH_PATTERN) {
-  return new RegExp(pattern, "i").test(logText);
+  return new RegExp(pattern, "i").test(executorDiagnostics(logText));
 }
 
 // src/io/env.ts
@@ -10209,6 +10237,7 @@ function parseCodexLog(logText) {
   let cached = 0;
   let model = null;
   let sessionId = null;
+  let finalMessage;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10233,14 +10262,23 @@ function parseCodexLog(logText) {
       const s = rec.session_id ?? rec.thread_id ?? rec.thread?.id ?? rec.session?.id;
       if (typeof s === "string" && s !== "") sessionId = s;
     }
+    if (rec.type === "item.completed" && rec.item?.type === "agent_message" && typeof rec.item.text === "string") {
+      finalMessage = rec.item.text;
+    }
   }
-  return { usage: found ? { input, output, cached } : null, model, sessionId };
+  return {
+    usage: found ? { input, output, cached } : null,
+    model,
+    sessionId,
+    ...finalMessage !== void 0 ? { finalMessage } : {}
+  };
 }
 function parseClaudeLog(logText) {
   let usage2 = null;
   let costUsd = null;
   let model = null;
   let sessionId = null;
+  let finalMessage;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10257,8 +10295,62 @@ function parseClaudeLog(logText) {
     }
     if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
     if (sessionId === null && typeof rec.session_id === "string" && rec.session_id !== "") sessionId = rec.session_id;
+    if (rec.type === "assistant") {
+      const text2 = claudeAssistantText(rec.message?.content);
+      if (text2 !== null) finalMessage = text2;
+    }
+    if (rec.type === "result" && typeof rec.result === "string") finalMessage = rec.result;
   }
-  return { usage: usage2, model, costUsd, sessionId };
+  return {
+    usage: usage2,
+    model,
+    costUsd,
+    sessionId,
+    ...finalMessage !== void 0 ? { finalMessage } : {}
+  };
+}
+function parseDeliveryHeader(finalMessage) {
+  if (finalMessage == null) return null;
+  const blockPattern = /```router-delivery[ \t]*\r?\n([\s\S]*?)```/g;
+  let body = null;
+  for (const match of finalMessage.matchAll(blockPattern)) body = match[1] ?? "";
+  if (body === null) return null;
+  const values = /* @__PURE__ */ new Map();
+  for (const line of body.split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    values.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+  }
+  const task = values.get("task");
+  const gateRan = deliveryBoolean(values.get("gate_ran"));
+  const scopeDrift = deliveryBoolean(values.get("scope_drift"));
+  const escalateReview = deliveryBoolean(values.get("escalate_review"));
+  if (!task || gateRan === null || scopeDrift === null || escalateReview === null) return null;
+  const planRevision = values.get("plan_revision");
+  return {
+    task,
+    ...planRevision !== void 0 ? { plan_revision: planRevision } : {},
+    gate_ran: gateRan,
+    scope_drift: scopeDrift,
+    escalate_review: escalateReview
+  };
+}
+function claudeAssistantText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+  const text2 = [];
+  for (const block of content) {
+    if (typeof block === "string") text2.push(block);
+    else if (typeof block === "object" && block !== null && block.type === "text" && typeof block.text === "string") {
+      text2.push(block.text);
+    }
+  }
+  return text2.length > 0 ? text2.join("") : null;
+}
+function deliveryBoolean(value) {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
 }
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -10377,12 +10469,45 @@ function makeLauncher(worker) {
 }
 function buildPrompt(ctx) {
   const scope = ctx.task.allowed_globs.join(", ");
+  const gate = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(" "));
+  const gateStep = gate.length > 0 ? `run the project gate yourself (${gate.map((g) => `\`${g}\``).join(", ")}), read what it reports and fix until it passes` : `note that NO gate runs here -- the orchestrator runs the real build and tests later in its own environment, so write the tests but do not try to build this project`;
+  const planRevision = ctx.task.plan_id ?? "none";
   return `${ctx.contractMdText.trim()}
+
+You own this task start to finish: read the code you are about to change, decide your own
+internal steps, implement it, write tests for what you changed, ${gateStep}, then check your
+own diff against the scope below before finishing.
 
 Constraints:
 - Change ONLY files matching: ${scope}
 - Do not touch tests except to make them pass legitimately.
 - Leave changes in the working tree; the orchestrator will commit them.
+- Do NOT set up the environment to make a check run: no installing dependencies, no
+  creating directories, no editing configuration. If a check cannot run here, say so in
+  the report -- an honest "did not run" is useful, a claimed pass that never ran is not.
+- Do NOT change the plan or this contract. If the code contradicts it -- a stated
+  assumption is false, a public interface would have to change, an invariant cannot hold,
+  the acceptance bar conflicts with what the platform can do, or the work does not fit the
+  scope -- then STOP, undo any experiment, and make your final message begin with the
+  single line CONTRACT_CONFLICT followed by: the original assumption, the evidence you
+  found, which plan item or invariant it conflicts with, which other work this affects,
+  the options you see, and whether any experimental code is left behind.
+
+Finish with a DELIVERY REPORT as your final message: a few sentences a human can read --
+what you implemented, which modules you touched, which checks you ran and their results,
+and anything risky or unresolved -- followed by exactly this block:
+
+\`\`\`router-delivery
+task: ${ctx.task.id}
+plan_revision: ${planRevision}
+gate_ran: true|false
+scope_drift: true|false
+escalate_review: true|false
+\`\`\`
+
+\`gate_ran\` is whether you actually ran the gate above and it passed. \`scope_drift\` is
+whether you had to touch anything outside the scope. \`escalate_review\` is whether this
+deserves a closer review than usual. Report all three honestly; they are read, not audited.
 `;
 }
 
@@ -10843,6 +10968,7 @@ function verifyTask(req) {
 
 // src/app/dispatch.ts
 var RUN = runId(1);
+var STALL_MINUTES_DEFAULT = 20;
 function quotaFor(paths, kind) {
   if (kind === "codex") {
     const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join7(homedir(), ".codex", "sessions");
@@ -10907,7 +11033,7 @@ async function runPrepared(deps, prep) {
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
       maxWallMs: task.max_wall_minutes * 6e4,
-      stallMs: (used.stall_minutes ?? 10) * 6e4
+      stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4
     });
     outcome = o;
     const log = safeRead(logPath);
@@ -10946,6 +11072,9 @@ async function runPrepared(deps, prep) {
     ...costUsd !== null ? { cost_usd: costUsd } : {},
     ...parsed.sessionId ? { session_id: parsed.sessionId } : {}
   };
+  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  if (delivery !== void 0) result2.delivery = delivery;
+  if (exitClass !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
   if (exitClass === "ok") {
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
     writeFileSync2(paths.diffPatch(id, RUN), patch);
@@ -11030,7 +11159,7 @@ async function resumeTask(deps, id, feedback) {
     heartbeatPath: paths.heartbeat(id, RUN),
     watchDir: worktreeDir,
     maxWallMs: task.max_wall_minutes * 6e4,
-    stallMs: (used.stall_minutes ?? 10) * 6e4
+    stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4
   });
   const log = safeRead(logPath);
   const exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -11061,6 +11190,9 @@ async function resumeTask(deps, id, feedback) {
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
+  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  if (delivery !== void 0) result2.delivery = delivery;
+  if (exitClass !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
   if (!mismatch && exitClass === "ok") {
     commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
@@ -11088,6 +11220,37 @@ function safeRead(path) {
   } catch {
     return "";
   }
+}
+function persistDelivery(paths, id, run, task, finalMessage) {
+  if (finalMessage == null || finalMessage.length === 0) return void 0;
+  const path = paths.delivery(id, run);
+  try {
+    writeFileSync2(path, finalMessage);
+  } catch (e) {
+    return { path, header: null, header_error: `write failed: ${e.message}` };
+  }
+  const header = parseDeliveryHeader(finalMessage);
+  if (header === null) {
+    return {
+      path,
+      header: null,
+      header_error: finalMessage.includes("```router-delivery") ? "invalid" : "missing"
+    };
+  }
+  const errors = deliveryHeaderMismatches(header, id, task.plan_id);
+  return {
+    path,
+    header,
+    ...errors.length > 0 ? { header_error: errors.join("; ") } : {}
+  };
+}
+function deliveryHeaderMismatches(header, taskId, planId) {
+  const errors = [];
+  if (header.task !== taskId) errors.push(`task mismatch: expected ${taskId}, got ${header.task}`);
+  if (planId !== void 0 && header.plan_revision !== void 0 && header.plan_revision !== planId) {
+    errors.push(`plan_revision mismatch: expected ${planId}, got ${header.plan_revision}`);
+  }
+  return errors;
 }
 function appendMetric2(deps, result2, planId) {
   const metric = {
@@ -12057,9 +12220,27 @@ task: ${id}
 
 _What to accomplish._
 
+## Invariants (must not change)
+
+_What this task may NOT alter, however convenient._
+
+## Frozen interfaces / dependencies
+
+_The already-agreed signatures and files this builds on; the tasks it depends on._
+
 ## Definition of Done
 
 - [ ] ...
+- [ ] Carries tests for the code it changes.
+
+## Blast radius (worst case if this is wrong)
+
+_What breaks, and how visibly._
+
+## Stop conditions (stop and report instead of improvising)
+
+_Report \`CONTRACT_CONFLICT\` rather than working around any of these._
+
 
 ## Test hygiene (applies whenever this task adds or changes tests)
 
@@ -12135,7 +12316,10 @@ function dispatchOutput(id, result2, includeOk = true) {
     tokens: result2.tokens ?? null,
     cost_usd: result2.cost_usd ?? null,
     executor_switches: result2.executor_switches ?? 0,
-    model_mismatch: result2.model_mismatch ?? false
+    model_mismatch: result2.model_mismatch ?? false,
+    delivery: result2.delivery?.path ?? null,
+    delivery_header: result2.delivery?.header_error ?? (result2.delivery?.header ? "ok" : "missing"),
+    uncommitted_changes: result2.uncommitted_changes ?? false
   };
 }
 function dispatchLine(id, result2) {
@@ -12145,7 +12329,10 @@ function dispatchLine(id, result2) {
   const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
   const warn = result2.model_mismatch ? `
 WARNING: ${result2.worker.kind} rejected model '${result2.worker.model ?? "?"}' -- your model config may be stale (provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.` : "";
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
+  const report = result2.delivery ? ` report: ${result2.delivery.path}${result2.delivery.header_error ? ` [delivery_header: ${result2.delivery.header_error}]` : ""}` : "";
+  const recoverable = result2.uncommitted_changes ? `
+NOTE: this run did not commit, but its worktree still holds changes -- the work is recoverable: git -C .router/worktrees/${id}/${result2.run_id} status` : "";
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}`;
 }
 var resume = async (ctx) => {
   const deps = depsFor(ctx);
