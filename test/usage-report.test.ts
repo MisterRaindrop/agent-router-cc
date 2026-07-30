@@ -1,21 +1,29 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deriveCost, priceFor } from '../src/core/pricing.ts';
 import { buildUsageReport, deriveSuggestions, explainSavingsText, renderUsage } from '../src/app/usageReport.ts';
 import type { RouterPaths } from '../src/io/paths.ts';
 
+const metricsDirs = new Set<string>();
+
 function metricsPathWith(lines: object[]): RouterPaths {
-  const dir = mkdtempSync(join(tmpdir(), 'router-usage-'));
+  const dir = mkdtempSync(join(tmpdir(), 'router-usage-pu1-t5-'));
+  metricsDirs.add(dir);
   const metrics = join(dir, 'metrics.jsonl');
   writeFileSync(metrics, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
   return { metrics } as unknown as RouterPaths;
 }
+
+afterEach(() => {
+  for (const dir of metricsDirs) rmSync(dir, { recursive: true, force: true });
+  metricsDirs.clear();
+});
 
 const NOW = '2026-07-27T00:00:00.000Z';
 
@@ -48,10 +56,14 @@ test('usage report: provider cost used when present, derived when absent, null w
   const byTask = Object.fromEntries(r.rows.map((row) => [row.taskId, row]));
   assert.equal(byTask.t1!.costSource, 'provider');
   assert.equal(byTask.t1!.costUsd, 0.5);
+  assert.equal(byTask.t1!.planId, null);
+  assert.equal(byTask.t1!.role, 'executor');
+  assert.equal(byTask.t1!.wallSeconds, 5);
   assert.equal(byTask.t2!.costSource, 'derived');
   assert.equal(byTask.t2!.costUsd, 2.25);
   assert.equal(byTask.t3!.costSource, 'none');
   assert.equal(byTask.t3!.costUsd, null);
+  assert.deepEqual(r.plans, []); // legacy rows remain flat and are not grouped into a plan
 
   // total known cost = 0.5 + 2.25; costComplete false because t3's model is unknown
   assert.equal(r.totalCostUsd, 2.75);
@@ -137,6 +149,67 @@ test('renderUsage: includes header, TOTAL, and marks derived costs with ~', () =
   assert.match(text, /~\$2\.25/); // derived cost carries the ~ estimate marker
 });
 
+test('usage report: rolls up executor and orchestrator costs, savings, and real wall time by plan', () => {
+  const planId = 'plan-pu1-t5-rollup';
+  const paths = metricsPathWith([
+    { ts: '2026-07-26T00:00:00Z', task_id: 'exec-mini', plan_id: planId, role: 'executor',
+      run_id: 'run-mini', model: 'gpt-5-mini', executor: 'codex', verifier_result: 'PASSED',
+      tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 5,
+      attempt_number: 1, env_error: false },
+    { ts: '2026-07-26T01:00:00Z', task_id: 'exec-codex', plan_id: planId, role: 'executor',
+      run_id: 'run-codex', model: 'gpt-5-codex', executor: 'codex', verifier_result: 'PASSED',
+      tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 52,
+      attempt_number: 1, env_error: false },
+    { ts: '2026-07-26T02:00:00Z', task_id: 'exec-opus', plan_id: planId, role: 'executor',
+      run_id: 'run-opus', model: 'claude-opus-4-8', executor: 'claude', verifier_result: 'PASSED',
+      tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 480,
+      attempt_number: 1, env_error: false },
+    { ts: '2026-07-26T03:00:00Z', task_id: 'plan-main', plan_id: planId, role: 'orchestrator',
+      run_id: 'orchestrator', model: 'claude-opus-4-8', executor: null, verifier_result: null,
+      tokens_input: 1_000_000, tokens_output: 1_000_000, cost_usd: null, wall_seconds: 537,
+      attempt_number: 1, env_error: false },
+  ]);
+
+  const report = buildUsageReport(paths, NOW);
+  assert.equal(report.plans.length, 1);
+  const plan = report.plans[0]!;
+  assert.equal(plan.planId, planId);
+  assert.deepEqual(plan.executorRows.map((row) => row.taskId), ['exec-opus', 'exec-codex', 'exec-mini']);
+  assert.equal(plan.orchestrator?.taskId, 'plan-main');
+  assert.equal(plan.executorCostUsd, 43.5);
+  assert.equal(plan.orchestratorCostUsd, 30);
+  assert.equal(plan.actualTotalUsd, 73.5);
+  assert.equal(plan.savedUsd, 46.5);
+  assert.equal(plan.allBaselineUsd, 120);
+  assert.equal(plan.wallSecondsExecutors, 537);
+  assert.equal(plan.orchestratorMeasured, true);
+  assert.equal(plan.costComplete, true);
+
+  const text = renderUsage(report);
+  assert.match(text, /By plan:/);
+  assert.match(text, /exec-mini .* wall 5s/);
+  assert.match(text, /orchestrator \(opus, main, approx\):/);
+  assert.match(text, /execution wall: 8\.9m/);
+});
+
+test('usage report: plan without an orchestrator says the main model was not measured', () => {
+  const paths = metricsPathWith([
+    { ts: '2026-07-26T00:00:00Z', task_id: 'execution-only', plan_id: 'plan-pu1-t5-execution-only',
+      role: 'executor', run_id: 'run-only', model: 'gpt-5-mini', executor: 'codex',
+      verifier_result: 'PASSED', tokens_input: 1000, tokens_output: 1000, cost_usd: null,
+      wall_seconds: 61, attempt_number: 1, env_error: false },
+  ]);
+
+  const report = buildUsageReport(paths, NOW);
+  assert.equal(report.plans.length, 1);
+  assert.equal(report.plans[0]!.orchestrator, null);
+  assert.equal(report.plans[0]!.orchestratorMeasured, false);
+  assert.match(
+    renderUsage(report),
+    /orchestrator \(main model\): not measured — comparison is execution-side only/,
+  );
+});
+
 test('optimized: savings>0 => ✓, savings===0 => not, unknown model => null', () => {
   const paths = metricsPathWith([
     { ts: '2026-07-26T00:00:00Z', task_id: 'cheap', run_id: 'run-001', model: 'gpt-5-mini', executor: 'codex',
@@ -154,9 +227,10 @@ test('optimized: savings>0 => ✓, savings===0 => not, unknown model => null', (
 
 test('deriveSuggestions reads real signals (fail / recover / strong-model / env / healthy)', () => {
   const row = (over: Partial<Parameters<typeof deriveSuggestions>[0][number]>) => ({
-    ts: 't', taskId: 'x', executor: 'codex', model: 'm', tokensIn: 0, tokensOut: 0, tokensTotal: 0,
-    costUsd: null, costSource: 'none' as const, verifier: 'PASSED' as const, attemptNumber: 1,
-    envError: false, savingsUsd: 1, optimized: true, ...over,
+    ts: 't', taskId: 'x', planId: null, role: 'executor' as const, executor: 'codex', model: 'm',
+    tokensIn: 0, tokensOut: 0, tokensTotal: 0, wallSeconds: 0, costUsd: null,
+    costSource: 'none' as const, verifier: 'PASSED' as const, attemptNumber: 1, envError: false,
+    savingsUsd: 1, optimized: true, ...over,
   });
   assert.deepEqual(deriveSuggestions([]), []); // no dispatches -> no hints
   // latest FAILED
