@@ -12,7 +12,7 @@ import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask, resumeTask } from '../app/dispatch.ts';
+import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
@@ -56,6 +56,18 @@ function requireId(ctx: Ctx): string {
   const id = flagStr(ctx.args.flags, 'id') ?? ctx.args.positionals[0];
   if (id === undefined || id === '') throw new CliError('missing task id', 2);
   return id;
+}
+
+function requireIds(ctx: Ctx): string[] {
+  const flagId = flagStr(ctx.args.flags, 'id');
+  const ids = [...(flagId !== undefined ? [flagId] : []), ...ctx.args.positionals];
+  if (ids.length === 0 || ids.some((id) => id === '')) throw new CliError('missing task id', 2);
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) throw new CliError(`duplicate task id: ${id}`, 2);
+    seen.add(id);
+  }
+  return ids;
 }
 
 const RUN = fmtRunId(1); // one synchronous attempt per task
@@ -118,36 +130,62 @@ const newTask: Handler = (ctx) => {
 
 const dispatch: Handler = async (ctx) => {
   const deps = depsFor(ctx);
-  const id = requireId(ctx);
-  const result = await dispatchTask(deps, id);
-  const v = result.verifier?.result ?? 'FAILED';
+  const ids = requireIds(ctx);
+  const maxParallelText = flagStr(ctx.args.flags, 'max-parallel');
+  const maxParallel = maxParallelText === undefined ? undefined : Number(maxParallelText);
+  if (maxParallel !== undefined && (!Number.isInteger(maxParallel) || maxParallel < 1)) {
+    throw new CliError('--max-parallel must be an integer >= 1', 2);
+  }
+  if (ids.length === 1) {
+    const id = ids[0]!;
+    const result = await dispatchTask(deps, id);
+    const v = result.verifier?.result ?? 'FAILED';
+    emit(ctx.json, dispatchOutput(id, result), () => dispatchLine(id, result));
+    return v === 'PASSED' ? 0 : 1;
+  }
+
+  const results = await dispatchTasks(deps, ids, maxParallel);
+  const parallel = Math.max(1, maxParallel ?? Math.min(ids.length, 4));
+  const passed = results.filter((result) => result.verifier?.result === 'PASSED').length;
   emit(
     ctx.json,
     {
-      ok: v === 'PASSED',
-      id,
-      executor: result.worker.kind,
-      model: result.worker.model ?? null,
-      verifier: v,
-      exit_class: result.exit_class,
-      tokens: result.tokens ?? null,
-      cost_usd: result.cost_usd ?? null,
-      executor_switches: result.executor_switches ?? 0,
-      model_mismatch: result.model_mismatch ?? false,
+      ok: passed === results.length,
+      parallel,
+      results: results.map((result, index) => dispatchOutput(ids[index]!, result, false)),
     },
-    () => {
-      const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
-      const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
-      const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      const warn = result.model_mismatch
-        ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
-          `(provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.`
-        : '';
-      return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
-    },
+    () => [...results.map((result, index) => dispatchLine(ids[index]!, result)), `${passed}/${results.length} PASSED`].join('\n'),
   );
-  return v === 'PASSED' ? 0 : 1;
+  return passed === results.length ? 0 : 1;
 };
+
+function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTask>>, includeOk = true): Record<string, unknown> {
+  const v = result.verifier?.result ?? 'FAILED';
+  return {
+    ...(includeOk ? { ok: v === 'PASSED' } : {}),
+    id,
+    executor: result.worker.kind,
+    model: result.worker.model ?? null,
+    verifier: v,
+    exit_class: result.exit_class,
+    tokens: result.tokens ?? null,
+    cost_usd: result.cost_usd ?? null,
+    executor_switches: result.executor_switches ?? 0,
+    model_mismatch: result.model_mismatch ?? false,
+  };
+}
+
+function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask>>): string {
+  const v = result.verifier?.result ?? 'FAILED';
+  const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
+  const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
+  const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+  const warn = result.model_mismatch
+    ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
+      `(provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.`
+    : '';
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
+}
 
 // Resume the prior dispatch's executor session with feedback (context retained) instead
 // of a cold re-dispatch. Fail-loud: if the executor reports a different session id, the
@@ -183,27 +221,32 @@ const resume: Handler = async (ctx) => {
 
 const land: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const result = store.readResult(paths, id, RUN);
-  if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)`, 1);
-  if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED`, 1);
-  const branch = runBranch(id, RUN);
-  try {
-    mergeNoFF(paths.repoRoot, branch);
-  } catch (e) {
-    mergeAbort(paths.repoRoot);
-    throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}`, 1);
+  const ids = requireIds(ctx);
+  const landed: string[] = [];
+  for (const id of ids) {
+    const result = store.readResult(paths, id, RUN);
+    const prior = landed.length > 0 ? `; already landed: ${landed.join(', ')}` : '';
+    if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
+    if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
+    const branch = runBranch(id, RUN);
+    try {
+      mergeNoFF(paths.repoRoot, branch);
+    } catch (e) {
+      mergeAbort(paths.repoRoot);
+      throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}${prior}`, 1);
+    }
+    // The run branch is deleted right after the merge, so record the merge commit: it is
+    // the only durable handle on what this task changed (`git show <sha>`). Without it a
+    // later review or post-mortem has no way back to the task's diff.
+    const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
+    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
+    deleteBranch(paths.repoRoot, branch);
+    store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
+    landed.push(id);
+    emit(ctx.json, { ok: true, id, merged: branch, merge_commit: mergeCommit }, () =>
+      `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`,
+    );
   }
-  // The run branch is deleted right after the merge, so record the merge commit: it is
-  // the only durable handle on what this task changed (`git show <sha>`). Without it a
-  // later review or post-mortem has no way back to the task's diff.
-  const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
-  worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
-  deleteBranch(paths.repoRoot, branch);
-  store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
-  emit(ctx.json, { ok: true, id, merged: branch, merge_commit: mergeCommit }, () =>
-    `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`,
-  );
   return 0;
 };
 
@@ -450,9 +493,9 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)\n` +
-    `  dispatch <id>          run the task on the quota-picked executor to a verified diff\n` +
+    `  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs\n` +
     `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
-    `  land <id>              merge a PASSED dispatch's diff\n` +
+    `  land <id...>           merge PASSED dispatch diffs sequentially\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
     `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
@@ -461,6 +504,6 @@ export function helpText(): string {
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --all, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }
