@@ -11,6 +11,7 @@ import * as fx from '../testkit/gitRepo.ts';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
+const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const NODE = process.execPath;
 
 function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): { code: number; out: string } {
@@ -100,6 +101,45 @@ test('land refuses when there is no PASSED dispatch result', () => {
     const l = router(dir, ['land', 'demo']);
     assert.equal(l.code, 1);
     assert.match(l.out, /no dispatch result/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('dispatch rejects --max-parallel below one', () => {
+  const dir = fx.initRepo();
+  try {
+    const d = router(dir, ['dispatch', 'demo', '--max-parallel', '0']);
+    assert.equal(d.code, 2, d.out);
+    assert.match(d.out, /--max-parallel must be an integer >= 1/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('batch land merges PASSED tasks sequentially in the given order', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/base.ts', 'export const base = true;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_SCOPED, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    for (const id of ['p1', 'p2']) {
+      router(dir, ['new', id], env);
+      writeFileSync(
+        join(dir, '.router', 'tasks', id, 'task.yaml'),
+        `schema_version: 1\nid: ${id}\ntitle: ${id}\nmax_wall_minutes: 1\nallowed_globs: ["src/${id}.ts"]\nworker: {kind: codex}\nverify: []\n`,
+      );
+    }
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], env);
+    assert.equal(d.code, 0, d.out);
+    const l = router(dir, ['land', 'p1', 'p2']);
+    assert.equal(l.code, 0, l.out);
+    assert.match(l.out, /^p1 landed /);
+    assert.match(l.out, /\np2 landed /);
+    assert.match(readFileSync(join(dir, 'src', 'p1.ts'), 'utf8'), /p1/);
+    assert.match(readFileSync(join(dir, 'src', 'p2.ts'), 'utf8'), /p2/);
+    assert.equal(fx.git(dir, ['log', '-2', '--pretty=%s']).trim(), "Merge branch 'router/p2/run-001'\nMerge branch 'router/p1/run-001'");
   } finally {
     fx.cleanup(dir);
   }

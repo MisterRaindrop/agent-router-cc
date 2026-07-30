@@ -25,6 +25,7 @@ const VALUE_FLAGS = new Set([
   'cost-usd',
   'wall',
   'model',
+  'max-parallel',
   'keep-metrics',
   'settings',
   'statusline',

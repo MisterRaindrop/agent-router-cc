@@ -89,10 +89,12 @@ at exactly **three points**:
 For each *clear* task in between, the work is split between two actors:
 
 - **The router CLI** runs the task on the quota-picked executor inside an isolated
-  worktree and applies **fast, environment-free gates** to the resulting diff — it applies
-  cleanly, stays within its allowed file scope, leaks no secrets, and a script added where
-  its siblings are executable carries the executable bit. It does **not** run your build or
-  tests.
+  worktree — several independent tasks at once, each in its own worktree — and applies
+  **fast, environment-free gates** to the resulting diff: it applies cleanly, stays within
+  its allowed file scope, leaks no secrets, and a script added where its siblings are
+  executable carries the executable bit. It runs a build or tests only if that task's
+  contract sets a `verify` command, and even then the answer is mechanical: *did it run and
+  pass*, never *is it right*.
 - **Opus** then **reads and reviews the diff** for laziness or wrong work — hardcoded
   values, skipped or hollow tests, misread intent (a cheap model can clear a shallow gate
   while still being wrong). And **Opus owns verification**: for anything risky it runs the
@@ -114,10 +116,12 @@ and merges — that is the token saving.
 `.router/tasks/<id>/task.yaml`.
 
 ```
-/router:dispatch <id>   # run task <id> once on the quota-picked executor, producing a
-                        #   mechanically-verified diff on an isolated worktree branch
-/router:land <id>       # merge task <id>'s verified diff into your working branch
-/router:result <id>     # show task <id>'s per-check verifier report and log tail
+/router:dispatch <id...> # run each task on the quota-picked executor, producing a
+                         #   mechanically-verified diff on its own worktree branch.
+                         #   Several ids run concurrently (--max-parallel <n> caps it),
+                         #   so the wall clock is the slowest task, not the sum
+/router:land <id...>     # merge those tasks' verified diffs into your working branch
+/router:result <id>      # show task <id>'s per-check verifier report and log tail
 ```
 
 A task's contract (`.router/tasks/<id>/task.yaml`) carries `allowed_globs` (its file

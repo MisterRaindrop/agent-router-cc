@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import { detectModelMismatch, reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
 import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeRemove, deleteBranch } from '../io/git.ts';
@@ -30,6 +30,17 @@ import { verifyTask } from './verifier.ts';
 export interface DispatchDeps {
   paths: RouterPaths;
   clock: Clock;
+}
+
+export interface PreparedRun {
+  id: string;
+  task: TaskYaml;
+  contractMdText: string;
+  worktreeDir: string;
+  branch: string;
+  baseSha: string;
+  workers: WorkerPolicy[];
+  logPath: string;
 }
 
 const RUN = fmtRunId(1); // sync model: one attempt per task
@@ -60,9 +71,9 @@ function workerRecord(used: WorkerPolicy, model: string | undefined): RunResult[
   };
 }
 
-/** Run one task synchronously to a verified (or failed) result on its run branch. */
-export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
-  const { paths, clock } = deps;
+/** Prepare one task's isolated worktree and executor candidates. */
+export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
+  const { paths } = deps;
   const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
   const { task, contractMdText } = loadTask(paths, id);
   // An explicit `worker` pin wins; otherwise resolve the difficulty tier (default
@@ -78,10 +89,25 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   deleteBranch(paths.repoRoot, branch);
   worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
 
+  return {
+    id,
+    task,
+    contractMdText,
+    worktreeDir,
+    branch,
+    baseSha,
+    workers,
+    logPath: paths.workerLog(id, RUN),
+  };
+}
+
+/** Run one prepared task to a verified (or failed) result on its run branch. */
+export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
+  const { paths } = deps;
+  const { id, task, contractMdText, worktreeDir, baseSha, workers, logPath } = prep;
   // Verification runs repository-controlled commands: never expose provider keys,
   // proxy credentials, or login-session context to them.
   const verifyEnv = buildWorkerEnv(process.env);
-  const logPath = paths.workerLog(id, RUN);
 
   // Executor chain, quota-ordered: try the executor with the most headroom first;
   // quota/auth/setup failures reset the worktree and fall through to the next.
@@ -168,6 +194,62 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   store.writeResult(paths, id, RUN, result);
   appendMetric(deps, result, task.plan_id);
   return result;
+}
+
+/** Run one task synchronously to a verified (or failed) result on its run branch. */
+export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
+  return runPrepared(deps, prepareRun(deps, id));
+}
+
+/**
+ * How many executor runs may be in flight for a batch of `count` tasks. The single
+ * source of truth for the bound, so what a caller reports is what actually ran: an
+ * explicit `--max-parallel 8` over two tasks is still a pool of two.
+ */
+export function resolvePoolSize(count: number, maxParallel?: number): number {
+  const requested = Math.max(1, Math.floor(maxParallel ?? Math.min(count, 4)));
+  return Math.min(count, requested);
+}
+
+/**
+ * Prepare every task serially, then supervise a bounded pool of executor runs.
+ * Per-run faults are collected so no sibling process is orphaned by early rejection.
+ */
+export async function dispatchTasks(
+  deps: DispatchDeps,
+  ids: readonly string[],
+  maxParallel?: number,
+): Promise<RunResult[]> {
+  if (ids.length === 0) throw new Error('cannot dispatch an empty task list');
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) throw new Error(`duplicate task id: ${id}`);
+    seen.add(id);
+  }
+
+  const prepared = ids.map((id) => prepareRun(deps, id));
+  const results = new Array<RunResult>(ids.length);
+  const faults: { id: string; message: string }[] = [];
+  const poolSize = resolvePoolSize(ids.length, maxParallel);
+  let cursor = 0;
+
+  const worker = async (): Promise<void> => {
+    while (cursor < prepared.length) {
+      const index = cursor++;
+      try {
+        results[index] = await runPrepared(deps, prepared[index]!);
+      } catch (e) {
+        faults.push({ id: ids[index]!, message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  if (faults.length > 0) {
+    faults.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    throw new Error(`dispatch runs failed: ${faults.map((f) => `${f.id}: ${f.message}`).join('; ')}`);
+  }
+  return results;
 }
 
 /**

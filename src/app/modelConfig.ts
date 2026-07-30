@@ -17,24 +17,33 @@ import type { RouterPaths } from '../io/paths.ts';
 // (see core/exitTaxonomy.detectModelMismatch) telling the user to edit models.yaml.
 // Nothing here is ever auto-modified.
 
+// Reasoning effort is matched to the work, because effort buys latency: an executor
+// runs on the critical path of `go`, and a measured plan of five dispatches spent
+// 766s of executor wall time at `xhigh`/`max` on work whose contract already said
+// what to do. Effort is not free capability -- on a task specified down to the
+// signature, deeper deduction mostly re-derives the contract. So: `medium` for
+// mechanical implementation (weak), `high` for a task that needs real capability
+// (strong), and `high` for review. Escalate per task with an explicit `worker`
+// pin, or per repo in `.router/models.yaml`; nothing here is ever auto-modified.
 export const DEFAULT_MODEL_CONFIG: ModelTierConfig = {
   codex: {
-    weak: { model: 'gpt-5.6-terra', effort: 'xhigh' },
-    strong: { model: 'gpt-5.6-sol', effort: 'max' },
+    weak: { model: 'gpt-5.6-terra', effort: 'medium' },
+    strong: { model: 'gpt-5.6-sol', effort: 'high' },
   },
   claude: {
-    weak: { model: 'haiku', effort: 'xhigh' },
-    strong: { model: 'opus', effort: 'xhigh' },
+    weak: { model: 'haiku', effort: 'medium' },
+    strong: { model: 'opus', effort: 'high' },
   },
   // spec/review: strongest + independent (non-Claude first); fall to a same-strength
-  // Claude reviewer if codex is unavailable/out of quota. Effort is xhigh, not max:
-  // plan/code review rewards breadth of judgment over deep single-chain deduction, so
-  // max's marginal gain is small while its latency (~15 min) risks timing out and
-  // yielding nothing, and slows the human-in-the-loop iteration. max is an explicit
-  // opt-in for a rare final high-stakes pass (run in the background), not the default.
+  // Claude reviewer if codex is unavailable/out of quota. Review runs in the
+  // background, so its effort buys judgment rather than blocking the human -- but a
+  // reviewer that thinks for fifteen minutes also slows the round trip it exists to
+  // serve, and plan/code review rewards breadth over deep single-chain deduction.
+  // `high` is the default; `xhigh` or `max` is an explicit opt-in for a rare final
+  // high-stakes pass, set in `.router/models.yaml`.
   review: [
-    { kind: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
-    { kind: 'claude', model: 'opus', effort: 'xhigh' },
+    { kind: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+    { kind: 'claude', model: 'opus', effort: 'high' },
   ],
 };
 

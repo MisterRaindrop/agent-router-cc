@@ -11,10 +11,11 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { orderByQuota, dispatchTask } from '../src/app/dispatch.ts';
+import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, resolvePoolSize, runPrepared } from '../src/app/dispatch.ts';
 
 const NODE = process.execPath;
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
+const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const FAKE_CLAUDE = fileURLToPath(new URL('../testkit/fakeClaude.mjs', import.meta.url));
 const FAKE_ENV = fileURLToPath(new URL('../testkit/fakeExecutorEnv.mjs', import.meta.url));
 
@@ -54,6 +55,23 @@ function stageTask(paths: ReturnType<typeof routerPaths>, taskYaml = TASK_YAML):
   mkdirSync(paths.taskDir('t1'), { recursive: true });
   writeFileSync(paths.taskYaml('t1'), taskYaml);
   writeFileSync(paths.contractMd('t1'), CONTRACT);
+}
+
+function stageScopedTask(paths: ReturnType<typeof routerPaths>, id: string): void {
+  mkdirSync(paths.taskDir(id), { recursive: true });
+  writeFileSync(
+    paths.taskYaml(id),
+    `schema_version: 1
+id: ${id}
+title: ${id}
+base_sha: null
+max_wall_minutes: 1
+allowed_globs: ["src/${id}.ts"]
+worker: {kind: codex}
+verify: []
+`,
+  );
+  writeFileSync(paths.contractMd(id), CONTRACT);
 }
 
 test('dispatchTask runs the executor synchronously to a PASSED verifier result', async () => {
@@ -103,6 +121,82 @@ test('dispatchTask records the task plan ID on its executor metric', async () =>
     else process.env.ROUTER_CODEX_BIN = prev;
     if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
     else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(repo);
+  }
+});
+
+test('prepareRun and runPrepared compose to the same dispatch result', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const directSetup = setup();
+  const composedSetup = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(directSetup.repo, 'no-sessions');
+  try {
+    stageTask(directSetup.paths);
+    stageTask(composedSetup.paths);
+    const direct = await dispatchTask(directSetup.deps, 't1');
+    process.env.ROUTER_CODEX_SESSIONS_DIR = join(composedSetup.repo, 'no-sessions');
+    const composed = await runPrepared(composedSetup.deps, prepareRun(composedSetup.deps, 't1'));
+    assert.deepEqual(
+      {
+        task_id: composed.task_id,
+        exit_class: composed.exit_class,
+        verifier: composed.verifier?.result,
+        worker: composed.worker,
+        tokens: composed.tokens,
+      },
+      {
+        task_id: direct.task_id,
+        exit_class: direct.exit_class,
+        verifier: direct.verifier?.result,
+        worker: direct.worker,
+        tokens: direct.tokens,
+      },
+    );
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(directSetup.repo);
+    fx.cleanup(composedSetup.repo);
+  }
+});
+
+test('resolvePoolSize never exceeds the task count and never drops below one', () => {
+  assert.equal(resolvePoolSize(2), 2); // default caps at 4, so two tasks -> two
+  assert.equal(resolvePoolSize(9), 4);
+  assert.equal(resolvePoolSize(2, 8), 2); // a cap above the batch size is still the batch
+  assert.equal(resolvePoolSize(5, 2), 2);
+  assert.equal(resolvePoolSize(5, 0), 1); // a nonsensical cap still runs one at a time
+});
+
+test('dispatchTasks rejects duplicate ids before preparing worktrees', async () => {
+  const { repo, paths, deps } = setup();
+  try {
+    stageTask(paths);
+    await assert.rejects(dispatchTasks(deps, ['t1', 't1']), /duplicate task id: t1/);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatchTasks with maxParallel 1 completes every task in input order', async () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_SCOPED;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageScopedTask(paths, 'p1');
+    stageScopedTask(paths, 'p2');
+    const results = await dispatchTasks(deps, ['p2', 'p1'], 1);
+    assert.deepEqual(results.map((result) => result.task_id), ['p2', 'p1']);
+    assert.deepEqual(results.map((result) => result.verifier?.result), ['PASSED', 'PASSED']);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
     fx.cleanup(repo);
   }
 });

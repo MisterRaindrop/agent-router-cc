@@ -6591,6 +6591,7 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "cost-usd",
   "wall",
   "model",
+  "max-parallel",
   "keep-metrics",
   "settings",
   "statusline"
@@ -10390,22 +10391,23 @@ import { readFileSync as readFileSync4 } from "node:fs";
 import { join as join5 } from "node:path";
 var DEFAULT_MODEL_CONFIG = {
   codex: {
-    weak: { model: "gpt-5.6-terra", effort: "xhigh" },
-    strong: { model: "gpt-5.6-sol", effort: "max" }
+    weak: { model: "gpt-5.6-terra", effort: "medium" },
+    strong: { model: "gpt-5.6-sol", effort: "high" }
   },
   claude: {
-    weak: { model: "haiku", effort: "xhigh" },
-    strong: { model: "opus", effort: "xhigh" }
+    weak: { model: "haiku", effort: "medium" },
+    strong: { model: "opus", effort: "high" }
   },
   // spec/review: strongest + independent (non-Claude first); fall to a same-strength
-  // Claude reviewer if codex is unavailable/out of quota. Effort is xhigh, not max:
-  // plan/code review rewards breadth of judgment over deep single-chain deduction, so
-  // max's marginal gain is small while its latency (~15 min) risks timing out and
-  // yielding nothing, and slows the human-in-the-loop iteration. max is an explicit
-  // opt-in for a rare final high-stakes pass (run in the background), not the default.
+  // Claude reviewer if codex is unavailable/out of quota. Review runs in the
+  // background, so its effort buys judgment rather than blocking the human -- but a
+  // reviewer that thinks for fifteen minutes also slows the round trip it exists to
+  // serve, and plan/code review rewards breadth over deep single-chain deduction.
+  // `high` is the default; `xhigh` or `max` is an explicit opt-in for a rare final
+  // high-stakes pass, set in `.router/models.yaml`.
   review: [
-    { kind: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-    { kind: "claude", model: "opus", effort: "xhigh" }
+    { kind: "codex", model: "gpt-5.6-sol", effort: "high" },
+    { kind: "claude", model: "opus", effort: "high" }
   ]
 };
 function modelsYamlPath(paths) {
@@ -10862,8 +10864,8 @@ function workerRecord(used, model) {
     ...used.effort !== void 0 ? { effort: used.effort } : {}
   };
 }
-async function dispatchTask(deps, id) {
-  const { paths, clock } = deps;
+function prepareRun(deps, id) {
+  const { paths } = deps;
   const baseSha = resolveCommit(paths.repoRoot, "HEAD");
   const { task, contractMdText } = loadTask(paths, id);
   const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
@@ -10872,8 +10874,21 @@ async function dispatchTask(deps, id) {
   worktreeRemove(paths.repoRoot, worktreeDir);
   deleteBranch(paths.repoRoot, branch);
   worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
+  return {
+    id,
+    task,
+    contractMdText,
+    worktreeDir,
+    branch,
+    baseSha,
+    workers,
+    logPath: paths.workerLog(id, RUN)
+  };
+}
+async function runPrepared(deps, prep) {
+  const { paths } = deps;
+  const { id, task, contractMdText, worktreeDir, baseSha, workers, logPath } = prep;
   const verifyEnv = buildWorkerEnv(process.env);
-  const logPath = paths.workerLog(id, RUN);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
   let exitClass = "task_failed";
@@ -10950,6 +10965,42 @@ async function dispatchTask(deps, id) {
   writeResult(paths, id, RUN, result2);
   appendMetric2(deps, result2, task.plan_id);
   return result2;
+}
+async function dispatchTask(deps, id) {
+  return runPrepared(deps, prepareRun(deps, id));
+}
+function resolvePoolSize(count, maxParallel) {
+  const requested = Math.max(1, Math.floor(maxParallel ?? Math.min(count, 4)));
+  return Math.min(count, requested);
+}
+async function dispatchTasks(deps, ids, maxParallel) {
+  if (ids.length === 0) throw new Error("cannot dispatch an empty task list");
+  const seen = /* @__PURE__ */ new Set();
+  for (const id of ids) {
+    if (seen.has(id)) throw new Error(`duplicate task id: ${id}`);
+    seen.add(id);
+  }
+  const prepared = ids.map((id) => prepareRun(deps, id));
+  const results = new Array(ids.length);
+  const faults = [];
+  const poolSize = resolvePoolSize(ids.length, maxParallel);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < prepared.length) {
+      const index = cursor++;
+      try {
+        results[index] = await runPrepared(deps, prepared[index]);
+      } catch (e) {
+        faults.push({ id: ids[index], message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  if (faults.length > 0) {
+    faults.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    throw new Error(`dispatch runs failed: ${faults.map((f) => `${f.id}: ${f.message}`).join("; ")}`);
+  }
+  return results;
 }
 async function resumeTask(deps, id, feedback) {
   const { paths } = deps;
@@ -11969,6 +12020,17 @@ function requireId(ctx) {
   if (id === void 0 || id === "") throw new CliError("missing task id", 2);
   return id;
 }
+function requireIds(ctx) {
+  const flagId = flagStr(ctx.args.flags, "id");
+  const ids = [...flagId !== void 0 ? [flagId] : [], ...ctx.args.positionals];
+  if (ids.length === 0 || ids.some((id) => id === "")) throw new CliError("missing task id", 2);
+  const seen = /* @__PURE__ */ new Set();
+  for (const id of ids) {
+    if (seen.has(id)) throw new CliError(`duplicate task id: ${id}`, 2);
+    seen.add(id);
+  }
+  return ids;
+}
 var RUN2 = runId(1);
 var pad2 = (s, n) => s.length >= n ? s : s + " ".repeat(n - s.length);
 function taskTemplate(id, title) {
@@ -12034,34 +12096,57 @@ var newTask = (ctx) => {
 };
 var dispatch = async (ctx) => {
   const deps = depsFor(ctx);
-  const id = requireId(ctx);
-  const result2 = await dispatchTask(deps, id);
-  const v = result2.verifier?.result ?? "FAILED";
+  const ids = requireIds(ctx);
+  const maxParallelText = flagStr(ctx.args.flags, "max-parallel");
+  const maxParallel = maxParallelText === void 0 ? void 0 : Number(maxParallelText);
+  if (maxParallel !== void 0 && (!Number.isInteger(maxParallel) || maxParallel < 1)) {
+    throw new CliError("--max-parallel must be an integer >= 1", 2);
+  }
+  if (ids.length === 1) {
+    const id = ids[0];
+    const result2 = await dispatchTask(deps, id);
+    const v = result2.verifier?.result ?? "FAILED";
+    emit(ctx.json, dispatchOutput(id, result2), () => dispatchLine(id, result2));
+    return v === "PASSED" ? 0 : 1;
+  }
+  const results = await dispatchTasks(deps, ids, maxParallel);
+  const parallel = resolvePoolSize(ids.length, maxParallel);
+  const passed = results.filter((result2) => result2.verifier?.result === "PASSED").length;
   emit(
     ctx.json,
     {
-      ok: v === "PASSED",
-      id,
-      executor: result2.worker.kind,
-      model: result2.worker.model ?? null,
-      verifier: v,
-      exit_class: result2.exit_class,
-      tokens: result2.tokens ?? null,
-      cost_usd: result2.cost_usd ?? null,
-      executor_switches: result2.executor_switches ?? 0,
-      model_mismatch: result2.model_mismatch ?? false
+      ok: passed === results.length,
+      parallel,
+      results: results.map((result2, index) => dispatchOutput(ids[index], result2, false))
     },
-    () => {
-      const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
-      const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
-      const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      const warn = result2.model_mismatch ? `
-WARNING: ${result2.worker.kind} rejected model '${result2.worker.model ?? "?"}' -- your model config may be stale (provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.` : "";
-      return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
-    }
+    () => [...results.map((result2, index) => dispatchLine(ids[index], result2)), `${passed}/${results.length} PASSED`].join("\n")
   );
-  return v === "PASSED" ? 0 : 1;
+  return passed === results.length ? 0 : 1;
 };
+function dispatchOutput(id, result2, includeOk = true) {
+  const v = result2.verifier?.result ?? "FAILED";
+  return {
+    ...includeOk ? { ok: v === "PASSED" } : {},
+    id,
+    executor: result2.worker.kind,
+    model: result2.worker.model ?? null,
+    verifier: v,
+    exit_class: result2.exit_class,
+    tokens: result2.tokens ?? null,
+    cost_usd: result2.cost_usd ?? null,
+    executor_switches: result2.executor_switches ?? 0,
+    model_mismatch: result2.model_mismatch ?? false
+  };
+}
+function dispatchLine(id, result2) {
+  const v = result2.verifier?.result ?? "FAILED";
+  const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
+  const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
+  const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+  const warn = result2.model_mismatch ? `
+WARNING: ${result2.worker.kind} rejected model '${result2.worker.model ?? "?"}' -- your model config may be stale (provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.` : "";
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
+}
 var resume = async (ctx) => {
   const deps = depsFor(ctx);
   const id = requireId(ctx);
@@ -12092,25 +12177,30 @@ var resume = async (ctx) => {
 };
 var land = (ctx) => {
   const { paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const result2 = readResult(paths, id, RUN2);
-  if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)`, 1);
-  if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED`, 1);
-  const branch = runBranch(id, RUN2);
-  try {
-    mergeNoFF(paths.repoRoot, branch);
-  } catch (e) {
-    mergeAbort(paths.repoRoot);
-    throw new CliError(`merge failed (aborted, tree restored): ${e.message}`, 1);
+  const ids = requireIds(ctx);
+  const landed = [];
+  for (const id of ids) {
+    const result2 = readResult(paths, id, RUN2);
+    const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(", ")}` : "";
+    if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
+    if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
+    const branch = runBranch(id, RUN2);
+    try {
+      mergeNoFF(paths.repoRoot, branch);
+    } catch (e) {
+      mergeAbort(paths.repoRoot);
+      throw new CliError(`merge failed (aborted, tree restored): ${e.message}${prior}`, 1);
+    }
+    const mergeCommit = resolveCommit(paths.repoRoot, "HEAD");
+    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN2));
+    deleteBranch(paths.repoRoot, branch);
+    writeResult(paths, id, RUN2, { ...result2, merge_commit: mergeCommit });
+    landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
-  const mergeCommit = resolveCommit(paths.repoRoot, "HEAD");
-  worktreeRemove(paths.repoRoot, paths.worktree(id, RUN2));
-  deleteBranch(paths.repoRoot, branch);
-  writeResult(paths, id, RUN2, { ...result2, merge_commit: mergeCommit });
   emit(
     ctx.json,
-    { ok: true, id, merged: branch, merge_commit: mergeCommit },
-    () => `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`
+    landed.length === 1 ? { ok: true, ...landed[0] } : { ok: true, landed },
+    () => landed.map((l) => `${l.id} landed (${l.merged} -> ${l.merge_commit.slice(0, 12)}); diff: git show ${l.merge_commit.slice(0, 12)}`).join("\n")
   );
   return 0;
 };
@@ -12388,9 +12478,9 @@ function helpText() {
 Usage: router <command> [options]
 
   new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)
-  dispatch <id>          run the task on the quota-picked executor to a verified diff
+  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs
   resume <id> --feedback continue the prior executor session with feedback (no cold restart)
-  land <id>              merge a PASSED dispatch's diff
+  land <id...>           merge PASSED dispatch diffs sequentially
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
   usage [--all]          token/cost usage across recent dispatches (last 7 days)
@@ -12401,7 +12491,7 @@ Usage: router <command> [options]
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --all, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
+Flags: --json, --all, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 
