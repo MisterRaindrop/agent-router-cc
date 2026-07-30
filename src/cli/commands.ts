@@ -12,7 +12,7 @@ import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
+import { dispatchTask, dispatchTasks, resolvePoolSize, resumeTask } from '../app/dispatch.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
@@ -145,7 +145,7 @@ const dispatch: Handler = async (ctx) => {
   }
 
   const results = await dispatchTasks(deps, ids, maxParallel);
-  const parallel = Math.max(1, maxParallel ?? Math.min(ids.length, 4));
+  const parallel = resolvePoolSize(ids.length, maxParallel);
   const passed = results.filter((result) => result.verifier?.result === 'PASSED').length;
   emit(
     ctx.json,
@@ -222,10 +222,10 @@ const resume: Handler = async (ctx) => {
 const land: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const ids = requireIds(ctx);
-  const landed: string[] = [];
+  const landed: { id: string; merged: string; merge_commit: string }[] = [];
   for (const id of ids) {
     const result = store.readResult(paths, id, RUN);
-    const prior = landed.length > 0 ? `; already landed: ${landed.join(', ')}` : '';
+    const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(', ')}` : '';
     if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
     const branch = runBranch(id, RUN);
@@ -242,11 +242,15 @@ const land: Handler = (ctx) => {
     worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
     deleteBranch(paths.repoRoot, branch);
     store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
-    landed.push(id);
-    emit(ctx.json, { ok: true, id, merged: branch, merge_commit: mergeCommit }, () =>
-      `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`,
-    );
+    landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
+  // Report once, after the loop: a batch has to leave stdout as ONE json document, so
+  // emitting per merge is not an option. A single id keeps the original object shape.
+  emit(ctx.json, landed.length === 1 ? { ok: true, ...landed[0]! } : { ok: true, landed }, () =>
+    landed
+      .map((l) => `${l.id} landed (${l.merged} -> ${l.merge_commit.slice(0, 12)}); diff: git show ${l.merge_commit.slice(0, 12)}`)
+      .join('\n'),
+  );
   return 0;
 };
 

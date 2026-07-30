@@ -202,6 +202,16 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
 }
 
 /**
+ * How many executor runs may be in flight for a batch of `count` tasks. The single
+ * source of truth for the bound, so what a caller reports is what actually ran: an
+ * explicit `--max-parallel 8` over two tasks is still a pool of two.
+ */
+export function resolvePoolSize(count: number, maxParallel?: number): number {
+  const requested = Math.max(1, Math.floor(maxParallel ?? Math.min(count, 4)));
+  return Math.min(count, requested);
+}
+
+/**
  * Prepare every task serially, then supervise a bounded pool of executor runs.
  * Per-run faults are collected so no sibling process is orphaned by early rejection.
  */
@@ -220,8 +230,7 @@ export async function dispatchTasks(
   const prepared = ids.map((id) => prepareRun(deps, id));
   const results = new Array<RunResult>(ids.length);
   const faults: { id: string; message: string }[] = [];
-  const requested = Math.max(1, maxParallel ?? Math.min(ids.length, 4));
-  const poolSize = Math.min(ids.length, Math.floor(requested));
+  const poolSize = resolvePoolSize(ids.length, maxParallel);
   let cursor = 0;
 
   const worker = async (): Promise<void> => {

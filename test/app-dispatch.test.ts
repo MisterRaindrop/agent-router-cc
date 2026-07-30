@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import * as fx from '../testkit/gitRepo.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
+import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, resolvePoolSize, runPrepared } from '../src/app/dispatch.ts';
 
 const NODE = process.execPath;
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
@@ -130,6 +130,14 @@ test('prepareRun and runPrepared compose to the same dispatch result', async () 
     fx.cleanup(directSetup.repo);
     fx.cleanup(composedSetup.repo);
   }
+});
+
+test('resolvePoolSize never exceeds the task count and never drops below one', () => {
+  assert.equal(resolvePoolSize(2), 2); // default caps at 4, so two tasks -> two
+  assert.equal(resolvePoolSize(9), 4);
+  assert.equal(resolvePoolSize(2, 8), 2); // a cap above the batch size is still the batch
+  assert.equal(resolvePoolSize(5, 2), 2);
+  assert.equal(resolvePoolSize(5, 0), 1); // a nonsensical cap still runs one at a time
 });
 
 test('dispatchTasks rejects duplicate ids before preparing worktrees', async () => {

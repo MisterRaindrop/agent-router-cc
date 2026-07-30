@@ -37,6 +37,9 @@ function setup(): string {
   return dir;
 }
 
+// `apiKeyEnv` is the task's `worker.api_key_env`: the one explicit opt-in that lets a
+// named variable through the executor environment allowlist (io/env.ts). The barrier
+// fake needs its rendezvous directory, so the test smuggles it through that door.
 function stageTask(dir: string, id: string, apiKeyEnv?: string): void {
   router(dir, ['new', id]);
   writeFileSync(
@@ -64,7 +67,6 @@ test('batch dispatch overlaps executor runs and preserves input-ordered results'
       ROUTER_CODEX_BIN: FAKE_BARRIER,
       ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
       ROUTER_TEST_BARRIER_DIR: barrierDir,
-      ROUTER_TEST_BARRIER_COUNT: '2',
     });
     assert.equal(d.code, 0, d.out);
     const out = JSON.parse(d.out) as {
@@ -107,6 +109,44 @@ test('batch dispatch keeps every task diff scoped to its own file', () => {
       assert.match(patch, new RegExp(`src/${id}\\.ts`));
       assert.doesNotMatch(patch, new RegExp(`src/${other}\\.ts`));
     }
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The reported pool has to be the pool that ran: asking for more parallelism than there
+// are tasks must not report a concurrency the batch never had.
+test('batch dispatch reports the pool it actually used, not the requested cap', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--max-parallel', '8', '--json'], {
+      ROUTER_CODEX_BIN: FAKE_SCOPED,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.equal(d.code, 0, d.out);
+    assert.equal((JSON.parse(d.out) as { parallel: number }).parallel, 2);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('batch land --json stays one document listing every merge', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  const env = { ROUTER_CODEX_BIN: FAKE_SCOPED, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    assert.equal(router(dir, ['dispatch', 'p1', 'p2', '--json'], env).code, 0);
+    const l = router(dir, ['land', 'p1', 'p2', '--json'], env);
+    assert.equal(l.code, 0, l.out);
+    const out = JSON.parse(l.out) as { ok: boolean; landed: { id: string; merge_commit: string }[] };
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.landed.map((entry) => entry.id), ['p1', 'p2']);
+    for (const entry of out.landed) assert.match(entry.merge_commit, /^[0-9a-f]{40}$/);
   } finally {
     fx.cleanup(dir);
   }
