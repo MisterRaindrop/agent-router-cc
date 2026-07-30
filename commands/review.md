@@ -55,6 +55,17 @@ or text ending mid-finding), re-invoke to continue from where it stopped and **n
 present a truncated critique as complete**. The two-lens split already helps -- each pass
 is a separate, shorter call, so it is less likely to hit the cap than one giant review.
 
+## Phase 1 -- Preflight
+
+Before reviewing, establish what you are reviewing (see the Preflight section of
+`${CLAUDE_PLUGIN_ROOT}/references/report-template.md`): the `base_sha`/`head_sha` of the
+landed diff; whether the diff is within the spec's declared scope; whether the spec was
+approved; and whether the code changed again after the last verification run (if so, prior
+evidence is stale). **If scope drifted or the spec was never approved, stop and return to
+`/router:spec`** -- do not review against a spec that no longer matches the code.
+
+## Phase 2 -- Independent semantic review
+
 Review the change (`git diff` of what `/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
 extra independence):
 
@@ -93,13 +104,33 @@ extra independence):
 - Readability/naming; consistency with THIS project's conventions (not your taste);
   comments explain *why*; security and resource lifetime; obvious performance regressions.
 
-## Findings (print verbatim for the user)
+## Phase 3 -- Assurance (run the spec's Verification Matrix)
 
-Emit each finding as:
-`{level: functional|diff, dimension, severity: blocking|advisory|nit, location: file:line,
-what: <specific, cited>, why: <concrete consequence, not "best practice">, suggestion:
-<concrete fix>, confidence: high|medium|low}`
-plus a top-level verdict: `improves code health? yes | needs-changes | no`.
+Judge not just the code but whether it was actually PROVEN. Work through the spec's
+Verification Matrix (see `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`), running the
+items you genuinely can here: the full test suite; the spec->test mapping (does a test
+exist for each required scenario?); test validity (would each fail if its bug returned --
+not hollow/tautological); Must NOT not violated; and, for a bug fix, the RED baseline (the
+regression test fails against the OLD code). **Honesty rules from assurance-core apply:** a
+tool that will not run here (e.g. C++ coverage/mutation needing a Docker-only compile db) is
+`unverified`, never a faked `pass`; obey the anti-gaming contract. Tooling-dependent matrix
+rows that cannot run become Known Limits, not silent passes.
+
+## Phase 4 -- Evidence audit & verdict (print verbatim for the user)
+
+Report per `${CLAUDE_PLUGIN_ROOT}/references/report-template.md`. Emit each finding as:
+`{level: functional|diff|evidence|spec, dimension, severity: blocking|advisory|nit,
+location: file:line, what: <specific, cited>, why: <concrete consequence, not "best
+practice">, suggestion: <concrete fix>, evidence: <command/output or "none">,
+confidence: high|medium|low}`. Include the evidence block (command/cwd/exit/tests/skipped/
+status, four-state) for each check actually run. **Any code change invalidates prior
+evidence -- the report must reflect a fresh run against the final `head_sha`.**
+
+End with the **two-axis verdict, never collapsed into one**:
+`code_health: yes | needs-changes | no` (did you find code defects?) and
+`assurance: verified | partial | unverified` (is it proven per the matrix?). "No defect
+found" is not "proven" -- a required check left `unverified` means `assurance` is at most
+`partial`.
 - **blocking** = a correctness/robustness/security defect; a test that would not catch its own
   bug or cannot run at all; a guard broader than the problem that silently drops behaviour; or
   new validation that rejects already-stored data. **advisory** = design/maintainability.
@@ -113,6 +144,12 @@ plus a top-level verdict: `improves code health? yes | needs-changes | no`.
 
 Print all findings verbatim; **the user decides** which are valid (the reviewer errs and
 misses things too). Fix the accepted **blocking** findings (yourself, or dispatch a focused
-task via `/router:go`), then **re-run the tests**, then **resume the same reviewer session**
-to confirm each blocking finding is genuinely resolved -- verify against the new code, never
-on a "fixed it" claim. Repeat until the user is satisfied.
+task via `/router:go`), then re-run the relevant tests, then a **fresh run of the full
+Verification Matrix against the final code** (prior evidence is now stale), then **resume
+the same reviewer session** to confirm each blocking finding is genuinely resolved --
+verify against the new code, never on a "fixed it" claim. Repeat until the user is satisfied.
+
+If a finding is `level: spec` (the spec itself is wrong -- e.g. an acceptance criterion is
+incorrect), **do not quietly change the bar in review**: stop, return to `/router:spec`,
+record a Spec Revision (visible), have the user re-approve, then re-implement and re-review.
+The acceptance criteria are never weakened inside review to make a change pass.

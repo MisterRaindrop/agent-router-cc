@@ -45,6 +45,31 @@ rather than reading whole files (see `/router:symbol`): `router symbol index <di
 then `symbol find` / `enclosing` / `methods`, opening only bounded slices. It keeps this
 session's context small.
 
+## Define what must be proven (the assurance plan)
+
+Beyond judging the approach, `/router:spec` fixes the bar `/router:review` will later hold
+the change to. Read `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md` and produce, at a
+depth **proportional to the change** (a Low-risk change needs almost none of this; a
+High-risk change needs all of it):
+
+- **Scope & impact:** root cause; entry points and callers; public API; persisted data;
+  concurrency; security boundary; performance-critical paths; compatibility range. (Map
+  these with the symbol index, not whole-file reads.)
+- **Risk tier** (Low/Normal/High) via the deterministic triggers in assurance-core --
+  escalate when unsure, never downgrade to skip checks.
+- **Failure Model:** for each way it can break -- consequence + the check that would catch
+  it; if no available check can, mark it `unverified` (do not fake a unit test for it).
+- **Must NOT / invariants**, plus a few concrete `Given/When/Then` scenarios (minimal, not
+  exhaustive Gherkin).
+- **Verification Matrix:** the compact table from assurance-core (scenario/risk ->
+  verification layer -> necessity); tooling-dependent rows are `conditional`.
+- **Environment & dependency plan:** which existing project commands to use; whether a new
+  tool is needed (**never install silently**; if the user does not approve it, the
+  dependent checks are `unverified`); each new dependency's purpose.
+
+This is the promise; `/router:review` is the check. Some items appear in both stages -- not
+redundancy: spec commits, review verifies.
+
 ## Each round
 
 1. Hand the reviewer the current plan plus this instruction:
@@ -59,6 +84,11 @@ session's context small.
    > Emit each objection as `{severity: blocking|advisory|nit, argument: <specific problem
    > + concrete consequence>, suggestion: <concrete fix>}`. If the plan is sound, say so
    > plainly instead of manufacturing objections.
+   >
+   > Also review the ASSURANCE PLAN (risk tier, Failure Model, Must NOT, Verification
+   > Matrix): are risks missed or under-rated? are the acceptance scenarios too loose? can
+   > each named check actually surface the failure it is paired with? is there a high-cost
+   > check with little value, or a simpler, more reliable verification that was missed?
 
 2. Print the reviewer's output verbatim for the user.
 3. The user judges. Apply only the objections the user accepts, revising the plan with
@@ -74,6 +104,7 @@ its previous critique so it has that context.)
 
 The user decides how many rounds to run and when to stop -- there is no automatic
 convergence. When the user is satisfied, write the frozen plan to `.router/PLAN.md` as the
-input to `/router:go`. That file holds the approach, the identified risks, and the
-definition of done (the build/tests `/router:go` runs at the end) -- **not** a task
-breakdown.
+input to `/router:go`. It holds: goals & non-goals; the approach; risk tier; Failure Model;
+behaviour scenarios; Must NOT; Verification Matrix; environment & dependency plan; Known
+Unverified; Spec Approval; and a Revision Log (every spec revision recorded, so a later
+change of the bar is visible). It is **not** a task breakdown -- that is `/router:go`.
