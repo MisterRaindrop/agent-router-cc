@@ -84,10 +84,11 @@ claude plugin update router@agent-router-cc
 
 对于中间每个**明确**的任务,工作由两个角色分担:
 
-- **router CLI** 在隔离 worktree 中、用按配额挑选的执行器运行该任务,并对产出的 diff
-  做**快速、无环境的把关**——能否干净地 apply、是否停留在允许的文件范围内、有没有泄漏密钥、
-  新增脚本在同目录兄弟都可执行时是否也带了可执行位。
-  它**不跑**你的 build 或测试。
+- **router CLI** 在隔离 worktree 中、用按配额挑选的执行器运行该任务——彼此独立的任务可以
+  同时跑,各自一个 worktree——并对产出的 diff 做**快速、无环境的把关**:能否干净地 apply、
+  是否停留在允许的文件范围内、有没有泄漏密钥、新增脚本在同目录兄弟都可执行时是否也带了
+  可执行位。只有当该任务的契约设置了 `verify` 命令时它才跑 build 或测试,而且答案是机械的:
+  *跑了没有、过了没有*,绝不是*做对了没有*。
 - 随后 **Opus 读取并复审这个 diff**,识别偷懒或做错的地方——写死的值、空壳或跳过的测试、
   误解的意图(便宜的模型可能一边过了浅层把关、一边做错)。而且**验证归 Opus**:任何有风险的
   改动,它都在**你的**真实环境里亲自跑 build/测试(它有 docker 和完整工具链,沙箱执行器没有),
@@ -104,10 +105,11 @@ claude plugin update router@agent-router-cc
 ——Opus 给子任务起的短名;它的契约位于 `.router/tasks/<id>/task.yaml`。
 
 ```
-/router:dispatch <id>   # 用按配额挑选的执行器把任务 <id> 运行一次,在隔离的 worktree
-                        #   分支上产出一个已机械校验的 diff
-/router:land <id>       # 把任务 <id> 已校验的 diff 合并进你的工作分支
-/router:result <id>     # 显示任务 <id> 的逐项校验报告和日志末尾
+/router:dispatch <id...> # 用按配额挑选的执行器运行这些任务,各自在隔离的 worktree 分支上
+                         #   产出一个已机械校验的 diff。传多个 id 会**并发**跑
+                         #   (--max-parallel <n> 限制并发数),墙钟取最慢的那个而不是求和
+/router:land <id...>     # 把这些任务已校验的 diff 合并进你的工作分支
+/router:result <id>      # 显示任务 <id> 的逐项校验报告和日志末尾
 ```
 
 任务契约(`.router/tasks/<id>/task.yaml`)自带 `allowed_globs`(文件范围)、可选的
