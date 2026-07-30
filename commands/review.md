@@ -41,10 +41,19 @@ codex is unavailable or out of quota, fall to the next same-strength entry (e.g.
 `claude ... --model <model> --effort <effort>`) -- keep the strength, don't drop to a weak
 model for adversarial review.
 
-**Run the reviewer in the background** and tell the user (e.g. "code review running in the
-background (<model>, effort <effort>); I'll surface the critique when it lands") -- reviews
-take minutes and running detached avoids the interactive timeout. `max` effort is opt-in,
-used only when the user explicitly asks for the deepest pass (still backgrounded).
+**Run the reviewer in the background**, **redirecting its full output to a file** (e.g.
+`codex exec ... > .router/review/critique-<lens>.md 2>&1`), and tell the user (e.g. "code
+review running in the background (<model>, effort <effort>); I'll surface the critique
+when it lands") -- reviews take minutes and running detached avoids the interactive
+timeout. `max` effort is opt-in, used only when the user explicitly asks for the deepest
+pass (still backgrounded).
+
+**Guard against truncation.** A long findings list can be cut off at the reviewer's output
+cap or the shell/tool buffer. Mitigate: (1) read from the file above (complete regardless
+of tool buffers), in chunks if large; (2) if the output is truncated (codex finish signal,
+or text ending mid-finding), re-invoke to continue from where it stopped and **never
+present a truncated critique as complete**. The two-lens split already helps -- each pass
+is a separate, shorter call, so it is less likely to hit the cap than one giant review.
 
 Review the change (`git diff` of what `/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
 extra independence):

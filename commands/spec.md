@@ -16,13 +16,24 @@ review beats a max review that times out). Independence is the whole point: it c
 blind spots a self-review shares.
 
 **Run the reviewer in the background.** A review takes minutes; do not block the session
-on it. Launch it as a background job, tell the user plainly -- e.g. "plan review running
-in the background (<model>, effort <effort>, ~a few minutes); go do other work, I'll
-surface the critique when it lands" -- and continue. Running detached also avoids the
-interactive timeout that a foreground review can hit. When it completes, surface the
-critique (verbatim, see below). **`max` effort is opt-in, not default:** use it only when
-the user explicitly asks for the deepest possible pass on a high-stakes plan (still in the
-background -- it can take ~15 minutes).
+on it. Launch it as a background job, **redirecting its full output to a file** (e.g.
+`codex exec ... > .router/spec/critique-<round>.md 2>&1`), tell the user plainly -- e.g.
+"plan review running in the background (<model>, effort <effort>, ~a few minutes); go do
+other work, I'll surface the critique when it lands" -- and continue. Running detached
+also avoids the interactive timeout that a foreground review can hit. When it completes,
+surface the critique from the file (verbatim, see below). **`max` effort is opt-in, not
+default:** use it only when the user explicitly asks for the deepest possible pass on a
+high-stakes plan (still in the background -- it can take ~15 minutes).
+
+**Guard against truncation.** A thorough critique can be long, and it can be cut off at
+two points: the reviewer's own output cap (generation stops mid-way), and the shell/tool
+buffer when you read it back. So: (1) always write to the file above -- the file holds the
+complete output regardless of tool buffers; read it in chunks if large, never rely on
+inline stdout capture. (2) Check whether the output was truncated -- codex's finish/exit
+signal, or the text ending mid-objection. If it was, **re-invoke the reviewer to continue
+from where it stopped** (or split the plan into parts) and **never present a truncated
+critique as complete** -- say "critique was truncated, continuing" and finish it. Keeping
+each objection compact and structured (the format below) fits more before any cap.
 
 **The human is the judge, not you.** Print the reviewer's critique **verbatim** so the
 user can see it. You do not decide which objections are valid, and you do not silently
