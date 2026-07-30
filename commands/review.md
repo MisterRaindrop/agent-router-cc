@@ -35,10 +35,18 @@ judgment.
 from yourself** (you are Claude, so prefer a non-Claude reviewer). Get the reviewer chain
 from `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models --json` (the `review` array,
 strongest + most independent first): launch the first entry, e.g.
-`codex exec -m <model> -c model_reasoning_effort=<effort>`. If codex is unavailable or out
-of quota, fall to the next same-strength entry (e.g. `claude ... --model <model> --effort
-<effort>`) -- keep the strength, don't drop to a weak model for adversarial review. Review
-the change (`git diff` of what `/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
+`codex exec -m <model> -c model_reasoning_effort=<effort>` with the `effort` from that
+entry (default `xhigh` -- a completed xhigh review beats a max one that times out). If
+codex is unavailable or out of quota, fall to the next same-strength entry (e.g.
+`claude ... --model <model> --effort <effort>`) -- keep the strength, don't drop to a weak
+model for adversarial review.
+
+**Run the reviewer in the background** and tell the user (e.g. "code review running in the
+background (<model>, effort <effort>); I'll surface the critique when it lands") -- reviews
+take minutes and running detached avoids the interactive timeout. `max` effort is opt-in,
+used only when the user explicitly asks for the deepest pass (still backgrounded).
+
+Review the change (`git diff` of what `/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
 extra independence):
 
 **Architect lens (holistic / functional):** read end-to-end, not just the diff.

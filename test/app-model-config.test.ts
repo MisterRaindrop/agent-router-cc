@@ -27,6 +27,10 @@ test('loadModelConfig falls back to the bundled default when no models.yaml exis
     assert.equal(cfg.codex.weak.model, 'gpt-5.6-terra');
     assert.equal(cfg.codex.strong.effort, 'max');
     assert.equal(cfg.review[0]?.kind, 'codex');
+    // Reviewers default to xhigh, not max: reliable + fast enough for review's breadth-
+    // of-judgment nature; max is an explicit opt-in escalation (run in the background).
+    assert.equal(cfg.review[0]?.effort, 'xhigh');
+    assert.equal(cfg.review[1]?.effort, 'xhigh');
   } finally {
     cleanup();
   }

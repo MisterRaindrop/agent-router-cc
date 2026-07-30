@@ -10394,9 +10394,13 @@ var DEFAULT_MODEL_CONFIG = {
     strong: { model: "opus", effort: "xhigh" }
   },
   // spec/review: strongest + independent (non-Claude first); fall to a same-strength
-  // Claude reviewer if codex is unavailable/out of quota.
+  // Claude reviewer if codex is unavailable/out of quota. Effort is xhigh, not max:
+  // plan/code review rewards breadth of judgment over deep single-chain deduction, so
+  // max's marginal gain is small while its latency (~15 min) risks timing out and
+  // yielding nothing, and slows the human-in-the-loop iteration. max is an explicit
+  // opt-in for a rare final high-stakes pass (run in the background), not the default.
   review: [
-    { kind: "codex", model: "gpt-5.6-sol", effort: "max" },
+    { kind: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
     { kind: "claude", model: "opus", effort: "xhigh" }
   ]
 };

@@ -10,8 +10,19 @@ the *approach*, NOT how the work will be split into tasks (that is `/router:go`)
 model from yourself** (you are Claude, so prefer a non-Claude reviewer). Get the reviewer
 chain from `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models --json` (the `review` array,
 strongest first): launch the first entry via `codex exec -m <model> -c
-model_reasoning_effort=<effort>`; if codex is out of quota, fall to the next same-strength
-entry. Independence is the whole point: it catches blind spots a self-review shares.
+model_reasoning_effort=<effort>` with the `effort` from that entry (the default is
+`xhigh` -- deliberate: plan review rewards breadth of judgment, and a completed xhigh
+review beats a max review that times out). Independence is the whole point: it catches
+blind spots a self-review shares.
+
+**Run the reviewer in the background.** A review takes minutes; do not block the session
+on it. Launch it as a background job, tell the user plainly -- e.g. "plan review running
+in the background (<model>, effort <effort>, ~a few minutes); go do other work, I'll
+surface the critique when it lands" -- and continue. Running detached also avoids the
+interactive timeout that a foreground review can hit. When it completes, surface the
+critique (verbatim, see below). **`max` effort is opt-in, not default:** use it only when
+the user explicitly asks for the deepest possible pass on a high-stakes plan (still in the
+background -- it can take ~15 minutes).
 
 **The human is the judge, not you.** Print the reviewer's critique **verbatim** so the
 user can see it. You do not decide which objections are valid, and you do not silently
