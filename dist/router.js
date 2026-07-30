@@ -6579,7 +6579,11 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "feedback",
   "state",
   "attempt",
+  "plan",
   "since",
+  "until",
+  "transcript",
+  "projects-dir",
   "router-dir",
   "limit",
   "tokens-in",
@@ -6633,10 +6637,10 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync5, readdirSync as readdirSync4, readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-import { homedir as homedir2 } from "node:os";
-import { dirname as dirname6, join as join9, resolve as resolve4 } from "node:path";
+import { homedir as homedir3 } from "node:os";
+import { dirname as dirname6, join as join10, resolve as resolve4 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -10475,6 +10479,7 @@ var task_contract_schema_default = {
       maxLength: 128,
       pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
+    plan_id: { type: "string" },
     title: { type: "string", minLength: 1 },
     base_sha: {
       type: ["string", "null"],
@@ -10943,7 +10948,7 @@ async function dispatchTask(deps, id) {
     });
   }
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2);
+  appendMetric2(deps, result2, task.plan_id);
   return result2;
 }
 async function resumeTask(deps, id, feedback) {
@@ -11023,7 +11028,7 @@ async function resumeTask(deps, id, feedback) {
     });
   }
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2);
+  appendMetric2(deps, result2, task.plan_id);
   return result2;
 }
 function safeRead(path) {
@@ -11033,10 +11038,12 @@ function safeRead(path) {
     return "";
   }
 }
-function appendMetric2(deps, result2) {
+function appendMetric2(deps, result2, planId) {
   const metric = {
     ts: deps.clock.nowIso(),
     task_id: result2.task_id,
+    ...planId !== void 0 ? { plan_id: planId } : {},
+    role: "executor",
     run_id: result2.run_id,
     attempt_number: 1,
     model: result2.worker.model ?? null,
@@ -11054,8 +11061,173 @@ function appendMetric2(deps, result2) {
   appendMetric(deps.paths, metric);
 }
 
+// src/app/orchestratorUsage.ts
+import { readdirSync as readdirSync2, statSync as statSync4 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join8 } from "node:path";
+
+// src/core/pricing.ts
+var TABLE = [
+  // Anthropic (Claude)
+  ["opus", { inPerMTok: 5, outPerMTok: 25 }],
+  ["sonnet", { inPerMTok: 3, outPerMTok: 15 }],
+  ["haiku", { inPerMTok: 1, outPerMTok: 5 }],
+  // OpenAI (Codex / GPT)
+  ["gpt-5-nano", { inPerMTok: 0.05, outPerMTok: 0.4 }],
+  ["gpt-5-mini", { inPerMTok: 0.25, outPerMTok: 2 }],
+  ["gpt-5-codex", { inPerMTok: 1.25, outPerMTok: 10 }],
+  ["gpt-5", { inPerMTok: 1.25, outPerMTok: 10 }]
+];
+function priceFor(model) {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  let best = null;
+  let bestLen = -1;
+  for (const [key, price] of TABLE) {
+    if (m.includes(key) && key.length > bestLen) {
+      best = price;
+      bestLen = key.length;
+    }
+  }
+  return best;
+}
+function deriveCost(model, tokensIn, tokensOut) {
+  const p = priceFor(model);
+  if (p === null) return null;
+  return tokensIn / 1e6 * p.inPerMTok + tokensOut / 1e6 * p.outPerMTok;
+}
+var STRONG_BASELINE_MODEL = "opus";
+function deriveBaselineCost(tokensIn, tokensOut) {
+  return deriveCost(STRONG_BASELINE_MODEL, tokensIn, tokensOut) ?? 0;
+}
+
+// src/io/transcript.ts
+import { closeSync as closeSync3, openSync as openSync3, readSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+var emptyUsage = () => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  turns: 0
+});
+function addLineUsage(line, sinceIso, model, untilIso, total) {
+  let record;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (record === null || typeof record !== "object") return;
+  const entry = record;
+  if (entry["type"] !== "assistant") return;
+  if (typeof entry["timestamp"] !== "string" || entry["timestamp"] < sinceIso) return;
+  if (untilIso !== void 0 && entry["timestamp"] > untilIso) return;
+  const message = entry["message"];
+  if (message === null || typeof message !== "object") return;
+  const assistantMessage = message;
+  if (typeof assistantMessage["model"] !== "string" || !assistantMessage["model"].includes(model)) return;
+  const usage2 = assistantMessage["usage"];
+  if (usage2 === null || typeof usage2 !== "object") return;
+  const tokenUsage = usage2;
+  total.inputTokens += typeof tokenUsage["input_tokens"] === "number" ? tokenUsage["input_tokens"] : 0;
+  total.outputTokens += typeof tokenUsage["output_tokens"] === "number" ? tokenUsage["output_tokens"] : 0;
+  total.turns += 1;
+}
+function sumMainModelUsageSince(transcriptPath, sinceIso, model, untilIso) {
+  let fd;
+  try {
+    fd = openSync3(transcriptPath, "r");
+  } catch {
+    return emptyUsage();
+  }
+  const total = emptyUsage();
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let readFailed = false;
+  try {
+    let bytesRead;
+    while ((bytesRead = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      pending += decoder.write(buffer.subarray(0, bytesRead));
+      let newlineAt;
+      while ((newlineAt = pending.indexOf("\n")) !== -1) {
+        addLineUsage(pending.slice(0, newlineAt), sinceIso, model, untilIso, total);
+        pending = pending.slice(newlineAt + 1);
+      }
+    }
+    pending += decoder.end();
+    if (pending !== "") addLineUsage(pending, sinceIso, model, untilIso, total);
+  } catch {
+    readFailed = true;
+  } finally {
+    try {
+      closeSync3(fd);
+    } catch {
+    }
+  }
+  return readFailed ? emptyUsage() : total;
+}
+
+// src/app/orchestratorUsage.ts
+function newestTranscript(projectsDir) {
+  let newest;
+  let entries;
+  try {
+    entries = readdirSync2(projectsDir, { withFileTypes: true });
+  } catch {
+    return void 0;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    const path = join8(projectsDir, entry.name);
+    let mtimeMs;
+    try {
+      mtimeMs = statSync4(path).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (newest === void 0 || mtimeMs > newest.mtimeMs || mtimeMs === newest.mtimeMs && entry.name > newest.name) {
+      newest = { path, name: entry.name, mtimeMs };
+    }
+  }
+  return newest?.path;
+}
+function resolveTranscript(paths, opts) {
+  if (opts.transcriptPath !== void 0) return opts.transcriptPath;
+  const projectKey = paths.repoRoot.replaceAll("/", "-");
+  const projectsDir = opts.projectsDir ?? join8(homedir2(), ".claude", "projects", projectKey);
+  return newestTranscript(projectsDir);
+}
+function recordOrchestratorUsage(paths, clock, opts) {
+  const transcript = resolveTranscript(paths, opts);
+  if (transcript === void 0) return { recorded: false, reason: "no transcript" };
+  const until = opts.untilIso ?? clock.nowIso();
+  const totals = sumMainModelUsageSince(transcript, opts.sinceIso, opts.model, until);
+  if (totals.turns === 0) return { recorded: false, reason: "no matching main-model turns" };
+  const cost_usd = deriveCost(opts.model, totals.inputTokens, totals.outputTokens);
+  const record = {
+    ts: clock.nowIso(),
+    task_id: `${opts.planId}/orchestrator`,
+    plan_id: opts.planId,
+    role: "orchestrator",
+    run_id: "orchestrator",
+    attempt_number: 1,
+    model: opts.model,
+    exit_class: "ok",
+    verifier_result: null,
+    first_pass: true,
+    tokens_input: totals.inputTokens,
+    tokens_output: totals.outputTokens,
+    cost_usd,
+    wall_seconds: Math.max(0, Math.round((Date.parse(until) - Date.parse(opts.sinceIso)) / 1e3)),
+    escalated: false,
+    env_error: false
+  };
+  appendMetric(paths, record);
+  return { recorded: true, ...totals, cost_usd };
+}
+
 // src/app/symbolIndex.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync3, rmSync as rmSync2, statSync as statSync5, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync4, rmSync as rmSync2, statSync as statSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { resolve as resolve3 } from "node:path";
 
 // src/core/symbols.ts
@@ -11169,13 +11341,13 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync2, readFileSync as readFileSync8, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync7, readdirSync as readdirSync3, readFileSync as readFileSync8, statSync as statSync5 } from "node:fs";
 import { relative, resolve as resolve2 } from "node:path";
 
 // src/io/treeSitter.ts
 import { readFileSync as readFileSync7 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname5, join as join8 } from "node:path";
+import { dirname as dirname5, join as join9 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 function locateRuntime() {
   try {
@@ -11183,16 +11355,16 @@ function locateRuntime() {
     const cjs = req.resolve("web-tree-sitter");
     const dir = dirname5(cjs);
     return {
-      moduleHref: pathToFileURL(join8(dir, "tree-sitter.js")).href,
-      tsWasm: join8(dir, "tree-sitter.wasm"),
+      moduleHref: pathToFileURL(join9(dir, "tree-sitter.js")).href,
+      tsWasm: join9(dir, "tree-sitter.wasm"),
       cppWasm: req.resolve("tree-sitter-wasms/out/tree-sitter-cpp.wasm")
     };
   } catch {
     const vendor = fileURLToPath(new URL("./vendor/", import.meta.url));
     return {
-      moduleHref: pathToFileURL(join8(vendor, "tree-sitter.js")).href,
-      tsWasm: join8(vendor, "tree-sitter.wasm"),
-      cppWasm: join8(vendor, "tree-sitter-cpp.wasm")
+      moduleHref: pathToFileURL(join9(vendor, "tree-sitter.js")).href,
+      tsWasm: join9(vendor, "tree-sitter.wasm"),
+      cppWasm: join9(vendor, "tree-sitter-cpp.wasm")
     };
   }
 }
@@ -11290,7 +11462,7 @@ function hashRoots(roots) {
 function walkFiles(root, acc) {
   let st;
   try {
-    st = statSync4(root);
+    st = statSync5(root);
   } catch {
     return;
   }
@@ -11299,7 +11471,7 @@ function walkFiles(root, acc) {
     return;
   }
   if (!st.isDirectory()) return;
-  for (const name of readdirSync2(root)) {
+  for (const name of readdirSync3(root)) {
     if (SKIP_DIR.has(name)) continue;
     walkFiles(resolve2(root, name), acc);
   }
@@ -11327,7 +11499,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
   let bytes = 0;
   for (const abs of files) {
     const rel = relative(repoRoot, abs);
-    const st = statSync4(abs);
+    const st = statSync5(abs);
     const cached = prevByFile.get(rel);
     if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
       out2.push(cached);
@@ -11362,7 +11534,7 @@ async function refreshIndex(cachePath, repoRoot) {
     const abs = resolve2(repoRoot, f.file);
     let st;
     try {
-      st = statSync4(abs);
+      st = statSync5(abs);
     } catch {
       changed = true;
       continue;
@@ -11484,41 +11656,6 @@ async function runQuery(paths, cfg, sub, args) {
   return { degraded: true, reason: `unknown symbol subcommand '${sub}' (use index|find|enclosing|methods|callers|callees)` };
 }
 
-// src/core/pricing.ts
-var TABLE = [
-  // Anthropic (Claude)
-  ["opus", { inPerMTok: 5, outPerMTok: 25 }],
-  ["sonnet", { inPerMTok: 3, outPerMTok: 15 }],
-  ["haiku", { inPerMTok: 1, outPerMTok: 5 }],
-  // OpenAI (Codex / GPT)
-  ["gpt-5-nano", { inPerMTok: 0.05, outPerMTok: 0.4 }],
-  ["gpt-5-mini", { inPerMTok: 0.25, outPerMTok: 2 }],
-  ["gpt-5-codex", { inPerMTok: 1.25, outPerMTok: 10 }],
-  ["gpt-5", { inPerMTok: 1.25, outPerMTok: 10 }]
-];
-function priceFor(model) {
-  if (!model) return null;
-  const m = model.toLowerCase();
-  let best = null;
-  let bestLen = -1;
-  for (const [key, price] of TABLE) {
-    if (m.includes(key) && key.length > bestLen) {
-      best = price;
-      bestLen = key.length;
-    }
-  }
-  return best;
-}
-function deriveCost(model, tokensIn, tokensOut) {
-  const p = priceFor(model);
-  if (p === null) return null;
-  return tokensIn / 1e6 * p.inPerMTok + tokensOut / 1e6 * p.outPerMTok;
-}
-var STRONG_BASELINE_MODEL = "opus";
-function deriveBaselineCost(tokensIn, tokensOut) {
-  return deriveCost(STRONG_BASELINE_MODEL, tokensIn, tokensOut) ?? 0;
-}
-
 // src/app/usageReport.ts
 var DEFAULT_DAYS = 7;
 function buildUsageReport(paths, nowIso, opts = {}) {
@@ -11546,11 +11683,14 @@ function buildUsageReport(paths, nowIso, opts = {}) {
     rows.push({
       ts: r.ts,
       taskId: r.task_id,
+      planId: r.plan_id ?? null,
+      role: r.role ?? "executor",
       executor: r.executor ?? "unknown",
       model: r.model,
       tokensIn,
       tokensOut,
       tokensTotal: tokensIn + tokensOut,
+      wallSeconds: r.wall_seconds ?? 0,
       costUsd,
       costSource,
       verifier: r.verifier_result,
@@ -11561,6 +11701,43 @@ function buildUsageReport(paths, nowIso, opts = {}) {
     });
   }
   rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
+  const byPlan = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    if (row.planId === null) continue;
+    const plan = byPlan.get(row.planId) ?? { planId: row.planId, executorRows: [], orchestrator: null };
+    if (row.role === "orchestrator") {
+      if (plan.orchestrator === null) plan.orchestrator = row;
+    } else {
+      plan.executorRows.push(row);
+    }
+    byPlan.set(row.planId, plan);
+  }
+  const plans = [...byPlan.values()].map((plan) => {
+    let executorCostUsd = 0;
+    let savedUsd = 0;
+    let wallSecondsExecutors = 0;
+    let costComplete2 = true;
+    for (const row of plan.executorRows) {
+      if (row.costUsd === null) costComplete2 = false;
+      else executorCostUsd += row.costUsd;
+      if (row.savingsUsd === null) costComplete2 = false;
+      else savedUsd += row.savingsUsd;
+      wallSecondsExecutors += row.wallSeconds;
+    }
+    const orchestratorCostUsd = plan.orchestrator?.costUsd ?? 0;
+    const actualTotalUsd = executorCostUsd + orchestratorCostUsd;
+    return {
+      ...plan,
+      executorCostUsd,
+      orchestratorCostUsd,
+      actualTotalUsd,
+      savedUsd,
+      allBaselineUsd: actualTotalUsd + savedUsd,
+      wallSecondsExecutors,
+      orchestratorMeasured: plan.orchestrator !== null,
+      costComplete: costComplete2
+    };
+  });
   let totalTokensIn = 0;
   let totalTokensOut = 0;
   let totalCostUsd = 0;
@@ -11585,6 +11762,7 @@ function buildUsageReport(paths, nowIso, opts = {}) {
   return {
     windowDays,
     rows,
+    plans,
     totalTokensIn,
     totalTokensOut,
     totalTokens: totalTokensIn + totalTokensOut,
@@ -11645,10 +11823,17 @@ function fmtTokens(n) {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return String(n);
 }
+function fmtWall(seconds) {
+  return seconds < 60 ? `${Math.round(seconds)}s` : `${(seconds / 60).toFixed(1)}m`;
+}
 function fmtCost(costUsd, source) {
   if (costUsd === null) return "tokens";
   const s = `$${costUsd.toFixed(2)}`;
   return source === "derived" ? `~${s}` : s;
+}
+function fmtAggregateCost(costUsd, rows, complete) {
+  const estimated = !complete || rows.some((row) => row.costSource === "derived");
+  return `${estimated ? "~" : ""}$${costUsd.toFixed(2)}${complete ? "" : "+"}`;
 }
 function shortModel(m) {
   if (!m) return "";
@@ -11690,6 +11875,35 @@ No dispatches recorded yet.`;
   if (report.suggestions.length > 0) {
     lines.push("Suggestions:");
     for (const s of report.suggestions) lines.push(`  \xB7 ${s}`);
+  }
+  if (report.plans.length > 0) {
+    lines.push(bar);
+    lines.push("By plan:");
+    for (const plan of report.plans) {
+      lines.push(`  Plan ${plan.planId}`);
+      for (const row of plan.executorRows) {
+        lines.push(
+          `    ${row.taskId} \xB7 ${row.model ?? "unknown model"} \xB7 in ${fmtTokens(row.tokensIn)} \xB7 out ${fmtTokens(row.tokensOut)} \xB7 ${fmtCost(row.costUsd, row.costSource)} \xB7 wall ${fmtWall(row.wallSeconds)}`
+        );
+      }
+      const executorTokens = plan.executorRows.reduce((sum, row) => sum + row.tokensTotal, 0);
+      lines.push(
+        `    executors: ${plan.executorRows.length} \xB7 ${fmtTokens(executorTokens)} \xB7 ${fmtAggregateCost(plan.executorCostUsd, plan.executorRows, plan.costComplete)}`
+      );
+      if (plan.orchestrator !== null) {
+        lines.push(
+          `    orchestrator (${report.baselineModel}, main, approx): ${fmtTokens(plan.orchestrator.tokensTotal)} \xB7 ${fmtCost(plan.orchestrator.costUsd, plan.orchestrator.costSource)}`
+        );
+      } else {
+        lines.push("    orchestrator (main model): not measured \u2014 comparison is execution-side only");
+      }
+      const actualRows = plan.orchestrator === null ? plan.executorRows : [...plan.executorRows, plan.orchestrator];
+      const actualCostComplete = plan.costComplete && plan.orchestrator?.costUsd !== null;
+      lines.push(
+        `    actual total: ${fmtAggregateCost(plan.actualTotalUsd, actualRows, actualCostComplete)} ; if all on ${report.baselineModel} (est): ~$${plan.allBaselineUsd.toFixed(2)}${plan.costComplete ? "" : "+"} ; saved (est): ~$${plan.savedUsd.toFixed(2)}${plan.costComplete ? "" : "+"}`
+      );
+      lines.push(`    execution wall: ${fmtWall(plan.wallSecondsExecutors)}`);
+    }
   }
   return lines.join("\n");
 }
@@ -11741,12 +11955,12 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const found = explicit ?? findRouterDir(ctx.cwd);
-  const rd = found ?? join9(ctx.cwd, ROUTER_DIR);
+  const rd = found ?? join10(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
     if (!existsSync9(d)) mkdirSync5(d, { recursive: true });
   }
-  const gi = join9(paths.root, ".gitignore");
+  const gi = join10(paths.root, ".gitignore");
   if (!existsSync9(gi)) writeFileSync4(gi, "*\n");
   return { paths, clock: systemClock };
 }
@@ -11922,7 +12136,7 @@ ${tail}`;
 };
 var list = (ctx) => {
   const { paths } = depsFor(ctx);
-  const ids = existsSync9(paths.tasksDir) ? readdirSync4(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync9(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
@@ -11958,8 +12172,62 @@ ${explainSavingsText(report.baselineModel)}` : body;
   });
   return 0;
 };
+var orchestratorUsage = (ctx) => {
+  const planId = flagStr(ctx.args.flags, "plan");
+  if (planId === void 0 || planId === "") throw new CliError("orchestrator-usage needs --plan <id>", 2);
+  const sinceIso = flagStr(ctx.args.flags, "since");
+  if (sinceIso === void 0 || sinceIso === "")
+    throw new CliError("orchestrator-usage needs --since <iso>", 2);
+  const { paths, clock } = depsFor(ctx);
+  const untilIso = flagStr(ctx.args.flags, "until");
+  const transcriptPath = flagStr(ctx.args.flags, "transcript");
+  const projectsDir = flagStr(ctx.args.flags, "projects-dir");
+  const model = flagStr(ctx.args.flags, "model") ?? STRONG_BASELINE_MODEL;
+  const recorded = recordOrchestratorUsage(paths, clock, {
+    planId,
+    sinceIso,
+    model,
+    ...untilIso !== void 0 ? { untilIso } : {},
+    ...transcriptPath !== void 0 ? { transcriptPath } : {},
+    ...projectsDir !== void 0 ? { projectsDir } : {}
+  });
+  if (!recorded.recorded) {
+    const message = `orchestrator usage not recorded: ${recorded.reason}; usage will show execution side only`;
+    emit(
+      ctx.json,
+      {
+        ok: true,
+        recorded: false,
+        plan: planId,
+        tokens_input: 0,
+        tokens_output: 0,
+        cost_usd: null,
+        reason: recorded.reason,
+        message
+      },
+      () => message
+    );
+    return 0;
+  }
+  emit(
+    ctx.json,
+    {
+      ok: true,
+      recorded: true,
+      plan: planId,
+      tokens_input: recorded.inputTokens,
+      tokens_output: recorded.outputTokens,
+      cost_usd: recorded.cost_usd
+    },
+    () => {
+      const cost = recorded.cost_usd === null ? "unknown" : `$${recorded.cost_usd.toFixed(6)} est`;
+      return `orchestrator usage recorded: plan ${planId}; ${recorded.inputTokens} tokens in, ${recorded.outputTokens} tokens out; cost ${cost}`;
+    }
+  );
+  return 0;
+};
 var setupStatusline = (ctx) => {
-  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join9(homedir2(), ".claude", "settings.json");
+  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join10(homedir3(), ".claude", "settings.json");
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
@@ -12105,6 +12373,7 @@ var HANDLERS = {
   result,
   list,
   usage,
+  "orchestrator-usage": orchestratorUsage,
   models,
   symbol,
   doctor,
@@ -12125,6 +12394,7 @@ Usage: router <command> [options]
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
   usage [--all]          token/cost usage across recent dispatches (last 7 days)
+  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript
   models                 print the resolved model-tier config (default + .router/models.yaml)
   symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>
   doctor                 self-check the code-intelligence layer (config, wasm, cache)
