@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { dump, load } from 'js-yaml';
+import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
@@ -427,6 +427,87 @@ const list: Handler = (ctx) => {
   return 0;
 };
 
+const PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+
+// A malformed or missing PLAN.md must not fail the whole `plans` listing -- it just
+// means this one row's revision is unknown; see the `plans` handler below.
+function planRevision(text: string): string | null {
+  const match = PLAN_FRONTMATTER_RE.exec(text);
+  if (match === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = load(match[1]!, { schema: JSON_SCHEMA });
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const rev = (parsed as Record<string, unknown>).plan_revision;
+  return typeof rev === 'string' || typeof rev === 'number' ? String(rev) : null;
+}
+
+function highestCritiqueRound(entries: string[]): number | null {
+  let max: number | null = null;
+  for (const name of entries) {
+    const m = /^critique-(\d+)\.md$/.exec(name);
+    if (m === null) continue;
+    const n = Number(m[1]);
+    if (max === null || n > max) max = n;
+  }
+  return max;
+}
+
+// List plan artifacts under .router/plans -- PLAN.md's declared revision, the highest
+// critique-<n>.md round on disk, whether DECISIONS.md exists, and whether a spec.lock is
+// currently held. Read-only: this is a browsing aid so a plan from last week is findable
+// without remembering its id by heart.
+const plans: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  // `.router/plans` has no dedicated field on RouterPaths (only per-plan-id accessors do);
+  // this is the one directory we must list to discover which plan ids even exist.
+  const plansRoot = join(paths.root, 'plans');
+  const ids = existsSync(plansRoot)
+    ? readdirSync(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
+    : [];
+  const rows = ids.map((id) => {
+    let revision: string | null = null;
+    try {
+      revision = planRevision(readFileSync(paths.planMd(id), 'utf8'));
+    } catch {
+      /* no PLAN.md, or unreadable -- revision stays unknown */
+    }
+    let critiqueRound: number | null = null;
+    try {
+      critiqueRound = highestCritiqueRound(readdirSync(paths.planDir(id)));
+    } catch {
+      /* plan dir unreadable -- treat as no critiques rather than failing the row */
+    }
+    return {
+      id,
+      plan_revision: revision,
+      critique_round: critiqueRound,
+      decisions: existsSync(paths.specDecisions(id)),
+      locked: readLock(paths.specLock(id)) !== null,
+    };
+  });
+  emit(ctx.json, { ok: true, plans: rows }, () => {
+    if (rows.length === 0) return 'No plans in .router/plans.';
+    const lines = [
+      `Plans (${rows.length}):`,
+      pad('id', 24) + pad('revision', 12) + pad('critique', 10) + pad('decisions', 12) + 'locked',
+    ];
+    for (const r of rows)
+      lines.push(
+        pad(r.id, 24) +
+          pad(r.plan_revision ?? 'unknown', 12) +
+          pad(r.critique_round === null ? '-' : String(r.critique_round), 10) +
+          pad(r.decisions ? 'yes' : '-', 12) +
+          (r.locked ? 'yes' : '-'),
+      );
+    return lines.join('\n');
+  });
+  return 0;
+};
+
 // Token/cost usage across recent dispatches, read from .router/metrics.jsonl.
 // Provider cost where reported; otherwise a list-price estimate (src/core/pricing.ts).
 const usage: Handler = (ctx) => {
@@ -669,6 +750,7 @@ export const HANDLERS: Record<string, Handler> = {
   gate,
   result,
   list,
+  plans,
   usage,
   'orchestrator-usage': orchestratorUsage,
   models,
@@ -692,6 +774,7 @@ export function helpText(): string {
     `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
+    `  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock\n` +
     `  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches\n` +
     `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
