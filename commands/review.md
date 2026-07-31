@@ -42,7 +42,7 @@ codex is unavailable or out of quota, fall to the next same-strength entry (e.g.
 model for adversarial review.
 
 **Run the reviewer in the background**, **redirecting its full output to a file** (e.g.
-`codex exec ... > .router/review/critique-<lens>.md 2>&1`), and tell the user (e.g. "code
+`codex exec ... > .router/plans/<plan_id>/review-<lens>.md 2>&1`), and tell the user (e.g. "code
 review running in the background (<model>, effort <effort>); I'll surface the critique
 when it lands") -- reviews take minutes and running detached avoids the interactive
 timeout. `max` effort is opt-in, used only when the user explicitly asks for the deepest

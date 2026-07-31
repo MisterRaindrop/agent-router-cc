@@ -17,6 +17,15 @@ export interface RouterPaths {
   readonly symbolsDir: string; // code-intelligence symbol caches (gitignored, per-repo)
   readonly symbolLatest: string; // pointer file: hash of the most recently built index
   gateLock(): string;
+  /** Per-plan directory. Plan artifacts are namespaced so two plans reviewed at once in one
+   * repo cannot clobber each other -- and, more sharply, so a reviewer told to read the plan
+   * from disk cannot silently be handed a different one. `plan_id` is schema-constrained to a
+   * path-safe shape for exactly this reason. */
+  planDir(planId: string): string;
+  planMd(planId: string): string;
+  specCritique(planId: string, round: number): string;
+  specDecisions(planId: string): string;
+  specLock(planId: string): string;
   symbolCache(hash: string): string;
   taskDir(id: string): string;
   taskYaml(id: string): string;
@@ -56,6 +65,11 @@ export function routerPaths(routerDir: string): RouterPaths {
     symbolsDir: join(root, 'symbols'),
     symbolLatest: join(root, 'symbols', 'latest'),
     gateLock: () => join(root, 'gate.lock'),
+    planDir: (planId) => join(root, 'plans', planId),
+    planMd: (planId) => join(root, 'plans', planId, 'PLAN.md'),
+    specCritique: (planId, round) => join(root, 'plans', planId, `critique-${round}.md`),
+    specDecisions: (planId) => join(root, 'plans', planId, 'DECISIONS.md'),
+    specLock: (planId) => join(root, 'plans', planId, 'spec.lock'),
     symbolCache: (hash: string) => join(root, 'symbols', `${hash}.json`),
     taskDir,
     taskYaml: (id) => join(taskDir(id), 'task.yaml'),

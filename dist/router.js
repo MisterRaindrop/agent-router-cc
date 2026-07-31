@@ -9846,6 +9846,11 @@ function routerPaths(routerDir) {
     symbolsDir: join2(root, "symbols"),
     symbolLatest: join2(root, "symbols", "latest"),
     gateLock: () => join2(root, "gate.lock"),
+    planDir: (planId) => join2(root, "plans", planId),
+    planMd: (planId) => join2(root, "plans", planId, "PLAN.md"),
+    specCritique: (planId, round) => join2(root, "plans", planId, `critique-${round}.md`),
+    specDecisions: (planId) => join2(root, "plans", planId, "DECISIONS.md"),
+    specLock: (planId) => join2(root, "plans", planId, "spec.lock"),
     symbolCache: (hash) => join2(root, "symbols", `${hash}.json`),
     taskDir,
     taskYaml: (id) => join2(taskDir(id), "task.yaml"),
@@ -10744,14 +10749,22 @@ var task_contract_schema_default = {
     "allowed_globs"
   ],
   properties: {
-    schema_version: { const: 1 },
+    schema_version: {
+      const: 1
+    },
     id: {
       type: "string",
       minLength: 1,
       maxLength: 128,
       pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
-    plan_id: { type: "string" },
+    plan_id: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      description: "Plan identity, reused as a directory name -- must be path-safe (no '/'). Prefer an issue or PR number, else the branch name with '/' replaced by '-'."
+    },
     plan_revision: {
       type: "string",
       description: "Revision of the frozen plan this contract belongs to."
@@ -10770,52 +10783,112 @@ var task_contract_schema_default = {
     invariants: {
       type: "array",
       description: "Constraints the task may not change, used to review drift.",
-      items: { type: "string", minLength: 1 }
+      items: {
+        type: "string",
+        minLength: 1
+      }
     },
     risk: {
       description: "Assurance risk using the shared vocabulary.",
-      enum: ["low", "normal", "high"]
+      enum: [
+        "low",
+        "normal",
+        "high"
+      ]
     },
     mode: {
       description: "Contract intent; probe is reserved for a future read-only pre-check.",
-      enum: ["implement", "probe"]
+      enum: [
+        "implement",
+        "probe"
+      ]
     },
-    title: { type: "string", minLength: 1 },
+    title: {
+      type: "string",
+      minLength: 1
+    },
     base_sha: {
-      type: ["string", "null"],
+      type: [
+        "string",
+        "null"
+      ],
       pattern: "^[0-9a-f]{40}$"
     },
-    max_wall_minutes: { type: "integer", minimum: 1, maximum: 1440 },
+    max_wall_minutes: {
+      type: "integer",
+      minimum: 1,
+      maximum: 1440
+    },
     allowed_globs: {
       type: "array",
       minItems: 1,
-      items: { type: "string", minLength: 1 }
+      items: {
+        type: "string",
+        minLength: 1
+      }
     },
     forbidden_globs: {
       type: "array",
-      items: { type: "string", minLength: 1 }
+      items: {
+        type: "string",
+        minLength: 1
+      }
     },
-    max_changed_lines: { type: "integer", minimum: 1 },
+    max_changed_lines: {
+      type: "integer",
+      minimum: 1
+    },
     verify: {
       type: "array",
       items: {
         type: "array",
         minItems: 1,
-        items: { type: "string", minLength: 1 }
+        items: {
+          type: "string",
+          minLength: 1
+        }
       }
     },
-    tier: { enum: ["weak", "strong", "critical"] },
+    tier: {
+      enum: [
+        "weak",
+        "strong",
+        "critical"
+      ]
+    },
     worker: {
       type: "object",
       additionalProperties: false,
-      required: ["kind"],
+      required: [
+        "kind"
+      ],
       properties: {
-        kind: { enum: ["codex", "claude"] },
-        api_key_env: { type: "string", minLength: 1 },
-        model: { type: "string", minLength: 1 },
-        effort: { type: "string", minLength: 1 },
-        max_wall_minutes_default: { type: "integer", minimum: 1 },
-        stall_minutes: { type: "integer", minimum: 1 }
+        kind: {
+          enum: [
+            "codex",
+            "claude"
+          ]
+        },
+        api_key_env: {
+          type: "string",
+          minLength: 1
+        },
+        model: {
+          type: "string",
+          minLength: 1
+        },
+        effort: {
+          type: "string",
+          minLength: 1
+        },
+        max_wall_minutes_default: {
+          type: "integer",
+          minimum: 1
+        },
+        stall_minutes: {
+          type: "integer",
+          minimum: 1
+        }
       }
     }
   }
