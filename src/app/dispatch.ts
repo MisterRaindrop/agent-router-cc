@@ -2,14 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { DeliveryHeader, ExecutorQuota, ExitClass, MetricRecord, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
-import { detectModelMismatch, reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
-import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeDirty, worktreeRemove, deleteBranch } from '../io/git.ts';
+import {
+  detectContractConflict,
+  detectModelMismatch,
+  reclassifyEnvironmentFailure,
+  reclassifyQuota,
+} from '../core/exitTaxonomy.ts';
+import { effectiveRisk } from '../core/risk.ts';
+import {
+  collectDiff,
+  commitAll,
+  rawDiff,
+  resetHard,
+  resolveCommit,
+  worktreeAdd,
+  worktreeDirty,
+  worktreeRemove,
+  deleteBranch,
+} from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
@@ -142,6 +158,11 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    const parsedAttempt: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
+    if (detectContractConflict(parsedAttempt.finalMessage)) {
+      exitClass = 'contract_conflict';
+      break;
+    }
     if ((exitClass === 'quota_exhausted' || exitClass === 'env_error') && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
@@ -150,15 +171,16 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     break;
   }
 
-  if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${RUN}`);
-
   const launcher = makeLauncher(used);
   const finalLog = safeRead(logPath);
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(finalLog);
+  const conflict = detectContractConflict(parsed.finalMessage);
+  if (conflict) exitClass = 'contract_conflict';
+  if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${RUN}`);
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null; // provider-reported only (no policy pricing table)
   // A configured slug the executor rejected -> the tier config is likely stale.
-  const modelMismatch = exitClass !== 'ok' && detectModelMismatch(finalLog);
+  const modelMismatch = exitClass !== 'ok' && exitClass !== 'contract_conflict' && detectModelMismatch(finalLog);
 
   const result: RunResult = {
     run_id: RUN,
@@ -176,12 +198,15 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     base_sha: baseSha,
     ...(switches > 0 ? { executor_switches: switches } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
+    ...(conflict ? { conflict: true } : {}),
+    ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
     ...(parsed.sessionId ? { session_id: parsed.sessionId } : {}),
   };
   const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
   if (delivery !== undefined) result.delivery = delivery;
+  if (conflict) rmSync(paths.diffPatch(id, RUN), { force: true });
   // A run that did not end `ok` is never committed, so its work would otherwise look lost.
   // Say plainly that it is still on disk: an executor killed after it had already finished is
   // recoverable, and silently discarding that work is the worse failure.
@@ -202,10 +227,11 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
       verify: task.verify ?? [],
       env: verifyEnv,
     });
+    attachEffectiveRisk(result, task, worktreeDir, baseSha);
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result, task.plan_id);
+  appendMetric(deps, result, task.plan_id, task.tier);
   return result;
 }
 
@@ -309,17 +335,18 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   const log = safeRead(logPath);
   const exitClass: ExitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
+  const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
   const mismatch = newSession !== null && newSession !== priorSession;
 
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
-  const modelMismatch = exitClass !== 'ok' && detectModelMismatch(log);
+  const modelMismatch = exitClass !== 'ok' && !conflict && detectModelMismatch(log);
   const result: RunResult = {
     run_id: RUN,
     task_id: id,
     attempt_number: prev.attempt_number + 1,
-    exit_class: mismatch ? 'task_failed' : exitClass,
+    exit_class: conflict ? 'contract_conflict' : mismatch ? 'task_failed' : exitClass,
     rc: o.rc,
     timed_out: o.timedOut,
     stalled: o.stalled,
@@ -333,17 +360,20 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     session_id: newSession ?? priorSession,
     ...(mismatch ? { resume_session_mismatch: true } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
+    ...(conflict ? { conflict: true } : {}),
+    ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
   const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
   if (delivery !== undefined) result.delivery = delivery;
+  if (conflict) rmSync(paths.diffPatch(id, RUN), { force: true });
   // A run that did not end `ok` is never committed, so its work would otherwise look lost.
   // Say plainly that it is still on disk: an executor killed after it had already finished is
   // recoverable, and silently discarding that work is the worse failure.
-  if (exitClass !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
+  if (result.exit_class !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
 
-  if (!mismatch && exitClass === 'ok') {
+  if (!conflict && !mismatch && exitClass === 'ok') {
     commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
     writeFileSync(paths.diffPatch(id, RUN), patch);
@@ -359,10 +389,11 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
       verify: task.verify ?? [],
       env: verifyEnv,
     });
+    attachEffectiveRisk(result, task, worktreeDir, baseSha);
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result, task.plan_id);
+  appendMetric(deps, result, task.plan_id, task.tier);
   return result;
 }
 
@@ -417,7 +448,29 @@ function deliveryHeaderMismatches(header: DeliveryHeader, taskId: string, planId
   return errors;
 }
 
-function appendMetric(deps: DispatchDeps, result: RunResult, planId: string | undefined): void {
+function attachEffectiveRisk(result: RunResult, task: TaskYaml, worktreeDir: string, baseSha: string): void {
+  if (result.verifier?.result !== 'PASSED') return;
+  const changes = collectDiff(worktreeDir, baseSha, 'HEAD');
+  const changedPaths = changes.flatMap((change) =>
+    change.oldPath === undefined ? [change.path] : [change.oldPath, change.path],
+  );
+  const assessed = effectiveRisk(task.risk, {
+    changedLines:
+      result.verifier.changed_lines ??
+      changes.reduce((total, change) => total + (change.binary ? 0 : change.added + change.deleted), 0),
+    changedPaths,
+    invariantGlobs: task.invariants ?? [],
+  });
+  result.risk = assessed.risk;
+  result.risk_raised_by = assessed.raisedBy;
+}
+
+function appendMetric(
+  deps: DispatchDeps,
+  result: RunResult,
+  planId: string | undefined,
+  tier: TaskYaml['tier'],
+): void {
   const metric: MetricRecord = {
     ts: deps.clock.nowIso(),
     task_id: result.task_id,
@@ -427,6 +480,11 @@ function appendMetric(deps: DispatchDeps, result: RunResult, planId: string | un
     attempt_number: 1,
     model: result.worker.model ?? null,
     executor: result.worker.kind,
+    ...(tier !== undefined ? { tier } : {}),
+    ...(result.worker.effort !== undefined ? { effort: result.worker.effort } : {}),
+    ...(result.risk !== undefined ? { risk: result.risk } : {}),
+    conflict: result.conflict ?? false,
+    ...(result.commands_run !== undefined ? { commands_run: result.commands_run } : {}),
     exit_class: result.exit_class,
     verifier_result: result.verifier?.result ?? null,
     first_pass: result.verifier?.result === 'PASSED',

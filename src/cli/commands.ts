@@ -182,6 +182,9 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     model: result.worker.model ?? null,
     verifier: v,
     exit_class: result.exit_class,
+    conflict: result.conflict ?? false,
+    risk: result.risk ?? null,
+    commands_run: result.commands_run ?? null,
     tokens: result.tokens ?? null,
     cost_usd: result.cost_usd ?? null,
     executor_switches: result.executor_switches ?? 0,
@@ -196,6 +199,13 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
   const v = result.verifier?.result ?? 'FAILED';
   const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
   const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
+  if (result.conflict === true || result.exit_class === 'contract_conflict') {
+    const report = result.delivery?.path ?? `.router/tasks/${id}/runs/${result.run_id}/DELIVERY.md`;
+    const recoverable = result.uncommitted_changes
+      ? `\nNOTE: the uncommitted worktree remains available at .router/worktrees/${id}/${result.run_id}`
+      : '';
+    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing committed or verified; the plan needs revising; report: ${report}${recoverable}`;
+  }
   const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
   const warn = result.model_mismatch
     ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
@@ -210,7 +220,11 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
     ? `\nNOTE: this run did not commit, but its worktree still holds changes -- the work is ` +
       `recoverable: git -C .router/worktrees/${id}/${result.run_id} status`
     : '';
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}`;
+  const raisedRisk =
+    result.risk_raised_by && result.risk_raised_by.length > 0
+      ? `\nRISK RAISED to ${result.risk}: ${result.risk_raised_by.join(', ')}`
+      : '';
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}${raisedRisk}`;
 }
 
 // Resume the prior dispatch's executor session with feedback (context retained) instead
@@ -253,6 +267,10 @@ const land: Handler = (ctx) => {
     const result = store.readResult(paths, id, RUN);
     const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(', ')}` : '';
     if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
+    if (result.conflict === true || result.exit_class === 'contract_conflict') {
+      const report = result.delivery?.path ?? paths.delivery(id, RUN);
+      throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
+    }
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
     const branch = runBranch(id, RUN);
     try {

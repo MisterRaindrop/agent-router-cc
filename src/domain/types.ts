@@ -7,6 +7,7 @@
 // env_error is special: it does NOT count as a real attempt.
 export type ExitClass =
   | 'ok'
+  | 'contract_conflict'
   | 'task_failed'
   | 'timeout'
   | 'stalled'
@@ -156,6 +157,10 @@ export interface RunResult {
   worker: { kind: WorkerKind; model?: string; effort?: string };
   executor_switches?: number; // times we fell back to the next executor (quota/env)
   model_mismatch?: boolean; // executor rejected the configured slug -> config likely stale
+  conflict?: boolean; // executor found that the code contradicts the frozen contract
+  risk?: 'low' | 'normal' | 'high'; // effective risk after deterministic escalation
+  risk_raised_by?: string[];
+  commands_run?: number; // executor command_execution events (codex; absent when unavailable)
   tokens?: { input: number; output: number };
   cost_usd?: number;
   verifier?: VerifierReport;
@@ -189,6 +194,11 @@ export interface MetricRecord {
   attempt_number: number;
   model: string | null;
   executor?: WorkerKind | null; // which executor produced this run
+  tier?: ModelTier;
+  effort?: string;
+  risk?: 'low' | 'normal' | 'high';
+  conflict?: boolean;
+  commands_run?: number;
   exit_class: ExitClass;
   verifier_result: 'PASSED' | 'FAILED' | null;
   first_pass: boolean;
