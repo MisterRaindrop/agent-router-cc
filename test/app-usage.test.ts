@@ -58,8 +58,21 @@ test('parseClaudeLog reads usage + total_cost_usd from the result event', () => 
   const log =
     '{"type":"assistant"}\n{"type":"result","subtype":"success","total_cost_usd":0.02,"usage":{"input_tokens":800,"output_tokens":60,"cache_read_input_tokens":100}}\n';
   const r = parseClaudeLog(log);
-  assert.deepEqual(r.usage, { input: 800, output: 60, cached: 100 });
+  // Input is the INCLUSIVE total (800 + 100), matching what codex already reports, so the two
+  // executors' token counts mean the same thing when usage compares them.
+  assert.deepEqual(r.usage, { input: 900, output: 60, cached: 100 });
   assert.equal(r.costUsd, 0.02);
+});
+
+// Claude splits input three ways and cache *creation* was being dropped entirely -- a run that
+// had just read a repository reported 9 input tokens, which understates every token-derived
+// saving attributed to a claude executor.
+test('parseClaudeLog counts cache creation as input too', () => {
+  const log =
+    '{"type":"result","subtype":"success","usage":{"input_tokens":9,"output_tokens":760,' +
+    '"cache_read_input_tokens":120000,"cache_creation_input_tokens":30000}}\n';
+  const r = parseClaudeLog(log);
+  assert.deepEqual(r.usage, { input: 150009, output: 760, cached: 120000 });
 });
 
 test('parseClaudeLog reads final assistant text from stream-json events', () => {

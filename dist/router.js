@@ -10403,7 +10403,11 @@ function parseClaudeLog(logText) {
     }
     const rec = o;
     if (rec.type === "result" && rec.usage) {
-      usage2 = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      usage2 = {
+        input: num(rec.usage.input_tokens) + num(rec.usage.cache_read_input_tokens) + num(rec.usage.cache_creation_input_tokens),
+        output: num(rec.usage.output_tokens),
+        cached: num(rec.usage.cache_read_input_tokens)
+      };
       if (typeof rec.total_cost_usd === "number") costUsd = rec.total_cost_usd;
     }
     if (model === null && typeof rec.model === "string" && rec.model !== "") model = rec.model;
@@ -10996,6 +11000,15 @@ function pass(id, detail) {
 function verifyTask(req) {
   const checks = [];
   const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  if (req.mode === "probe") {
+    if (changes.length === 0) {
+      checks.push(pass("probe_no_diff"));
+      return { result: "PASSED", checks };
+    }
+    const files = `${changes.length} file${changes.length === 1 ? "" : "s"}`;
+    checks.push(fail("probe_no_diff", `probe wrote ${files}; expected no diff`));
+    return { result: "FAILED", checks };
+  }
   const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
   if (patch.trim() === "") {
     checks.push(fail("diff_applies", "diff is empty - executor produced no committed change"));
@@ -11122,6 +11135,7 @@ function prepareRun(deps, id) {
 async function runPrepared(deps, prep) {
   const { paths } = deps;
   const { id, task, contractMdText, worktreeDir, baseSha, workers, logPath } = prep;
+  if (task.mode === "probe") rmSync2(paths.diffPatch(id, RUN), { force: true });
   const verifyEnv = buildWorkerEnv(process.env);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
@@ -11194,14 +11208,17 @@ async function runPrepared(deps, prep) {
   if (conflict) rmSync2(paths.diffPatch(id, RUN), { force: true });
   if (exitClass !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
   if (exitClass === "ok") {
-    const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync2(paths.diffPatch(id, RUN), patch);
-    result2.diff_sha = createHash("sha256").update(patch).digest("hex");
+    if (task.mode !== "probe") {
+      const patch = rawDiff(worktreeDir, baseSha, "HEAD");
+      writeFileSync2(paths.diffPatch(id, RUN), patch);
+      result2.diff_sha = createHash("sha256").update(patch).digest("hex");
+    }
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: "HEAD",
+      ...task.mode !== void 0 ? { mode: task.mode } : {},
       allowedGlobs: task.allowed_globs,
       ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
       ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
@@ -12599,6 +12616,7 @@ async function runQuery(paths, cfg, sub, args) {
 
 // src/app/usageReport.ts
 var DEFAULT_DAYS = 7;
+var ROUTING_MINIMUM_RUNS = 5;
 function buildUsageReport(paths, nowIso, opts = {}) {
   const records = readJsonl(paths.metrics);
   const windowDays = opts.all ? null : DEFAULT_DAYS;
@@ -12635,8 +12653,14 @@ function buildUsageReport(paths, nowIso, opts = {}) {
       costUsd,
       costSource,
       verifier: r.verifier_result,
-      attemptNumber: r.attempt_number,
+      attemptNumber: r.attempt_number ?? null,
       envError: r.env_error,
+      tier: r.tier ?? null,
+      effort: r.effort ?? null,
+      firstPass: typeof r.first_pass === "boolean" ? r.first_pass : null,
+      conflict: typeof r.conflict === "boolean" ? r.conflict : null,
+      inputTokensRecorded: r.tokens_input,
+      wallSecondsRecorded: typeof r.wall_seconds === "number" ? r.wall_seconds : null,
       savingsUsd,
       optimized: savingsUsd === null ? null : savingsUsd > 0
     });
@@ -12715,6 +12739,75 @@ function buildUsageReport(paths, nowIso, opts = {}) {
     baselineModel: STRONG_BASELINE_MODEL,
     suggestions: deriveSuggestions(rows)
   };
+}
+function buildRoutingReport(rows) {
+  const grouped = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const key = JSON.stringify([row.executor, row.tier, row.effort]);
+    const group = grouped.get(key);
+    if (group) group.push(row);
+    else grouped.set(key, [row]);
+  }
+  const groups = [...grouped.values()].map((group) => {
+    const firstPass = group.flatMap((row) => typeof row.firstPass === "boolean" ? [row.firstPass] : []);
+    const reDispatch = group.flatMap((row) => row.attemptNumber == null ? [] : [row.attemptNumber > 1]);
+    const conflict = group.flatMap((row) => typeof row.conflict === "boolean" ? [row.conflict] : []);
+    const wall = group.flatMap((row) => row.wallSecondsRecorded == null ? [] : [row.wallSecondsRecorded]);
+    const input = group.flatMap((row) => row.inputTokensRecorded == null ? [] : [row.inputTokensRecorded]);
+    const insufficientData = group.length < ROUTING_MINIMUM_RUNS;
+    return {
+      executor: group[0].executor,
+      tier: group[0].tier ?? null,
+      effort: group[0].effort ?? null,
+      runs: group.length,
+      insufficientData,
+      firstPassRate: insufficientData ? null : rate(firstPass),
+      firstPassSamples: insufficientData ? 0 : firstPass.length,
+      reDispatchRate: insufficientData ? null : rate(reDispatch),
+      reDispatchSamples: insufficientData ? 0 : reDispatch.length,
+      conflictRate: insufficientData ? null : rate(conflict),
+      conflictSamples: insufficientData ? 0 : conflict.length,
+      medianWallSeconds: insufficientData ? null : median(wall),
+      medianWallSamples: insufficientData ? 0 : wall.length,
+      medianInputTokens: insufficientData ? null : median(input),
+      medianInputSamples: insufficientData ? 0 : input.length
+    };
+  });
+  groups.sort((a, b) => a.executor.localeCompare(b.executor) || String(a.tier).localeCompare(String(b.tier)) || String(a.effort).localeCompare(String(b.effort)));
+  return { groups, suggestions: deriveRoutingSuggestions(groups) };
+}
+function rate(values) {
+  return values.length === 0 ? null : values.filter(Boolean).length / values.length;
+}
+function median(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+function isAboveMedium(effort) {
+  return typeof effort === "string" && ["high", "xhigh", "max", "ultra"].includes(effort.toLowerCase());
+}
+function describeGroup(group) {
+  return `${group.executor}/${group.tier ?? "unrecorded tier"}/${group.effort ?? "unrecorded effort"}`;
+}
+function percent(value) {
+  return `${(value * 100).toFixed(0)}%`;
+}
+function deriveRoutingSuggestions(groups) {
+  const suggestions = [];
+  for (const group of groups) {
+    if (group.insufficientData || group.firstPassRate === null || !isAboveMedium(group.effort)) continue;
+    if (group.firstPassRate >= 0.9) {
+      suggestions.push(`${describeGroup(group)}: first-pass rate ${percent(group.firstPassRate)} (n=${group.firstPassSamples}) at ${group.effort} effort; it may be worth lowering effort.`);
+    }
+  }
+  for (const group of groups) {
+    if (suggestions.length >= 3) break;
+    if (group.insufficientData || group.reDispatchRate === null || group.reDispatchRate < 0.3) continue;
+    suggestions.push(`${describeGroup(group)}: re-dispatch rate ${percent(group.reDispatchRate)} (n=${group.reDispatchSamples}); it may be worth raising the tier or effort.`);
+  }
+  return suggestions.slice(0, 3);
 }
 function deriveSuggestions(rows) {
   if (rows.length === 0) return [];
@@ -12845,6 +12938,42 @@ No dispatches recorded yet.`;
       );
       lines.push(`    execution wall: ${fmtWall(plan.wallSecondsExecutors)}`);
     }
+  }
+  return lines.join("\n");
+}
+function routingLabel(value, missing) {
+  return value ?? missing;
+}
+function routingRate(label, value, samples) {
+  return value === null ? `${label} unavailable` : `${label} ${percent(value)} (n=${samples})`;
+}
+function routingMedian(label, value, samples, format) {
+  return value === null ? `${label} unavailable` : `${label} ${format(value)} (n=${samples})`;
+}
+function renderRouting(report) {
+  const lines = ["Router routing evidence"];
+  if (report.groups.length === 0) {
+    lines.push("Nothing meets the threshold.");
+    return lines.join("\n");
+  }
+  lines.push("executor/tier/effort                 runs  first pass             re-dispatch            conflict               median wall          median input");
+  for (const group of report.groups) {
+    const label = `${routingLabel(group.executor, "unknown")}/${routingLabel(group.tier, "unrecorded")}/${routingLabel(group.effort, "unrecorded")}`;
+    if (group.insufficientData) {
+      lines.push(`${pad(label, 36)}${pad(`insufficient data (n=${group.runs})`, 0)}`);
+      continue;
+    }
+    lines.push(
+      pad(label, 36) + pad(String(group.runs), 6) + pad(routingRate("first-pass", group.firstPassRate, group.firstPassSamples), 23) + pad(routingRate("re-dispatch", group.reDispatchRate, group.reDispatchSamples), 23) + pad(routingRate("conflict", group.conflictRate, group.conflictSamples), 23) + pad(routingMedian("wall", group.medianWallSeconds, group.medianWallSamples, fmtWall), 21) + routingMedian("input", group.medianInputTokens, group.medianInputSamples, fmtTokens)
+    );
+  }
+  if (!report.groups.some((group) => !group.insufficientData)) {
+    lines.push("Nothing meets the threshold.");
+    return lines.join("\n");
+  }
+  if (report.suggestions.length > 0) {
+    lines.push("Suggestions:");
+    for (const suggestion of report.suggestions) lines.push(`  \xB7 ${suggestion}`);
   }
   return lines.join("\n");
 }
@@ -13224,6 +13353,11 @@ var usage = (ctx) => {
   const { paths, clock } = depsFor(ctx);
   const all = flagBool(ctx.args.flags, "all");
   const report = buildUsageReport(paths, clock.nowIso(), { all });
+  if (flagBool(ctx.args.flags, "routing")) {
+    const routing = buildRoutingReport(report.rows);
+    emit(ctx.json, { ok: true, routing }, () => renderRouting(routing));
+    return 0;
+  }
   emit(ctx.json, { ok: true, usage: report }, () => {
     const body = renderUsage(report);
     return flagBool(ctx.args.flags, "explain-savings") ? `${body}
@@ -13455,7 +13589,7 @@ Usage: router <command> [options]
   gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
-  usage [--all]          token/cost usage across recent dispatches (last 7 days)
+  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches
   orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript
   models                 print the resolved model-tier config (default + .router/models.yaml)
   symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>
@@ -13463,7 +13597,7 @@ Usage: router <command> [options]
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --all, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run
+Flags: --json, --all, --routing, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 
