@@ -6638,7 +6638,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync12, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, writeFileSync as writeFileSync5 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
@@ -9850,6 +9850,7 @@ function routerPaths(routerDir) {
     taskDir,
     taskYaml: (id) => join2(taskDir(id), "task.yaml"),
     contractMd: (id) => join2(taskDir(id), "TASK_CONTRACT.md"),
+    taskContext: (id) => join2(taskDir(id), "TASK_CONTEXT.md"),
     runsDir: (id) => join2(taskDir(id), "runs"),
     heartbeat: (id, run) => join2(runDir(id, run), "heartbeat"),
     resultJson: (id, run) => join2(runDir(id, run), "result.json"),
@@ -9917,8 +9918,8 @@ function appendMetric(p, record) {
 }
 
 // src/app/dispatch.ts
-import { createHash } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync6, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { createHash as createHash2 } from "node:crypto";
+import { existsSync as existsSync7, readFileSync as readFileSync7, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join7 } from "node:path";
 
@@ -10605,9 +10606,18 @@ function buildPrompt(ctx) {
   const gate2 = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(" "));
   const gateStep = gate2.length > 0 ? `run the project gate yourself (${gate2.map((g) => `\`${g}\``).join(", ")}), read what it reports and fix until it passes` : `note that NO gate runs here -- the orchestrator runs the real build and tests later in its own environment, so write the tests but do not try to build this project`;
   const planRevision = ctx.task.plan_revision ?? "none";
+  const taskContext = ctx.taskContext == null ? "" : `--- TASK CONTEXT (navigation, NOT the source of truth) ---
+` + ctx.taskContext.text + (ctx.taskContext.text.endsWith("\n") ? "" : "\n") + `--- end task context ---
+This summary was written from an earlier reading of the repository. The contract above
+outranks it, and the code outranks them both. Before you change anything: locate the files and
+symbols it points at, read the bounded slices you actually need, and confirm the assumptions
+you are about to rely on. If the code contradicts this summary or the contract, do NOT adapt
+the plan yourself -- report CONTRACT_CONFLICT with the evidence you found.
+
+`;
   return `${ctx.contractMdText.trim()}
 
-You own this task start to finish: read the code you are about to change, decide your own
+` + taskContext + `You own this task start to finish: read the code you are about to change, decide your own
 internal steps, implement it, write tests for what you changed, ${gateStep}, then check your
 own diff against the scope below before finishing.
 
@@ -10851,6 +10861,66 @@ function loadTask(paths, id) {
     throw new TaskContractError(`invalid task.yaml: ${r.errors.join("; ")}`);
   }
   return { task: r.value, taskYamlText, contractMdText };
+}
+
+// src/app/taskContext.ts
+import { createHash } from "node:crypto";
+import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
+var TASK_CONTEXT_SOFT_LIMIT = 8e3;
+function contextError(taskId, message) {
+  return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
+}
+function loadTaskContext(paths, task) {
+  const path = paths.taskContext(task.id);
+  if (!existsSync6(path)) return null;
+  const text2 = readFileSync6(path, "utf8");
+  const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
+  if (frontmatter === null) {
+    throw contextError(task.id, "missing YAML frontmatter (expected a leading --- fenced block)");
+  }
+  let parsed;
+  try {
+    parsed = load(frontmatter[1], { schema: JSON_SCHEMA });
+  } catch (err2) {
+    throw contextError(task.id, `frontmatter parse error: ${err2.message}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw contextError(task.id, "frontmatter must be a YAML mapping");
+  }
+  const metadata = parsed;
+  for (const key of ["task_id", "base_sha"]) {
+    if (!Object.prototype.hasOwnProperty.call(metadata, key)) {
+      throw contextError(task.id, `missing required frontmatter key "${key}"`);
+    }
+    if (typeof metadata[key] !== "string" || metadata[key].length === 0) {
+      throw contextError(task.id, `frontmatter key "${key}" must be a non-empty string`);
+    }
+  }
+  const contextTaskId = metadata.task_id;
+  const baseSha = metadata.base_sha;
+  if (contextTaskId !== task.id) {
+    throw contextError(task.id, `task_id mismatch: expected "${task.id}", got "${contextTaskId}"`);
+  }
+  let planRevision;
+  if (Object.prototype.hasOwnProperty.call(metadata, "plan_revision")) {
+    if (typeof metadata.plan_revision !== "string" || metadata.plan_revision.length === 0) {
+      throw contextError(task.id, 'frontmatter key "plan_revision" must be a non-empty string when present');
+    }
+    planRevision = metadata.plan_revision;
+    if (task.plan_revision !== void 0 && planRevision !== task.plan_revision) {
+      throw contextError(
+        task.id,
+        `plan_revision mismatch: task declares "${task.plan_revision}", context declares "${planRevision}"`
+      );
+    }
+  }
+  return {
+    text: text2,
+    base_sha: baseSha,
+    ...planRevision !== void 0 ? { plan_revision: planRevision } : {},
+    chars: text2.length,
+    sha256: createHash("sha256").update(text2).digest("hex")
+  };
 }
 
 // src/app/verifier.ts
@@ -11120,6 +11190,12 @@ function prepareRun(deps, id) {
   const { paths } = deps;
   const baseSha = resolveCommit(paths.repoRoot, "HEAD");
   const { task, contractMdText } = loadTask(paths, id);
+  const context = loadTaskContext(paths, task);
+  if (context !== null && context.base_sha !== baseSha) {
+    throw new Error(
+      `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", but dispatch base is "${baseSha}"; regenerate the task context for this revision`
+    );
+  }
   const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
   const worktreeDir = paths.worktree(id, RUN);
   const branch = runBranch(id, RUN);
@@ -11133,13 +11209,14 @@ function prepareRun(deps, id) {
     worktreeDir,
     branch,
     baseSha,
+    context,
     workers,
     logPath: paths.workerLog(id, RUN)
   };
 }
 async function runPrepared(deps, prep) {
   const { paths } = deps;
-  const { id, task, contractMdText, worktreeDir, baseSha, workers, logPath } = prep;
+  const { id, task, contractMdText, worktreeDir, baseSha, context, workers, logPath } = prep;
   if (task.mode === "probe") rmSync2(paths.diffPatch(id, RUN), { force: true });
   const verifyEnv = buildWorkerEnv(process.env);
   const { order } = orderByQuota(paths, workers);
@@ -11153,7 +11230,13 @@ async function runPrepared(deps, prep) {
     const launcher2 = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const o = await superviseWorker({
-      argv: launcher2.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
+      argv: launcher2.buildArgv({
+        task,
+        worktreeDir,
+        contractMdText,
+        planExists: false,
+        taskContext: context
+      }),
       cwd: worktreeDir,
       env: executorEnv,
       logPath,
@@ -11200,6 +11283,7 @@ async function runPrepared(deps, prep) {
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
     worker: workerRecord(used, model),
     base_sha: baseSha,
+    ...context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {},
     ...switches > 0 ? { executor_switches: switches } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
     ...conflict ? { conflict: true } : {},
@@ -11216,7 +11300,7 @@ async function runPrepared(deps, prep) {
     if (task.mode !== "probe") {
       const patch = rawDiff(worktreeDir, baseSha, "HEAD");
       writeFileSync2(paths.diffPatch(id, RUN), patch);
-      result2.diff_sha = createHash("sha256").update(patch).digest("hex");
+      result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     }
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
@@ -11233,7 +11317,7 @@ async function runPrepared(deps, prep) {
     attachEffectiveRisk(result2, task, worktreeDir, baseSha);
   }
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2, task.plan_id, task.tier);
+  appendMetric2(deps, result2, task, context);
   return result2;
 }
 async function dispatchTask(deps, id) {
@@ -11279,7 +11363,7 @@ async function resumeTask(deps, id, feedback) {
   const priorSession = prev.session_id ?? null;
   if (!priorSession) throw new Error(`prior run for ${id} has no session id; resume unavailable -- re-dispatch instead`);
   const worktreeDir = paths.worktree(id, RUN);
-  if (!existsSync6(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
+  if (!existsSync7(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
   const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, "HEAD");
   const { task } = loadTask(paths, id);
   const used = {
@@ -11342,7 +11426,7 @@ async function resumeTask(deps, id, feedback) {
     commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
     writeFileSync2(paths.diffPatch(id, RUN), patch);
-    result2.diff_sha = createHash("sha256").update(patch).digest("hex");
+    result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
@@ -11357,12 +11441,12 @@ async function resumeTask(deps, id, feedback) {
     attachEffectiveRisk(result2, task, worktreeDir, baseSha);
   }
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2, task.plan_id, task.tier);
+  appendMetric2(deps, result2, task, null);
   return result2;
 }
 function safeRead(path) {
   try {
-    return readFileSync6(path, "utf8");
+    return readFileSync7(path, "utf8");
   } catch {
     return "";
   }
@@ -11412,17 +11496,24 @@ function attachEffectiveRisk(result2, task, worktreeDir, baseSha) {
   result2.risk = assessed.risk;
   result2.risk_raised_by = assessed.raisedBy;
 }
-function appendMetric2(deps, result2, planId, tier) {
+function appendMetric2(deps, result2, task, context) {
   const metric = {
     ts: deps.clock.nowIso(),
     task_id: result2.task_id,
-    ...planId !== void 0 ? { plan_id: planId } : {},
+    ...task.plan_id !== void 0 ? { plan_id: task.plan_id } : {},
+    ...task.plan_revision !== void 0 ? { plan_revision: task.plan_revision } : {},
+    task_context_present: context !== null,
+    task_context_chars: context?.chars ?? 0,
+    ...context !== null ? {
+      task_context_sha256: context.sha256,
+      context_base_sha: context.base_sha
+    } : {},
     role: "executor",
     run_id: result2.run_id,
     attempt_number: 1,
     model: result2.worker.model ?? null,
     executor: result2.worker.kind,
-    ...tier !== void 0 ? { tier } : {},
+    ...task.tier !== void 0 ? { tier: task.tier } : {},
     ...result2.worker.effort !== void 0 ? { effort: result2.worker.effort } : {},
     ...result2.risk !== void 0 ? { risk: result2.risk } : {},
     conflict: result2.conflict ?? false,
@@ -11441,7 +11532,7 @@ function appendMetric2(deps, result2, planId, tier) {
 }
 
 // src/app/gateConfig.ts
-import { lstatSync, readFileSync as readFileSync7 } from "node:fs";
+import { lstatSync, readFileSync as readFileSync8 } from "node:fs";
 import { join as join8 } from "node:path";
 var KEYS = /* @__PURE__ */ new Set([
   "mode",
@@ -11490,7 +11581,7 @@ function loadGateConfig(paths) {
   const path = gateYamlPath(paths);
   let text2;
   try {
-    text2 = readFileSync7(path, "utf8");
+    text2 = readFileSync8(path, "utf8");
   } catch (err2) {
     if (err2.code === "ENOENT") {
       try {
@@ -11569,7 +11660,7 @@ import {
   fsyncSync as fsyncSync2,
   ftruncateSync,
   openSync as openSync3,
-  readFileSync as readFileSync8,
+  readFileSync as readFileSync9,
   statSync as statSync4,
   unlinkSync as unlinkSync2,
   writeSync as writeSync2
@@ -11608,7 +11699,7 @@ function parseStored(text2) {
 function readForAcquire(path) {
   let text2;
   try {
-    text2 = readFileSync8(path, "utf8");
+    text2 = readFileSync9(path, "utf8");
   } catch (err2) {
     if (errorCode(err2) === "ENOENT") return { kind: "missing" };
     throw new Error(`cannot read lock ${path}: ${err2.message}`);
@@ -11619,7 +11710,7 @@ function readForAcquire(path) {
 }
 function readLock(path) {
   try {
-    const parsed = parseStored(readFileSync8(path, "utf8"));
+    const parsed = parseStored(readFileSync9(path, "utf8"));
     return parsed?.info ?? null;
   } catch {
     return null;
@@ -11789,7 +11880,7 @@ function acquireLock(path, opts) {
           if (!sameIdentity(identity(heartbeatFd), acquiredIdentity)) {
             throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
           }
-          const parsed = parseStored(readFileSync8(heartbeatFd, "utf8"));
+          const parsed = parseStored(readFileSync9(heartbeatFd, "utf8"));
           if (parsed === null || parsed.stored.ownerToken !== token) {
             throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
           }
@@ -11803,7 +11894,7 @@ function acquireLock(path, opts) {
         if (released) return;
         let contents;
         try {
-          contents = readFileSync8(path, "utf8");
+          contents = readFileSync9(path, "utf8");
         } catch (err2) {
           if (errorCode(err2) === "ENOENT") {
             released = true;
@@ -12191,7 +12282,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync11, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync12, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
 import { resolve as resolve3 } from "node:path";
 
 // src/core/symbols.ts
@@ -12304,12 +12395,12 @@ function renderMethods(r) {
 }
 
 // src/io/symbolCache.ts
-import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync3, readFileSync as readFileSync10, statSync as statSync6 } from "node:fs";
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync8, readdirSync as readdirSync3, readFileSync as readFileSync11, statSync as statSync6 } from "node:fs";
 import { relative, resolve as resolve2 } from "node:path";
 
 // src/io/treeSitter.ts
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync10 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join10 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12338,9 +12429,9 @@ async function getParser() {
     ready = (async () => {
       const rt = locateRuntime();
       const mod = await import(rt.moduleHref);
-      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync9(rt.tsWasm)) });
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync10(rt.tsWasm)) });
       const parser = new mod.Parser();
-      const cpp = await mod.Language.load(new Uint8Array(readFileSync9(rt.cppWasm)));
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync10(rt.cppWasm)));
       parser.setLanguage(cpp);
       return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
     })();
@@ -12421,7 +12512,7 @@ var SRC_RE = /\.(cpp|h|hpp|cc|cxx|hh)$/;
 var SKIP_DIR = /* @__PURE__ */ new Set([".git", "node_modules", ".router", "dist"]);
 function hashRoots(roots) {
   const norm = roots.map((r) => resolve2(r)).sort();
-  return createHash2("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
+  return createHash3("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
 }
 function walkFiles(root, acc) {
   let st;
@@ -12442,7 +12533,7 @@ function walkFiles(root, acc) {
 }
 function loadRaw(cachePath) {
   try {
-    return JSON.parse(readFileSync10(cachePath, "utf8"));
+    return JSON.parse(readFileSync11(cachePath, "utf8"));
   } catch {
     return null;
   }
@@ -12470,7 +12561,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
       symbols += cached.symbols.length;
       continue;
     }
-    const src = readFileSync10(abs, "utf8");
+    const src = readFileSync11(abs, "utf8");
     bytes += src.length;
     if (bytes > limits.maxBytes) {
       return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
@@ -12507,14 +12598,14 @@ async function refreshIndex(cachePath, repoRoot) {
       out2.push(f);
       continue;
     }
-    const parsed = await parseSymbols(readFileSync10(abs, "utf8"));
+    const parsed = await parseSymbols(readFileSync11(abs, "utf8"));
     grammar = parsed.grammar;
     out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
     changed = true;
   }
   const refreshed = { grammar, files: out2 };
-  if (changed && existsSync7(cachePath)) writeJsonAtomic(cachePath, refreshed);
+  if (changed && existsSync8(cachePath)) writeJsonAtomic(cachePath, refreshed);
   return { index: refreshed, reparsed };
 }
 
@@ -12528,7 +12619,7 @@ function loadCodeIntelConfig(paths) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
   let raw;
   try {
-    raw = load(readFileSync11(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync12(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -12578,12 +12669,12 @@ async function runQuery(paths, cfg, sub, args) {
   let cache2;
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
-  } else if (existsSync8(paths.symbolLatest)) {
-    cache2 = paths.symbolCache(readFileSync11(paths.symbolLatest, "utf8").trim());
+  } else if (existsSync9(paths.symbolLatest)) {
+    cache2 = paths.symbolCache(readFileSync12(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
-  if (!existsSync8(cache2)) {
+  if (!existsSync9(cache2)) {
     return { degraded: true, reason: "no symbol index yet; run `router symbol index [dirs]` first; using rg" };
   }
   let index;
@@ -13034,10 +13125,10 @@ function depsFor(ctx) {
   const rd = found ?? join11(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync9(d)) mkdirSync5(d, { recursive: true });
+    if (!existsSync10(d)) mkdirSync5(d, { recursive: true });
   }
   const gi = join11(paths.root, ".gitignore");
-  if (!existsSync9(gi)) writeFileSync5(gi, "*\n");
+  if (!existsSync10(gi)) writeFileSync5(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -13128,8 +13219,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync5(paths.taskDir(id), { recursive: true });
-  if (!existsSync9(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync9(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync10(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync10(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -13317,7 +13408,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync12(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync13(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -13331,22 +13422,30 @@ ${tail}`;
 };
 var list = (ctx) => {
   const { paths } = depsFor(ctx);
-  const ids = existsSync9(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync10(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync12(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync13(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
     const res = readResult(paths, id, RUN3);
     const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
-    const worktree = existsSync9(paths.worktree(id, RUN3));
-    return { id, title, status, worktree };
+    const worktree = existsSync10(paths.worktree(id, RUN3));
+    const risk = res?.risk ?? "-";
+    const report = res?.delivery ? "yes" : "-";
+    return { id, title, status, worktree, risk, report };
   });
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return "No tasks in .router/tasks.";
-    const lines = [`Tasks (${rows.length}):`, pad2("id", 22) + pad2("status", 10) + pad2("worktree", 10) + "title"];
-    for (const r of rows) lines.push(pad2(r.id, 22) + pad2(String(r.status), 10) + pad2(r.worktree ? "present" : "-", 10) + r.title);
+    const lines = [
+      `Tasks (${rows.length}):`,
+      pad2("id", 22) + pad2("status", 10) + pad2("worktree", 10) + pad2("risk", 10) + pad2("report", 10) + "title"
+    ];
+    for (const r of rows)
+      lines.push(
+        pad2(r.id, 22) + pad2(String(r.status), 10) + pad2(r.worktree ? "present" : "-", 10) + pad2(r.risk, 10) + pad2(r.report, 10) + r.title
+      );
     const leftover = rows.filter((r) => r.worktree).length;
     if (leftover > 0)
       lines.push(`
@@ -13431,9 +13530,9 @@ var setupStatusline = (ctx) => {
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync9(settingsPath)) {
+  if (existsSync10(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync12(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync13(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }
@@ -13446,7 +13545,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync9(statuslinePath);
+  const missing = !existsSync10(statuslinePath);
   emit(
     ctx.json,
     {
@@ -13479,7 +13578,7 @@ var models = (ctx) => {
   emit(ctx.json, { ok: true, models: cfg }, () => {
     const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
     const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
-    const src = existsSync9(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    const src = existsSync10(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
     return `model tiers (${src}):
 ${tier("codex")}
 ${tier("claude")}
@@ -13541,7 +13640,7 @@ var doctor = async (ctx) => {
   } catch (e) {
     wasmDetail = e.message;
   }
-  const cacheWritable = existsSync9(paths.root);
+  const cacheWritable = existsSync10(paths.root);
   emit(
     ctx.json,
     {

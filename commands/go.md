@@ -83,6 +83,16 @@ Therefore:
    risk `Low | Normal | High` per `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`; when
    unsure, escalate -- never downgrade a tier to justify fewer checks.
 
+   **Do not write a `TASK_CONTEXT.md` navigation summary by default.** The mechanism exists
+   (optional, version-bound, refused when stale), but it was measured on a real A/B -- the same
+   contract dispatched twice, once with a summary -- and the summary cost **21% more executor
+   input** (474.7k vs 392.6k) for identical quality and the same amount of exploration. The
+   reason is structural: an executor's input is re-sent every turn, so anything added to its
+   prompt is paid on *every* turn and only repays itself by removing turns. Reach for one only
+   where exploration genuinely dominates -- a very large repository, entry points that are hard
+   to find -- and measure it again there. **When two tasks would want the same summary, merge
+   them into one package instead**: that is cheaper than writing the summary, and always was.
+
    **The deterministic gate (`verify`).** Where the real build/tests can run is a property of
    the project, not of the task, so decide it once and **check it empirically once**: if a
    fast self-contained gate runs inside a run worktree (`.router/worktrees/<id>/<run>` sits

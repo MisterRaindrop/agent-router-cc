@@ -150,6 +150,11 @@ run" is useful; a claimed pass that never ran is corrosive.
 - **Wanting to reuse a session across tasks is a symptom of splitting too finely.** If the next
   task is the same area, the same base, and has no dependency, it should have been part of the
   same package. Merge them instead.
+- A `TASK_CONTEXT.md` navigation summary is **available but not the default**. Measured on a
+  real A/B (same contract, dispatched twice): it cost **21% more executor input** for identical
+  quality and the same exploration, because an executor's input is re-sent every turn -- so
+  anything in its prompt is paid every turn and only repays by removing turns. Use it only
+  where exploration genuinely dominates, and measure again there.
 - Warm context is carried by **artifacts, not sessions**: the symbol index (`/router:symbol`) gives
   a fresh session the same repository knowledge without inheriting stale beliefs, and a probe's
   findings enter the next contract as text.
