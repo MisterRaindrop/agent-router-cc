@@ -24,15 +24,20 @@ const TASK: TaskYaml = {
   verify: [['npm', 'run', 'check']],
 };
 
-function prompt(task: TaskYaml): string {
+function prompt(task: TaskYaml, taskContext?: { text: string } | null): string {
   const argv = codexLauncher({ model: 'm', effort: 'high' }).buildArgv({
     task,
     worktreeDir: '/wt',
     contractMdText: '# Contract\nDo the thing.',
     planExists: false,
+    ...(taskContext !== undefined ? { taskContext } : {}),
   });
   return argv[2]!;
 }
+
+test('no task context preserves the existing prompt byte for byte', () => {
+  assert.equal(prompt(TASK, null), prompt(TASK));
+});
 
 test('the prompt hands the executor the whole loop and names the gate it must run', () => {
   const p = prompt(TASK);
@@ -40,6 +45,24 @@ test('the prompt hands the executor the whole loop and names the gate it must ru
   assert.match(p, /You own this task start to finish/);
   assert.match(p, /run the project gate yourself \(`npm run check`\)/);
   assert.match(p, /fix until it passes/);
+});
+
+test('task context appears once after the contract with explicit precedence wording', () => {
+  const marker = '# Navigation\nRead src/a.ts.';
+  const p = prompt(TASK, { text: marker });
+  assert.ok(p.indexOf('# Contract') < p.indexOf('--- TASK CONTEXT'));
+  assert.ok(p.indexOf('--- TASK CONTEXT') < p.indexOf('Constraints:'));
+  assert.equal(p.split(marker).length - 1, 1);
+  assert.match(p, /navigation, NOT the source of truth/);
+  assert.match(p, /The contract above\noutranks it, and the code outranks them both/);
+  assert.match(p, /report CONTRACT_CONFLICT with the evidence you found/);
+});
+
+test('task context is never truncated by the prompt builder', () => {
+  const tail = 'END-OF-OVERSIZE-CONTEXT';
+  const text = `${'x'.repeat(8_100)}${tail}`;
+  assert.ok(prompt(TASK, { text }).includes(text));
+  assert.ok(prompt(TASK, { text }).includes(tail));
 });
 
 test('with no verify configured, the prompt says so instead of naming a gate', () => {

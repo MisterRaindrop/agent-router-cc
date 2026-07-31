@@ -3,7 +3,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fx from '../testkit/gitRepo.ts';
@@ -55,6 +56,20 @@ function stageTask(paths: ReturnType<typeof routerPaths>, taskYaml = TASK_YAML):
   mkdirSync(paths.taskDir('t1'), { recursive: true });
   writeFileSync(paths.taskYaml('t1'), taskYaml);
   writeFileSync(paths.contractMd('t1'), CONTRACT);
+}
+
+function stageContext(
+  paths: ReturnType<typeof routerPaths>,
+  baseSha: string,
+  markdown = '# Navigation\nRead src/a.ts.\n',
+  planRevision?: string,
+): string {
+  const text =
+    `---\ntask_id: t1\nbase_sha: ${baseSha}\n` +
+    (planRevision === undefined ? '' : `plan_revision: ${planRevision}\n`) +
+    `---\n${markdown}`;
+  writeFileSync(paths.taskContext('t1'), text);
+  return text;
 }
 
 function stageScopedTask(paths: ReturnType<typeof routerPaths>, id: string): void {
@@ -120,6 +135,90 @@ test('dispatchTask records the task plan ID on its executor metric', async () =>
     assert.equal(metrics.length, 1);
     assert.equal(metrics[0]!.plan_id, 'plan-test-001');
     assert.equal(metrics[0]!.role, 'executor');
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatch records bound task-context metrics and keeps context out of the worktree diff', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const withContext = setup();
+  const withoutContext = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  try {
+    const task = TASK_YAML.replace('id: t1\n', 'id: t1\nplan_revision: rev-1\n');
+    stageTask(withContext.paths, task);
+    stageTask(withoutContext.paths, task);
+    const baseSha = fx.git(withContext.repo, ['rev-parse', 'HEAD']).trim();
+    const contextText = stageContext(withContext.paths, baseSha, '# Navigation\nRead src/a.ts.\n', 'rev-1');
+
+    process.env.ROUTER_CODEX_SESSIONS_DIR = join(withContext.repo, 'no-sessions');
+    await dispatchTask(withContext.deps, 't1');
+    process.env.ROUTER_CODEX_SESSIONS_DIR = join(withoutContext.repo, 'no-sessions');
+    await dispatchTask(withoutContext.deps, 't1');
+
+    const metrics = readJsonl<MetricRecord>(withContext.paths.metrics);
+    assert.equal(metrics.length, 1);
+    assert.equal(metrics[0]!.task_context_present, true);
+    assert.equal(metrics[0]!.task_context_chars, contextText.length);
+    assert.equal(metrics[0]!.task_context_sha256, createHash('sha256').update(contextText).digest('hex'));
+    assert.equal(metrics[0]!.context_base_sha, baseSha);
+    assert.equal(metrics[0]!.plan_revision, 'rev-1');
+
+    assert.equal(
+      readFileSync(withContext.paths.diffPatch('t1', 'run-001'), 'utf8'),
+      readFileSync(withoutContext.paths.diffPatch('t1', 'run-001'), 'utf8'),
+    );
+    assert.equal(existsSync(join(withContext.paths.worktree('t1', 'run-001'), 'TASK_CONTEXT.md')), false);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(withContext.repo);
+    fx.cleanup(withoutContext.repo);
+  }
+});
+
+test('a stale task context fails before a worktree or executor is started', async () => {
+  const { repo, paths, deps } = setup();
+  try {
+    stageTask(paths);
+    stageContext(paths, 'stale-base-sha');
+    await assert.rejects(
+      dispatchTask(deps, 't1'),
+      /base_sha mismatch.*context describes "stale-base-sha".*dispatch base is "[0-9a-f]{40}".*regenerate/s,
+    );
+    assert.equal(existsSync(paths.worktree('t1', 'run-001')), false);
+    assert.equal(existsSync(paths.workerLog('t1', 'run-001')), false);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+test('an oversize task context is flagged on the result and not truncated in preparation', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const baseSha = fx.git(repo, ['rev-parse', 'HEAD']).trim();
+    const tail = 'END-OF-CONTEXT';
+    const contextText = stageContext(paths, baseSha, `${'x'.repeat(8_100)}${tail}`);
+    const prepared = prepareRun(deps, 't1');
+    assert.equal(prepared.context?.text, contextText);
+    assert.ok(prepared.context?.text.endsWith(tail));
+    const result = await runPrepared(deps, prepared);
+    assert.equal(result.context_oversize, true);
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
