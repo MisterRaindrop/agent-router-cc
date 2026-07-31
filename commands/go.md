@@ -54,14 +54,21 @@ Therefore:
 
    then edit `.router/tasks/<id>/task.yaml`:
    - `allowed_globs`: the smallest scope that still covers the whole package.
-   - `tier`: `weak` for mechanical work, `strong` for a package that needs more capability.
-     Router then picks the executor by real quota and the model + reasoning effort from the
-     tier config (`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models` shows it) -- router
-     never judges difficulty itself; that judgment is yours. Tier efforts are matched to the
-     work (mechanical at `medium`, capable at `high`) because effort buys latency on the
-     critical path; escalate only for genuinely high-risk work (concurrency, security, an
-     architectural invariant) with an explicit `worker: { kind, model, effort }` pin, which
-     also overrides the tier.
+   - `tier`: `weak` for mechanical work, `strong` for a package that needs more capability,
+     `critical` for security, concurrency, or an architectural invariant. **Decide the minimum
+     capability the package actually requires**; router then picks the executor by real quota
+     *within* that tier and takes the model + reasoning effort from the tier config
+     (`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models` shows it). Router never judges
+     difficulty itself, and quota **never** demotes a task to a weaker tier. Efforts are
+     matched to the work (mechanical `medium`, capable `high`, `critical` `xhigh`) because
+     effort buys latency on the critical path. An explicit `worker: { kind, model, effort }`
+     pin overrides the tier when a package must run somewhere specific.
+   - `risk`: `low | normal | high` (the vocabulary of
+     `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`) -- it decides how much independent
+     review the package earns, not how capable the executor is. Those are different questions:
+     a mechanical change to an auth path is `weak`/`high`.
+   - `depends_on`: the packages that must land before this one may run. Declaring it is what
+     lets the rest run concurrently with confidence.
    - `max_wall_minutes`: fit the package -- a bigger package needs a bigger budget.
    - `verify`: see **the deterministic gate** below.
    - `plan_id`: **the same short slug on every package of this plan** (e.g. the feature

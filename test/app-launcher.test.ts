@@ -49,6 +49,7 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
     '--verbose',
     '--permission-mode',
     'acceptEdits',
+    '--strict-mcp-config',
     '--tools',
     'Read,Edit,Write',
     '--add-dir',
@@ -56,6 +57,18 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
     '--model',
     'haiku',
   ]);
+});
+
+// Measured, not assumed: without this flag a headless run inherits every MCP server from
+// the user's own session, so a sandboxed executor gets tools far outside its task. Both the
+// fresh-run and the resume invocation need it.
+test('claude launcher never inherits the user MCP servers', () => {
+  assert.ok(claudeLauncher({ model: 'sonnet' }).buildArgv(CTX).includes('--strict-mcp-config'));
+  assert.ok(
+    claudeLauncher({ model: 'sonnet' })
+      .buildResumeArgv('/tmp/router-worktree', 'sess-1', 'fix it')
+      .includes('--strict-mcp-config'),
+  );
 });
 
 test('claude launcher narrowly pre-approves each declared verify command', () => {
@@ -76,6 +89,10 @@ test('claude launcher narrowly pre-approves each declared verify command', () =>
     'Bash(npm run check)',
     'Bash(node --test test/unit.test.ts)',
   ]);
+  // What this buys is measured: pre-approval removes the prompt for the gate. It does NOT
+  // confine Bash to these commands -- a real sonnet run also executed `git diff` unprompted --
+  // so the containment is the worktree cwd and the stripped environment, not this list.
+  assert.ok(!argv.includes('bypassPermissions'));
 });
 
 test('codex launcher passes model + reasoning effort', () => {

@@ -80,12 +80,25 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
 }
 
 // The claude CLI as a headless executor. It gets Read/Edit/Write tools and normal
-// edit-acceptance permissions: reads outside the worktree are denied. A task with a
-// gate also gets only those exact verify commands pre-approved for Bash. The narrow
-// grant lets the executor prove its own work; it does not give the executor a shell.
-// Router still verifies independently afterward. Plan-auth comes from the user's
-// Claude session; ROUTER_CLAUDE_BIN overrides the binary in tests. Cost comes from
-// the stream's total_cost_usd.
+// edit-acceptance permissions: reads outside the worktree are denied. A task that
+// declares a gate additionally gets Bash, with its verify commands named in
+// `--allowedTools` so running the gate needs no prompt.
+//
+// Be precise about what that grant is, because it was measured rather than assumed: in
+// `acceptEdits` mode `--allowedTools` suppresses prompting, it does NOT confine Bash to
+// the listed commands -- a real sonnet run also executed `git diff` unprompted. So Bash
+// here is a shell in the run worktree, bounded by that cwd and by the stripped
+// environment (`io/env.ts`), not by the allow list. Only give a task a `verify` command
+// when that is acceptable; the codex executor's `workspace-write` sandbox is the tighter
+// of the two.
+//
+// `--strict-mcp-config` is deliberate: without it a headless run inherits every MCP
+// server configured for the user's own session (observed: a personal vault and a sync
+// server), which hands a sandboxed executor tools far outside its task.
+//
+// Router still verifies independently afterward. Plan-auth comes from the user's Claude
+// session; ROUTER_CLAUDE_BIN overrides the binary in tests. Cost comes from the stream's
+// total_cost_usd.
 export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): WorkerLauncher {
   const bin = process.env.ROUTER_CLAUDE_BIN ?? 'claude';
   const model = worker.model;
@@ -107,6 +120,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         '--verbose',
         '--permission-mode',
         'acceptEdits',
+        '--strict-mcp-config', // no MCP servers: do not inherit the user's own
         '--tools',
         verifyCommands.length > 0 ? 'Read,Edit,Write,Bash' : 'Read,Edit,Write',
         '--add-dir',
@@ -134,6 +148,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         '--verbose',
         '--permission-mode',
         'acceptEdits',
+        '--strict-mcp-config', // no MCP servers: do not inherit the user's own
         '--tools',
         'Read,Edit,Write',
         '--add-dir',

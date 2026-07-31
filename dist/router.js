@@ -10413,6 +10413,7 @@ function claudeLauncher(worker) {
     ...model !== void 0 ? { model } : {},
     parseLog: parseClaudeLog,
     buildArgv(ctx) {
+      const verifyCommands = (ctx.task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(" "));
       const argv = [
         bin,
         "-p",
@@ -10422,11 +10423,16 @@ function claudeLauncher(worker) {
         "--verbose",
         "--permission-mode",
         "acceptEdits",
+        "--strict-mcp-config",
+        // no MCP servers: do not inherit the user's own
         "--tools",
-        "Read,Edit,Write",
+        verifyCommands.length > 0 ? "Read,Edit,Write,Bash" : "Read,Edit,Write",
         "--add-dir",
         ctx.worktreeDir
       ];
+      if (verifyCommands.length > 0) {
+        argv.push("--allowedTools", ...verifyCommands.map((command) => `Bash(${command})`));
+      }
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
@@ -10446,6 +10452,8 @@ function claudeLauncher(worker) {
         "--verbose",
         "--permission-mode",
         "acceptEdits",
+        "--strict-mcp-config",
+        // no MCP servers: do not inherit the user's own
         "--tools",
         "Read,Edit,Write",
         "--add-dir",
@@ -10517,11 +10525,13 @@ import { join as join5 } from "node:path";
 var DEFAULT_MODEL_CONFIG = {
   codex: {
     weak: { model: "gpt-5.6-terra", effort: "medium" },
-    strong: { model: "gpt-5.6-sol", effort: "high" }
+    strong: { model: "gpt-5.6-sol", effort: "high" },
+    critical: { model: "gpt-5.6-sol", effort: "xhigh" }
   },
   claude: {
     weak: { model: "haiku", effort: "medium" },
-    strong: { model: "opus", effort: "high" }
+    strong: { model: "sonnet", effort: "high" },
+    critical: { model: "opus", effort: "xhigh" }
   },
   // spec/review: strongest + independent (non-Claude first); fall to a same-strength
   // Claude reviewer if codex is unavailable/out of quota. Review runs in the
@@ -10557,7 +10567,7 @@ function loadModelConfig(paths) {
   for (const kind of ["codex", "claude"]) {
     const section = o[kind];
     if (typeof section === "object" && section !== null) {
-      for (const tier of ["weak", "strong"]) {
+      for (const tier of ["weak", "strong", "critical"]) {
         const spec = section[tier];
         if (isSpec(spec)) cfg[kind][tier] = { model: spec.model, ...spec.effort ? { effort: spec.effort } : {} };
       }
@@ -10607,6 +10617,34 @@ var task_contract_schema_default = {
       pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     plan_id: { type: "string" },
+    plan_revision: {
+      type: "string",
+      description: "Revision of the frozen plan this contract belongs to."
+    },
+    depends_on: {
+      type: "array",
+      description: "Task ids that must land before this task may run.",
+      uniqueItems: true,
+      items: {
+        type: "string",
+        minLength: 1,
+        maxLength: 128,
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    invariants: {
+      type: "array",
+      description: "Constraints the task may not change, used to review drift.",
+      items: { type: "string", minLength: 1 }
+    },
+    risk: {
+      description: "Assurance risk using the shared vocabulary.",
+      enum: ["low", "normal", "high"]
+    },
+    mode: {
+      description: "Contract intent; probe is reserved for a future read-only pre-check.",
+      enum: ["implement", "probe"]
+    },
     title: { type: "string", minLength: 1 },
     base_sha: {
       type: ["string", "null"],
@@ -10631,7 +10669,7 @@ var task_contract_schema_default = {
         items: { type: "string", minLength: 1 }
       }
     },
-    tier: { enum: ["weak", "strong"] },
+    tier: { enum: ["weak", "strong", "critical"] },
     worker: {
       type: "object",
       additionalProperties: false,
