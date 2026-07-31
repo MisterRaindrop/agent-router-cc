@@ -18,6 +18,7 @@ const TASK: TaskYaml = {
   title: 'demo task',
   base_sha: null,
   plan_id: 'plan-7',
+  plan_revision: 'rev-3',
   max_wall_minutes: 30,
   allowed_globs: ['src/**'],
   verify: [['npm', 'run', 'check']],
@@ -66,15 +67,15 @@ test('the prompt forbids changing the plan and specifies CONTRACT_CONFLICT', () 
 
 test('the prompt specifies the delivery report block with the task and plan bound in', () => {
   const p = prompt(TASK);
-  assert.match(p, /```router-delivery\ntask: demo\nplan_revision: plan-7\n/);
+  assert.match(p, /```router-delivery\ntask: demo\nplan_revision: rev-3\n/);
   for (const key of ['gate_ran: true|false', 'scope_drift: true|false', 'escalate_review: true|false']) {
     assert.ok(p.includes(key), `delivery header is missing "${key}"`);
   }
 });
 
-test('a task with no plan_id reports plan_revision none rather than an empty value', () => {
-  const { plan_id: _dropped, ...noPlan } = TASK;
-  assert.match(prompt(noPlan as TaskYaml), /plan_revision: none\n/);
+test('a task with no declared revision reports none rather than an empty value', () => {
+  const { plan_revision: _dropped, ...noRevision } = TASK;
+  assert.match(prompt(noRevision as TaskYaml), /plan_revision: none\n/);
 });
 
 test('the original scope constraints survive, and both launchers share the prompt', () => {
@@ -90,4 +91,16 @@ test('the original scope constraints survive, and both launchers share the promp
     planExists: false,
   });
   assert.equal(claudeArgv[claudeArgv.indexOf('-p') + 1], p);
+});
+
+// `plan_id` groups a plan's tasks; `plan_revision` says which revision of the frozen plan a
+// contract was written against. Reporting the id here made every delivery report echo the
+// group name, and made the header cross-check compare a field against itself.
+test('the delivery header carries plan_revision, not the plan id', () => {
+  const withBoth = prompt({ ...TASK, plan_id: 'my-plan', plan_revision: '3' });
+  assert.match(withBoth, /plan_revision: 3\n/);
+  assert.doesNotMatch(withBoth, /plan_revision: my-plan/);
+  // A contract that declares no revision says so rather than borrowing the id.
+  const { plan_revision: _none, ...idOnly } = TASK;
+  assert.match(prompt({ ...idOnly, plan_id: 'my-plan' } as TaskYaml), /plan_revision: none\n/);
 });

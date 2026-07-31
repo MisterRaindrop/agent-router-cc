@@ -440,7 +440,7 @@ function persistDelivery(
     };
   }
 
-  const errors = deliveryHeaderMismatches(header, id, task.plan_id);
+  const errors = deliveryHeaderMismatches(header, id, task.plan_revision);
   return {
     path,
     header,
@@ -448,11 +448,17 @@ function persistDelivery(
   };
 }
 
-function deliveryHeaderMismatches(header: DeliveryHeader, taskId: string, planId: string | undefined): string[] {
+function deliveryHeaderMismatches(
+  header: DeliveryHeader,
+  taskId: string,
+  planRevision: string | undefined,
+): string[] {
   const errors: string[] = [];
   if (header.task !== taskId) errors.push(`task mismatch: expected ${taskId}, got ${header.task}`);
-  if (planId !== undefined && header.plan_revision !== undefined && header.plan_revision !== planId) {
-    errors.push(`plan_revision mismatch: expected ${planId}, got ${header.plan_revision}`);
+  // Compare against the revision the contract declares, not the plan id: comparing the id to
+  // itself could never disagree, so this check proved nothing until now.
+  if (planRevision !== undefined && header.plan_revision !== undefined && header.plan_revision !== planRevision) {
+    errors.push(`plan_revision mismatch: expected ${planRevision}, got ${header.plan_revision}`);
   }
   return errors;
 }

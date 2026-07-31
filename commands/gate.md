@@ -36,3 +36,30 @@ Handle each outcome as what it is:
 `--status` shows the gate mode and whether anything currently holds the checkout. On a project
 that verifies inside the worktree (`mode: worktree`), this command refuses and tells you so:
 there each task's own `verify` is the gate, and nothing needs a queue.
+
+## When there is no `.router/gate.yaml` yet
+
+**Work out how this project builds and tests -- do not ask the user to write YAML from
+scratch.** Read `package.json` scripts, `Makefile` / `justfile` targets, the CI workflow (the
+most reliable source: it is what the project actually runs), `Dockerfile` / `compose.yaml`,
+and the build section of `README`/`CONTRIBUTING`. Note whether a build directory, a compile
+database, or a virtualenv already exists, and where.
+
+Then settle the mode **empirically, once**: run the candidate gate inside a run worktree. If it
+passes there, this project is `mode: worktree` and each task's own `verify` is the gate --
+there is nothing to queue. If it cannot run there (no build directory, a compile database
+keyed to another path, Docker bound to a fixed host path, one shared database), it is
+`mode: queue`.
+
+**Propose the config, then let the user confirm it before it is written.** Show the whole file
+and say where each command came from ("this is what the CI workflow runs"). The point is that
+the user does not hand-author YAML -- not that router silently decides: a wrong gate command
+does not fail, it **passes something that was never the real gate**, and reports the change as
+verified. That failure is invisible, which is why a human agrees to it once.
+
+**Never infer `reset`.** It is the command that wipes business state between runs, and a guess
+like `docker compose down -v` destroys volumes. Leave it empty unless the user states it.
+Likewise propose `clean_gate` only from a command the project already documents.
+
+Once written, the file is explicit and stable: this discovery happens once per project, not
+per dispatch.

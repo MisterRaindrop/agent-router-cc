@@ -194,7 +194,12 @@ function buildPrompt(ctx: WorkerContext): string {
         `reports and fix until it passes`
       : `note that NO gate runs here -- the orchestrator runs the real build and tests later in ` +
         `its own environment, so write the tests but do not try to build this project`;
-  const planRevision = ctx.task.plan_id ?? 'none';
+  // `plan_revision` is the version of the frozen plan, NOT the plan's identity: `plan_id`
+  // groups a plan's tasks, `plan_revision` says which revision of it this contract was
+  // written against, so a stale contract can be told apart from a current one. Reporting
+  // the id here made every delivery report echo the group name and made the cross-check
+  // compare a field against itself.
+  const planRevision = ctx.task.plan_revision ?? 'none';
   return (
     `${ctx.contractMdText.trim()}\n\n` +
     `You own this task start to finish: read the code you are about to change, decide your own\n` +
