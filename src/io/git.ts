@@ -238,6 +238,15 @@ export function commitAll(cwd: string, message: string): boolean {
   return true;
 }
 
+/** Whether the working tree holds any change at all (tracked edits or untracked files).
+ * A run that ends badly is not committed, so this is how the caller can say "the work is
+ * still there" instead of leaving the user to discover it -- an executor killed after it
+ * finished is the case that matters. Best effort: unreadable tree reports clean. */
+export function worktreeDirty(cwd: string): boolean {
+  const r = tryGit(cwd, ['status', '--porcelain']);
+  return r.ok && r.stdout.trim() !== '';
+}
+
 /** Hard-reset a worktree to `sha` and remove untracked files - used to give the
  * next executor in a fallback chain a clean checkout after one quota-failed. */
 export function resetHard(cwd: string, sha: string): void {

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync } from 'node:fs';
+import { chmodSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import * as fx from '../testkit/gitRepo.ts';
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
 const FAKE_CODEX_MISMATCH = fileURLToPath(new URL('../testkit/fakeCodexResumeMismatch.mjs', import.meta.url));
+const FAKE_DELIVERY = fileURLToPath(new URL('./fixtures/fakeCodexDelivery.mjs', import.meta.url));
 const NODE = process.execPath;
 
 function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): { code: number; out: string } {
@@ -65,6 +66,31 @@ test('resume is fail-loud: a mismatched session id commits nothing and exits non
     assert.equal(rj.session_mismatch, true, r.out);
     assert.equal(rj.ok, false, r.out);
     assert.equal(r.code, 1, r.out);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('resume replaces DELIVERY.md with the resumed executor final message', () => {
+  chmodSync(FAKE_DELIVERY, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_DELIVERY, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'none') };
+  try {
+    router(dir, ['new', 'delivery-valid'], env);
+    assert.equal(router(dir, ['dispatch', 'delivery-valid', '--json'], env).code, 0);
+    const delivery = join(dir, '.router', 'tasks', 'delivery-valid', 'runs', 'run-001', 'DELIVERY.md');
+    assert.match(readFileSync(delivery, 'utf8'), /^Delivery report/);
+
+    const resumed = router(dir, ['resume', 'delivery-valid', '--feedback', 'finish', '--json'], env);
+    assert.equal(resumed.code, 0, resumed.out);
+    assert.match(readFileSync(delivery, 'utf8'), /^Resumed delivery/);
+    const result = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'delivery-valid', 'runs', 'run-001', 'result.json'), 'utf8'),
+    ) as { delivery: { header: { task: string }; header_error?: string } };
+    assert.equal(result.delivery.header.task, 'delivery-valid');
+    assert.equal(result.delivery.header_error, undefined);
   } finally {
     fx.cleanup(dir);
   }

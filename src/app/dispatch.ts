@@ -6,10 +6,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { DeliveryHeader, ExecutorQuota, ExitClass, MetricRecord, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import { detectModelMismatch, reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
-import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeRemove, deleteBranch } from '../io/git.ts';
+import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeDirty, worktreeRemove, deleteBranch } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
@@ -18,7 +18,7 @@ import { superviseWorker } from '../io/supervisor.ts';
 import { makeLauncher } from './codexLauncher.ts';
 import { loadModelConfig, tierWorkers } from './modelConfig.ts';
 import { loadTask } from './taskLoad.ts';
-import { parseCodexLog, type ParsedLog } from './usage.ts';
+import { parseCodexLog, parseDeliveryHeader, type ParsedLog } from './usage.ts';
 import { verifyTask } from './verifier.ts';
 
 // The synchronous dispatch driver. Runs ONE clear task to a verified diff in the
@@ -44,6 +44,13 @@ export interface PreparedRun {
 }
 
 const RUN = fmtRunId(1); // sync model: one attempt per task
+
+// How long a silent executor is tolerated before the stall watchdog kills it. The signal is
+// coarse -- log growth plus worktree mtime -- and a high-effort model reasoning between tool
+// calls emits neither. Measured: a run was killed at ten minutes of silence AFTER its gate had
+// already passed, discarding verified work, so the bound has to sit above real thinking time
+// and let `max_wall_minutes` be the hard stop.
+const STALL_MINUTES_DEFAULT = 20;
 
 function quotaFor(paths: RouterPaths, kind: WorkerKind): ExecutorQuota | null {
   if (kind === 'codex') {
@@ -130,7 +137,7 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
       maxWallMs: task.max_wall_minutes * 60_000,
-      stallMs: (used.stall_minutes ?? 10) * 60_000,
+      stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
     });
     outcome = o;
     const log = safeRead(logPath);
@@ -173,6 +180,12 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
     ...(parsed.sessionId ? { session_id: parsed.sessionId } : {}),
   };
+  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  if (delivery !== undefined) result.delivery = delivery;
+  // A run that did not end `ok` is never committed, so its work would otherwise look lost.
+  // Say plainly that it is still on disk: an executor killed after it had already finished is
+  // recoverable, and silently discarding that work is the worse failure.
+  if (exitClass !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
 
   if (exitClass === 'ok') {
     const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
@@ -291,7 +304,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     heartbeatPath: paths.heartbeat(id, RUN),
     watchDir: worktreeDir,
     maxWallMs: task.max_wall_minutes * 60_000,
-    stallMs: (used.stall_minutes ?? 10) * 60_000,
+    stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
   });
   const log = safeRead(logPath);
   const exitClass: ExitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -323,6 +336,12 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
+  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  if (delivery !== undefined) result.delivery = delivery;
+  // A run that did not end `ok` is never committed, so its work would otherwise look lost.
+  // Say plainly that it is still on disk: an executor killed after it had already finished is
+  // recoverable, and silently discarding that work is the worse failure.
+  if (exitClass !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
 
   if (!mismatch && exitClass === 'ok') {
     commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
@@ -353,6 +372,49 @@ function safeRead(path: string): string {
   } catch {
     return '';
   }
+}
+
+function persistDelivery(
+  paths: RouterPaths,
+  id: string,
+  run: string,
+  task: TaskYaml,
+  finalMessage: string | null | undefined,
+): RunResult['delivery'] | undefined {
+  if (finalMessage == null || finalMessage.length === 0) return undefined;
+
+  const path = paths.delivery(id, run);
+  try {
+    writeFileSync(path, finalMessage);
+  } catch (e) {
+    // The report is auxiliary evidence; failing to store it must never cost the run its
+    // result. Surface the failure instead of throwing it up through the dispatch.
+    return { path, header: null, header_error: `write failed: ${(e as Error).message}` };
+  }
+  const header = parseDeliveryHeader(finalMessage);
+  if (header === null) {
+    return {
+      path,
+      header: null,
+      header_error: finalMessage.includes('```router-delivery') ? 'invalid' : 'missing',
+    };
+  }
+
+  const errors = deliveryHeaderMismatches(header, id, task.plan_id);
+  return {
+    path,
+    header,
+    ...(errors.length > 0 ? { header_error: errors.join('; ') } : {}),
+  };
+}
+
+function deliveryHeaderMismatches(header: DeliveryHeader, taskId: string, planId: string | undefined): string[] {
+  const errors: string[] = [];
+  if (header.task !== taskId) errors.push(`task mismatch: expected ${taskId}, got ${header.task}`);
+  if (planId !== undefined && header.plan_revision !== undefined && header.plan_revision !== planId) {
+    errors.push(`plan_revision mismatch: expected ${planId}, got ${header.plan_revision}`);
+  }
+  return errors;
 }
 
 function appendMetric(deps: DispatchDeps, result: RunResult, planId: string | undefined): void {

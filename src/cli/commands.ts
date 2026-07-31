@@ -91,13 +91,25 @@ function taskTemplate(id: string, title: string): string {
     { lineWidth: 120 },
   );
 }
+// The seven headings are the dispatchability test: a package an executor can own end to
+// end has all seven, and one that cannot state its invariants, its blast radius, or when to
+// stop is still a decision the orchestrator owes the user, not a task to hand off. They are
+// also what the reviewer judges drift against -- "it changed something it was told not to"
+// is only checkable when the contract said so.
 // The test-hygiene block is boilerplate on purpose: these are the mistakes BOTH cheap
 // and strong models make (measured, not guessed) -- a fixed global resource name that
 // collides when a test runner repeats the test, state left behind when a test aborts
 // mid-way, and a test script created without its executable bit. Keep this block short:
 // a longer contract gets skimmed, which defeats the point.
 const contractTemplate = (id: string, title: string): string =>
-  `# ${title}\n\ntask: ${id}\n\n## Goal\n\n_What to accomplish._\n\n## Definition of Done\n\n- [ ] ...\n` +
+  `# ${title}\n\ntask: ${id}\n\n## Goal\n\n_What to accomplish._\n\n` +
+  `## Invariants (must not change)\n\n_What this task may NOT alter, however convenient._\n\n` +
+  `## Frozen interfaces / dependencies\n\n` +
+  `_The already-agreed signatures and files this builds on; the tasks it depends on._\n\n` +
+  `## Definition of Done\n\n- [ ] ...\n- [ ] Carries tests for the code it changes.\n\n` +
+  `## Blast radius (worst case if this is wrong)\n\n_What breaks, and how visibly._\n\n` +
+  `## Stop conditions (stop and report instead of improvising)\n\n` +
+  `_Report \`CONTRACT_CONFLICT\` rather than working around any of these._\n\n` +
   `\n## Test hygiene (applies whenever this task adds or changes tests)\n\n` +
   `- [ ] Every shared or globally-scoped thing the test creates (server-wide entities,\n` +
   `      fixed table/user/file names, paths outside a per-run temp dir) is namespaced per\n` +
@@ -174,6 +186,9 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     cost_usd: result.cost_usd ?? null,
     executor_switches: result.executor_switches ?? 0,
     model_mismatch: result.model_mismatch ?? false,
+    delivery: result.delivery?.path ?? null,
+    delivery_header: result.delivery?.header_error ?? (result.delivery?.header ? 'ok' : 'missing'),
+    uncommitted_changes: result.uncommitted_changes ?? false,
   };
 }
 
@@ -186,7 +201,16 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
     ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
       `(provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.`
     : '';
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
+  const report = result.delivery
+    ? ` report: ${result.delivery.path}${result.delivery.header_error ? ` [delivery_header: ${result.delivery.header_error}]` : ''}`
+    : '';
+  // Nothing is committed unless the run ended ok, so an unfinished run's work is only
+  // discoverable if we say where it is.
+  const recoverable = result.uncommitted_changes
+    ? `\nNOTE: this run did not commit, but its worktree still holds changes -- the work is ` +
+      `recoverable: git -C .router/worktrees/${id}/${result.run_id} status`
+    : '';
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}`;
 }
 
 // Resume the prior dispatch's executor session with feedback (context retained) instead
