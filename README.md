@@ -139,10 +139,15 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   codex + claude.
 - **Isolated execution.** The executor runs in a fresh `git worktree` under `.router/`,
   supervised with a wall timeout and a stall watchdog; its output never enters the
-  orchestrator's context. Codex uses its `workspace-write` sandbox. Claude receives
-  only `Read`/`Edit`/`Write` tools in normal `acceptEdits` mode (no Bash and no
-  `bypassPermissions`), so access outside the worktree is denied. Your working tree
-  is untouched until you `land`.
+  orchestrator's context, and no MCP server from your own session is inherited. Codex uses
+  its `workspace-write` sandbox. Claude receives `Read`/`Edit`/`Write` in normal
+  `acceptEdits` mode (never `bypassPermissions`), plus `Bash` **only** when the task
+  declares a `verify` command, so it can prove its own work. Be aware of what that means,
+  because it was measured rather than assumed: pre-approving the verify command removes the
+  prompt, it does not confine Bash to that command, so such a run has a shell in its
+  worktree — bounded by that working directory and by the stripped environment, not by the
+  allow list. Codex's sandbox is the tighter of the two; a task with no `verify` gets no
+  Bash at all. Your working tree is untouched until you `land`.
 - **Credential separation.** Executor CLIs receive only the login-session/network
   context needed for plan authentication plus an explicitly configured provider key —
   never the full parent environment (which might hold unrelated `AWS_*`, proxy, or API

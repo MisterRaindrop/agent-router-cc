@@ -120,6 +120,13 @@ affected, the options, and whether experimental code is left behind. Nothing lan
 
 Only the affected subgraph is invalidated; a conflict is not a reason to redo the whole plan.
 
+Declaring a `verify` command is also a permission decision, so make it deliberately: it is
+what grants the Claude executor `Bash`, and pre-approving the command only removes the prompt
+-- measured, a real run also executed `git diff` unprompted. So such a run has a shell in its
+run worktree, bounded by that working directory and the stripped environment rather than by
+the allow list; codex's `workspace-write` sandbox is the tighter of the two, and a task with
+no `verify` gets no Bash at all.
+
 An executor that cannot run the gate (queue mode, or a missing toolchain) must say so with
 `gate_ran: false` and a reason. It must **not** provision the environment to make a check run --
 no installing dependencies, no creating directories, no editing configuration. An honest "did not
