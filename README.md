@@ -120,20 +120,29 @@ and merges — that is the token saving.
                          #   mechanically-verified diff on its own worktree branch.
                          #   Several ids run concurrently (--max-parallel <n> caps it),
                          #   so the wall clock is the slowest task, not the sum
+/router:resume <id>      # send a failure back to that task's own executor session --
+                         #   its context intact, instead of another cold start
 /router:land <id...>     # merge those tasks' verified diffs into your working branch
 /router:gate <id...>     # for a project whose real gate needs Docker or one build directory:
                          #   verify each commit in your own checkout, one at a time, on the
                          #   integration head -- keeping the build cache warm (--status shows
                          #   whether anything currently holds it)
 /router:result <id>      # show task <id>'s per-check verifier report and log tail
+/router:plans            # what is under .router/plans/<plan_id>: revision, critique
+                         #   rounds, decisions, and whether a session holds the lock
+/router:usage            # what this cost against an all-strongest-model baseline
+                         #   (--routing aggregates recorded runs into routing evidence)
 ```
 
 A task's contract (`.router/tasks/<id>/task.yaml`) carries `allowed_globs` (its file
-scope), an optional `verify` command like `[["npm","test"]]`, and an optional `worker`
-to pin an executor. Opus authors these from your conversation; there is no global policy
-file.
+scope), a `tier` (how much capability the work needs) and a `risk` (how much review it
+earns — different questions), an optional `verify` command like `[["npm","test"]]`,
+`depends_on` for ordering, and an optional `worker` to pin an executor. Opus authors these
+from your conversation; there is no global policy file.
 
-See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
+**[docs/workflow.md](docs/workflow.md)** is the whole protocol end to end — work packages,
+tiers and risk, both gate modes, what the executor owes back, and when to resume a session.
+See also **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
 **[examples/minimal/](examples/minimal/)**.
 
 ## How it works
@@ -162,6 +171,21 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   *your* actual environment (Docker and all): risk-driven per task, and always as a
   mandatory full-chain gate before "done". Opus reads the complete output and judges it —
   a cheap model never decides its own pass/fail, and logs are never compressed away.
+- **Where the real gate runs is a property of the project.** `mode: worktree` runs it inside
+  the run worktree, so implementation and verification are both parallel. `mode: queue` is for
+  the project whose environment exists *once* (one build directory, a container bound to a
+  fixed host path): executors write code and tests in parallel but don't build, and
+  `/router:gate` feeds their commits one at a time into your own checkout under an exclusive
+  lock — refusing outright if tracked files are modified, verifying each on the current
+  integration head rather than a stale base, keeping the build cache (never `git clean`), and
+  putting your branch back. A gate that fails is re-run on the pre-merge head, so a project
+  that was already red doesn't get blamed on the change.
+- **What the executor owes back.** Every run ends with a delivery report — prose plus a
+  `router-delivery` header (`gate_ran`, `scope_drift`, `escalate_review`) — stored at
+  `.router/tasks/<id>/runs/<run>/DELIVERY.md`. A missing header is reported as a contract
+  violation, not smoothed over. And the executor may never quietly rewrite the plan: when the
+  code contradicts its contract it reports `CONTRACT_CONFLICT` with evidence, nothing is
+  committed, and the decision comes back to you.
 - **Real-quota balancing.** codex usage is read from `~/.codex/sessions`, claude usage
   from a statusline snapshot (`statusline/router-usage.mjs`, optional); the executor
   with more headroom goes first, and a real 429 switches to the other.
