@@ -10454,10 +10454,10 @@ function parseDeliveryHeader(finalMessage) {
   const scopeDrift = deliveryBoolean(values.get("scope_drift"));
   const escalateReview = deliveryBoolean(values.get("escalate_review"));
   if (!task || gateRan === null || scopeDrift === null || escalateReview === null) return null;
-  const planRevision = values.get("plan_revision");
+  const planRevision2 = values.get("plan_revision");
   return {
     task,
-    ...planRevision !== void 0 ? { plan_revision: planRevision } : {},
+    ...planRevision2 !== void 0 ? { plan_revision: planRevision2 } : {},
     gate_ran: gateRan,
     scope_drift: scopeDrift,
     escalate_review: escalateReview
@@ -10544,7 +10544,7 @@ function claudeLauncher(worker) {
     ...model !== void 0 ? { model } : {},
     parseLog: parseClaudeLog,
     buildArgv(ctx) {
-      const verifyCommands = (ctx.task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(" "));
+      const verifyCommands = gateCommands(ctx.task);
       const argv = [
         bin,
         "-p",
@@ -10561,9 +10561,7 @@ function claudeLauncher(worker) {
         "--add-dir",
         ctx.worktreeDir
       ];
-      if (verifyCommands.length > 0) {
-        argv.push("--allowedTools", ...verifyCommands.map((command) => `Bash(${command})`));
-      }
+      if (verifyCommands.length > 0) argv.push("--allowedTools", ...bashGrants(verifyCommands));
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
@@ -10571,7 +10569,8 @@ function claudeLauncher(worker) {
     // `claude --resume <session-id> -p <feedback>` continues that session with its
     // context retained. The session-id continuity guard in `router resume` verifies
     // it re-attached.
-    buildResumeArgv(worktreeDir, sessionId, feedback) {
+    buildResumeArgv(worktreeDir, sessionId, feedback, task) {
+      const verifyCommands = task === void 0 ? [] : gateCommands(task);
       const argv = [
         bin,
         "-p",
@@ -10586,15 +10585,28 @@ function claudeLauncher(worker) {
         "--strict-mcp-config",
         // no MCP servers: do not inherit the user's own
         "--tools",
-        "Read,Edit,Write",
+        verifyCommands.length > 0 ? "Read,Edit,Write,Bash" : "Read,Edit,Write",
         "--add-dir",
         worktreeDir
       ];
+      if (verifyCommands.length > 0) argv.push("--allowedTools", ...bashGrants(verifyCommands));
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
     }
   };
+}
+function gateCommands(task) {
+  return (task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(" "));
+}
+function bashGrants(verifyCommands) {
+  const grants = /* @__PURE__ */ new Set();
+  for (const command of verifyCommands) {
+    grants.add(`Bash(${command})`);
+    const prefix = command.split(" ").slice(0, 2).join(" ");
+    if (prefix !== "" && prefix !== command) grants.add(`Bash(${prefix}:*)`);
+  }
+  return [...grants];
 }
 function makeLauncher(worker) {
   switch (worker.kind) {
@@ -10610,7 +10622,7 @@ function buildPrompt(ctx) {
   const scope = ctx.task.allowed_globs.join(", ");
   const gate2 = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(" "));
   const gateStep = gate2.length > 0 ? `run the project gate yourself (${gate2.map((g) => `\`${g}\``).join(", ")}), read what it reports and fix until it passes` : `note that NO gate runs here -- the orchestrator runs the real build and tests later in its own environment, so write the tests but do not try to build this project`;
-  const planRevision = ctx.task.plan_revision ?? "none";
+  const planRevision2 = ctx.task.plan_revision ?? "none";
   const taskContext = ctx.taskContext == null ? "" : `--- TASK CONTEXT (navigation, NOT the source of truth) ---
 ` + ctx.taskContext.text + (ctx.taskContext.text.endsWith("\n") ? "" : "\n") + `--- end task context ---
 This summary was written from an earlier reading of the repository. The contract above
@@ -10647,7 +10659,7 @@ and anything risky or unresolved -- followed by exactly this block:
 
 \`\`\`router-delivery
 task: ${ctx.task.id}
-plan_revision: ${planRevision}
+plan_revision: ${planRevision2}
 gate_ran: true|false
 scope_drift: true|false
 escalate_review: true|false
@@ -10974,23 +10986,23 @@ function loadTaskContext(paths, task) {
   if (contextTaskId !== task.id) {
     throw contextError(task.id, `task_id mismatch: expected "${task.id}", got "${contextTaskId}"`);
   }
-  let planRevision;
+  let planRevision2;
   if (Object.prototype.hasOwnProperty.call(metadata, "plan_revision")) {
     if (typeof metadata.plan_revision !== "string" || metadata.plan_revision.length === 0) {
       throw contextError(task.id, 'frontmatter key "plan_revision" must be a non-empty string when present');
     }
-    planRevision = metadata.plan_revision;
-    if (task.plan_revision !== void 0 && planRevision !== task.plan_revision) {
+    planRevision2 = metadata.plan_revision;
+    if (task.plan_revision !== void 0 && planRevision2 !== task.plan_revision) {
       throw contextError(
         task.id,
-        `plan_revision mismatch: task declares "${task.plan_revision}", context declares "${planRevision}"`
+        `plan_revision mismatch: task declares "${task.plan_revision}", context declares "${planRevision2}"`
       );
     }
   }
   return {
     text: text2,
     base_sha: baseSha,
-    ...planRevision !== void 0 ? { plan_revision: planRevision } : {},
+    ...planRevision2 !== void 0 ? { plan_revision: planRevision2 } : {},
     chars: text2.length,
     sha256: createHash("sha256").update(text2).digest("hex")
   };
@@ -11450,7 +11462,7 @@ async function resumeTask(deps, id, feedback) {
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
   const o = await superviseWorker({
-    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback, task),
     cwd: worktreeDir,
     env: executorEnv,
     logPath,
@@ -11547,11 +11559,11 @@ function persistDelivery(paths, id, run, task, finalMessage) {
     ...errors.length > 0 ? { header_error: errors.join("; ") } : {}
   };
 }
-function deliveryHeaderMismatches(header, taskId, planRevision) {
+function deliveryHeaderMismatches(header, taskId, planRevision2) {
   const errors = [];
   if (header.task !== taskId) errors.push(`task mismatch: expected ${taskId}, got ${header.task}`);
-  if (planRevision !== void 0 && header.plan_revision !== void 0 && header.plan_revision !== planRevision) {
-    errors.push(`plan_revision mismatch: expected ${planRevision}, got ${header.plan_revision}`);
+  if (planRevision2 !== void 0 && header.plan_revision !== void 0 && header.plan_revision !== planRevision2) {
+    errors.push(`plan_revision mismatch: expected ${planRevision2}, got ${header.plan_revision}`);
   }
   return errors;
 }
@@ -12847,7 +12859,7 @@ function buildUsageReport(paths, nowIso, opts = {}) {
     }
     byPlan.set(row.planId, plan);
   }
-  const plans = [...byPlan.values()].map((plan) => {
+  const plans2 = [...byPlan.values()].map((plan) => {
     let executorCostUsd = 0;
     let savedUsd = 0;
     let wallSecondsExecutors = 0;
@@ -12897,7 +12909,7 @@ function buildUsageReport(paths, nowIso, opts = {}) {
   return {
     windowDays,
     rows,
-    plans,
+    plans: plans2,
     totalTokensIn,
     totalTokensOut,
     totalTokens: totalTokensIn + totalTokensOut,
@@ -13527,6 +13539,67 @@ ${leftover} worktree(s) still on disk. Land the task to clean it, or remove .rou
   });
   return 0;
 };
+var PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+function planRevision(text2) {
+  const match = PLAN_FRONTMATTER_RE.exec(text2);
+  if (match === null) return null;
+  let parsed;
+  try {
+    parsed = load(match[1], { schema: JSON_SCHEMA });
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const rev = parsed.plan_revision;
+  return typeof rev === "string" || typeof rev === "number" ? String(rev) : null;
+}
+function highestCritiqueRound(entries) {
+  let max = null;
+  for (const name of entries) {
+    const m = /^critique-(\d+)\.md$/.exec(name);
+    if (m === null) continue;
+    const n = Number(m[1]);
+    if (max === null || n > max) max = n;
+  }
+  return max;
+}
+var plans = (ctx) => {
+  const { paths } = depsFor(ctx);
+  const plansRoot = join11(paths.root, "plans");
+  const ids = existsSync10(plansRoot) ? readdirSync5(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const rows = ids.map((id) => {
+    let revision = null;
+    try {
+      revision = planRevision(readFileSync13(paths.planMd(id), "utf8"));
+    } catch {
+    }
+    let critiqueRound = null;
+    try {
+      critiqueRound = highestCritiqueRound(readdirSync5(paths.planDir(id)));
+    } catch {
+    }
+    return {
+      id,
+      plan_revision: revision,
+      critique_round: critiqueRound,
+      decisions: existsSync10(paths.specDecisions(id)),
+      locked: readLock(paths.specLock(id)) !== null
+    };
+  });
+  emit(ctx.json, { ok: true, plans: rows }, () => {
+    if (rows.length === 0) return "No plans in .router/plans.";
+    const lines = [
+      `Plans (${rows.length}):`,
+      pad2("id", 24) + pad2("revision", 12) + pad2("critique", 10) + pad2("decisions", 12) + "locked"
+    ];
+    for (const r of rows)
+      lines.push(
+        pad2(r.id, 24) + pad2(r.plan_revision ?? "unknown", 12) + pad2(r.critique_round === null ? "-" : String(r.critique_round), 10) + pad2(r.decisions ? "yes" : "-", 12) + (r.locked ? "yes" : "-")
+      );
+    return lines.join("\n");
+  });
+  return 0;
+};
 var usage = (ctx) => {
   const { paths, clock } = depsFor(ctx);
   const all = flagBool(ctx.args.flags, "all");
@@ -13745,6 +13818,7 @@ var HANDLERS = {
   gate,
   result,
   list,
+  plans,
   usage,
   "orchestrator-usage": orchestratorUsage,
   models,
@@ -13767,6 +13841,7 @@ Usage: router <command> [options]
   gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
+  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock
   usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches
   orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript
   models                 print the resolved model-tier config (default + .router/models.yaml)

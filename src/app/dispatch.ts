@@ -348,7 +348,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
 
   const o = await superviseWorker({
-    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback, task),
     cwd: worktreeDir,
     env: executorEnv,
     logPath,

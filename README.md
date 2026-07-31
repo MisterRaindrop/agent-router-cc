@@ -146,12 +146,12 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   orchestrator's context, and no MCP server from your own session is inherited. Codex uses
   its `workspace-write` sandbox. Claude receives `Read`/`Edit`/`Write` in normal
   `acceptEdits` mode (never `bypassPermissions`), plus `Bash` **only** when the task
-  declares a `verify` command, so it can prove its own work. Be aware of what that means,
-  because it was measured rather than assumed: pre-approving the verify command removes the
-  prompt, it does not confine Bash to that command, so such a run has a shell in its
-  worktree — bounded by that working directory and by the stripped environment, not by the
-  allow list. Codex's sandbox is the tighter of the two; a task with no `verify` gets no
-  Bash at all. Your working tree is untouched until you `land`.
+  declares a `verify` command, so it can prove its own work. Two real runs measured what that
+  means: `acceptEdits` auto-approves **read-only** Bash on its own, so reading is open, while
+  anything that *does* something must match the grant — which is the exact gate command plus
+  its program+subcommand prefix, so the executor can iterate without being handed a shell.
+  Reading is bounded by the worktree and the stripped environment; codex's sandbox is still
+  the tighter of the two, and a task with no `verify` gets no Bash at all. Your working tree is untouched until you `land`.
 - **Credential separation.** Executor CLIs receive only the login-session/network
   context needed for plan authentication plus an explicitly configured provider key —
   never the full parent environment (which might hold unrelated `AWS_*`, proxy, or API
