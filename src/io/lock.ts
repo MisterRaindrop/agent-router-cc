@@ -320,14 +320,24 @@ export function acquireLock(
       },
       release(): void {
         if (released) return;
-        let existingIdentity: FileIdentity | null;
+        // The owner token written into the file is the authority here, not the inode.
+        // Linux reuses inode numbers aggressively, so a replacement lock created after a
+        // takeover can land on the same dev/ino as ours -- on which a stale handle would
+        // cheerfully delete a lock it no longer owns, letting two verifications share one
+        // build directory. (Caught by CI on Linux; it never reproduced on APFS.)
+        let contents: string;
         try {
-          existingIdentity = currentIdentity(path);
+          contents = readFileSync(path, 'utf8');
         } catch (err) {
+          if (errorCode(err) === 'ENOENT') {
+            released = true;
+            return;
+          }
           throw new Error(`cannot release lock ${path}: ${(err as Error).message}`);
         }
-        if (existingIdentity === null || !sameIdentity(existingIdentity, acquiredIdentity)) {
-          released = true;
+        const parsed = parseStored(contents);
+        if (parsed === null || parsed.stored.ownerToken !== token) {
+          released = true; // someone else owns this file now: leave it alone
           return;
         }
         try {

@@ -11779,13 +11779,18 @@ function acquireLock(path, opts) {
       },
       release() {
         if (released) return;
-        let existingIdentity;
+        let contents;
         try {
-          existingIdentity = currentIdentity(path);
+          contents = readFileSync8(path, "utf8");
         } catch (err2) {
+          if (errorCode(err2) === "ENOENT") {
+            released = true;
+            return;
+          }
           throw new Error(`cannot release lock ${path}: ${err2.message}`);
         }
-        if (existingIdentity === null || !sameIdentity(existingIdentity, acquiredIdentity)) {
+        const parsed = parseStored(contents);
+        if (parsed === null || parsed.stored.ownerToken !== token) {
           released = true;
           return;
         }

@@ -166,3 +166,27 @@ test('a stale original handle cannot release its replacement', () => {
     fixture.cleanup();
   }
 });
+
+// The test above only reproduces the failure where the replacement lands on a *different*
+// inode -- it passed on APFS and failed on Linux, which reuses inode numbers aggressively.
+// Overwriting the file in place forces the same-inode case on every platform, so the guard
+// has to key on the owner token rather than on file identity. Two verifications sharing one
+// build directory is what this prevents.
+test('a handle will not release a lock that another owner rewrote in place', () => {
+  const fixture = freshLock();
+  try {
+    const mine = acquireLock(fixture.path, { waitMs: 0, now: () => 0 });
+    assert.ok(isHandle(mine));
+    const foreign = { pid: process.pid, startedAtMs: 500, beatAtMs: 500, ownerToken: 'someone-else' };
+    writeFileSync(fixture.path, `${JSON.stringify(foreign)}\n`); // same path, same inode
+
+    // Both guards, in the order they would really fire: the heartbeat notices first, and
+    // release must still keep its hands off. (After a release the handle is spent, so the
+    // heartbeat check has to come first.)
+    assert.throws(() => mine.heartbeat(), /ownership was lost|cannot heartbeat/);
+    mine.release();
+    assert.equal(readLock(fixture.path)?.startedAtMs, 500, 'the other owner lock must survive');
+  } finally {
+    fixture.cleanup();
+  }
+});
