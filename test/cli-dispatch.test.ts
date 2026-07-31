@@ -162,7 +162,15 @@ test('dispatch persists delivery reports and surfaces header status', () => {
 
     router(dir, ['new', 'delivery-plan-mismatch'], env);
     const planTask = join(dir, '.router', 'tasks', 'delivery-plan-mismatch', 'task.yaml');
-    writeFileSync(planTask, readFileSync(planTask, 'utf8').replace('id: delivery-plan-mismatch\n', 'id: delivery-plan-mismatch\nplan_id: expected-plan\n'));
+    // The cross-check is against the declared REVISION, not the plan id: comparing the id to
+    // itself could never disagree, which is why this check proved nothing before.
+    writeFileSync(
+      planTask,
+      readFileSync(planTask, 'utf8').replace(
+        'id: delivery-plan-mismatch\n',
+        'id: delivery-plan-mismatch\nplan_id: expected-plan\nplan_revision: expected-revision\n',
+      ),
+    );
     const planMismatchRun = router(dir, ['dispatch', 'delivery-plan-mismatch', '--json'], env);
     assert.equal(planMismatchRun.code, 0, planMismatchRun.out);
     assert.match(String((JSON.parse(planMismatchRun.out) as Record<string, unknown>).delivery_header), /plan_revision mismatch/);

@@ -89,7 +89,11 @@ Therefore:
    under the repo, so ancestor dependency resolution usually just works), put that command in
    `verify:` for every package (e.g. `verify: [["npm", "run", "check"]]`) -- the diff then
    arrives already proven to compile and pass, and your review goes on judgment instead of on
-   breakage. If the real gate needs Docker, a single shared build directory, or CI, leave
+   breakage. (If `.router/gate.yaml` does not exist yet, **work the build out yourself** from
+   `package.json`/`Makefile`/the CI workflow/`Dockerfile`, propose the whole config for the
+   user to confirm once, and write it -- never make them author YAML, and never infer a
+   `reset` command, which is the one that wipes state. `/router:gate` documents this.)
+   If the real gate needs Docker, a single shared build directory, or CI, leave
    `verify: []`, declare `mode: queue` in `.router/gate.yaml`, and verify with
    **`/router:gate <id...>`**: it borrows the project's own checkout under an exclusive lock,
    verifies each commit on the current integration head, keeps the build cache warm, and puts

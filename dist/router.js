@@ -10599,7 +10599,7 @@ function buildPrompt(ctx) {
   const scope = ctx.task.allowed_globs.join(", ");
   const gate2 = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(" "));
   const gateStep = gate2.length > 0 ? `run the project gate yourself (${gate2.map((g) => `\`${g}\``).join(", ")}), read what it reports and fix until it passes` : `note that NO gate runs here -- the orchestrator runs the real build and tests later in its own environment, so write the tests but do not try to build this project`;
-  const planRevision = ctx.task.plan_id ?? "none";
+  const planRevision = ctx.task.plan_revision ?? "none";
   return `${ctx.contractMdText.trim()}
 
 You own this task start to finish: read the code you are about to change, decide your own
@@ -11378,18 +11378,18 @@ function persistDelivery(paths, id, run, task, finalMessage) {
       header_error: finalMessage.includes("```router-delivery") ? "invalid" : "missing"
     };
   }
-  const errors = deliveryHeaderMismatches(header, id, task.plan_id);
+  const errors = deliveryHeaderMismatches(header, id, task.plan_revision);
   return {
     path,
     header,
     ...errors.length > 0 ? { header_error: errors.join("; ") } : {}
   };
 }
-function deliveryHeaderMismatches(header, taskId, planId) {
+function deliveryHeaderMismatches(header, taskId, planRevision) {
   const errors = [];
   if (header.task !== taskId) errors.push(`task mismatch: expected ${taskId}, got ${header.task}`);
-  if (planId !== void 0 && header.plan_revision !== void 0 && header.plan_revision !== planId) {
-    errors.push(`plan_revision mismatch: expected ${planId}, got ${header.plan_revision}`);
+  if (planRevision !== void 0 && header.plan_revision !== void 0 && header.plan_revision !== planRevision) {
+    errors.push(`plan_revision mismatch: expected ${planRevision}, got ${header.plan_revision}`);
   }
   return errors;
 }
