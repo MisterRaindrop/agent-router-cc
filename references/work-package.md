@@ -125,12 +125,16 @@ affected, the options, and whether experimental code is left behind. Nothing lan
 
 Only the affected subgraph is invalidated; a conflict is not a reason to redo the whole plan.
 
-Declaring a `verify` command is also a permission decision, so make it deliberately: it is
-what grants the Claude executor `Bash`, and pre-approving the command only removes the prompt
--- measured, a real run also executed `git diff` unprompted. So such a run has a shell in its
-run worktree, bounded by that working directory and the stripped environment rather than by
-the allow list; codex's `workspace-write` sandbox is the tighter of the two, and a task with
-no `verify` gets no Bash at all.
+Declaring a `verify` command is also a permission decision, so make it deliberately: it is what
+grants the Claude executor `Bash`. Two real runs measured what that grant is. `acceptEdits`
+auto-approves **read-only** commands by itself -- which is why a run executed `git diff`
+unprompted -- while anything that *does* something must match the allow list exactly. So the
+grant is the gate command plus its program+subcommand prefix (`Bash(npm run:*)`), and it is
+re-issued on `resume`: granting less than that does not make the run safer, it makes the
+executor stall waiting for approval it can never get -- measured, that is exactly how one run
+shipped no tests and no delivery header. Reading is bounded by the worktree and the stripped
+environment rather than by the list; codex's `workspace-write` sandbox is the tighter of the
+two, and a task with no `verify` gets no `Bash` at all.
 
 An executor that cannot run the gate (queue mode, or a missing toolchain) must say so with
 `gate_ran: false` and a reason. It must **not** provision the environment to make a check run --

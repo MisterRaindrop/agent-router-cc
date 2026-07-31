@@ -82,6 +82,43 @@ High-risk change needs all of it):
 This is the promise; `/router:review` is the check. Some items appear in both stages -- not
 redundancy: spec commits, review verifies.
 
+## What this spec hands to `/router:go`
+
+The assurance plan is not prose that gets re-derived at dispatch time: each part has a slot in
+the machine contract `/router:go` writes, so state it in a form that can be **copied** rather
+than re-decided.
+
+- **Risk tier -> `risk:` on every package.** It buys independent review, and it is **one-way**:
+  the CLI raises it from deterministic signals and never lowers it, so a tier set too low is
+  only a floor while a tier set too high really does spend review effort. Keep it distinct from
+  `tier:` (how capable the executor must be) -- a mechanical change on an auth path is `weak`
+  **and** `high`.
+- **Must NOT / invariants -> `invariants:`** in the contract. This is the yardstick
+  `/router:review` judges drift against, and the CLI escalates risk when a diff touches a path
+  listed there. An invariant nobody wrote down cannot be checked by either one.
+- **Verification Matrix -> where each row is actually proven.** Sort the rows: what the
+  environment-free gates settle (scope, secrets, executable bit, and whether the `verify` command
+  exited 0), what the real gate settles (`/router:gate`, one commit at a time, on a project whose
+  environment exists once), and what only the main session can settle. A row no available check
+  can cover stays `unverified` and visible -- never quietly replaced by a unit test that does not
+  test it.
+- **A high-reversal-risk assumption -> a `mode: probe` package.** When one matrix row would
+  invalidate the whole approach if it turned out false (platform behaviour, what a dependency
+  really does, the real shape of a migration), check it *before* code is written: probe inverts
+  the gate so an **empty diff passes**, and its findings enter the implementation package's
+  contract as text. Skip it where the project already has the pattern.
+- **`plan_revision`** is frozen here and copied onto every package. Revising later is allowed and
+  visible (the Revision Log), but packages already dispatched are bound to the old revision -- a
+  `TASK_CONTEXT.md` whose revision disagrees with its contract is refused before the executor
+  starts rather than quietly used.
+- **Environment & dependency plan -> the gate config.** A check needing a tool the project does
+  not have is not silently installed; without the user's approval that check is `unverified`.
+  `.router/gate.yaml` is confirmed by the user once, and a `reset` command -- the one that wipes
+  state -- is never inferred.
+
+None of this is a second copy of the plan. It is the same decisions, written where the machinery
+can enforce them instead of hoping they are remembered.
+
 ## Each round
 
 1. Hand the reviewer the current plan plus this instruction:
