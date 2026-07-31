@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   countsAsAttempt,
+  detectContractConflict,
   detectModelMismatch,
   reclassifyEnvironmentFailure,
   reclassifyQuota,
@@ -16,6 +17,16 @@ test('countsAsAttempt: env_error and quota_exhausted do not count', () => {
   assert.equal(countsAsAttempt('timeout'), true);
   assert.equal(countsAsAttempt('env_error'), false);
   assert.equal(countsAsAttempt('quota_exhausted'), false);
+  assert.equal(countsAsAttempt('contract_conflict'), false);
+});
+
+test('detectContractConflict only accepts the protocol marker on the first non-empty line', () => {
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT\nDetails follow.'), true);
+  assert.equal(detectContractConflict('\n  \r\nCONTRACT_CONFLICT:\nDetails follow.'), true);
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT.\nDetails follow.'), true);
+  assert.equal(detectContractConflict('Summary first.\nCONTRACT_CONFLICT'), false);
+  assert.equal(detectContractConflict('This report discusses CONTRACT_CONFLICT later.'), false);
+  assert.equal(detectContractConflict(null), false);
 });
 
 test('reclassifyQuota only touches task_failed/worker_crash when the log matches', () => {

@@ -26,9 +26,20 @@ export function classifyExit(o: SupervisionObservation): ExitClass {
   return 'task_failed';
 }
 
-/** Neither an env error nor a provider quota hit counts toward the escalation ladder. */
+/** Setup/quota failures and a correct contract refusal do not burn a task attempt. */
 export function countsAsAttempt(exitClass: ExitClass): boolean {
-  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted';
+  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted' && exitClass !== 'contract_conflict';
+}
+
+/**
+ * The executor reports a contract/code contradiction by putting this protocol marker
+ * on the first non-empty line. Later mentions are ordinary prose, not state transitions.
+ */
+export function detectContractConflict(finalMessage: string | null | undefined): boolean {
+  if (finalMessage == null) return false;
+  const first = finalMessage.split(/\r?\n/).find((line) => line.trim() !== '');
+  if (first === undefined) return false;
+  return /^CONTRACT_CONFLICT(?:[^\p{L}\p{N}\s]+)?$/u.test(first.trim());
 }
 
 /**
