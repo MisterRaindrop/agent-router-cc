@@ -76,7 +76,12 @@ its caches and absolute paths are worthless even when the path is inside the mou
 
 Borrowing the user's checkout demands hard rules:
 
-1. **Refuse if it is dirty.** Uncommitted changes -> do not run. Never stash, discard, or tidy up.
+1. **Refuse if TRACKED content is modified** -> do not run. Never stash, discard, or tidy up.
+   Untracked files and submodule build residue do not count: a checkout or reset would
+   overwrite tracked content, while those survive untouched. Measured on a real ClickHouse
+   checkout, plain `git status --porcelain` showed 110 entries -- 107 build residue inside
+   `contrib/*` submodules, 2 untracked scratch files, and exactly **one** real uncommitted
+   edit. Refusing on all 110 would lock the queue out of the projects it exists for.
 2. **Exclusive lock, and restore the original ref** when done. Lock liveness reuses the existing
    heartbeat mechanism, so a zombie holder can be declared dead.
 3. **On failure, reset tracked files only** (`git reset --hard <integration head>`). **Never clean

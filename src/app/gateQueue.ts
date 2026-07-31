@@ -15,7 +15,7 @@ import {
   mergeNoFF,
   resetHardTracked,
   resolveCommit,
-  worktreeDirty,
+  trackedChanges,
 } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
 import { acquireLock, type LockHandle } from '../io/lock.ts';
@@ -146,8 +146,11 @@ export async function runQueueGate(
   };
 
   try {
-    if (worktreeDirty(paths.repoRoot)) {
-      return { ok: false, reason: 'checkout_dirty' };
+    // Only tracked modifications matter: a checkout or reset would overwrite those, while
+    // untracked files and submodule build residue survive untouched.
+    const dirty = trackedChanges(paths.repoRoot);
+    if (dirty.length > 0) {
+      return { ok: false, reason: 'checkout_dirty', dirty: dirty.slice(0, 10) };
     }
 
     originalRef = currentRef(paths.repoRoot);

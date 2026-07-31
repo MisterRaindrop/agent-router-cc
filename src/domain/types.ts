@@ -171,6 +171,8 @@ export interface GateResult {
     beatAtMs: number;
     label?: string;
   } | null;
+  /** The tracked modifications that made the checkout unborrowable (capped for display). */
+  dirty?: string[];
   /** Output of the failing `reset` command, when a reset is what stopped the gate. */
   reset_log?: string;
   rc?: number | null;
