@@ -55,20 +55,23 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
       if (effort !== undefined) argv.push('-c', `model_reasoning_effort=${effort}`);
       return argv;
     },
-    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
-    // resume flag can vary by codex version; the session-id continuity guard in
-    // `router resume` catches a wrong invocation instead of silently not resuming.
+    // `codex exec resume <session-id> <prompt>` continues that rollout. Its flags are NOT
+    // the same as `codex exec`'s, which a real run proved: `exec resume` rejects `-C`
+    // outright ("unexpected argument '-C' found") and has no `-s`, so this path never
+    // worked against the real CLI while the fakes were happy with it. The working
+    // directory comes from the spawn (`superviseWorker` sets cwd), making `-C` redundant
+    // anyway, and the sandbox is expressed as a config override -- verified honoured, the
+    // run header reports the mode it was given.
     buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
+      void worktreeDir; // the supervisor spawns in the worktree; `exec resume` takes no -C
       const argv = [
         bin,
         'exec',
         'resume',
         sessionId,
         feedback,
-        '-C',
-        worktreeDir,
-        '-s',
-        'workspace-write',
+        '-c',
+        'sandbox_mode=workspace-write',
         '--skip-git-repo-check',
         '--json',
       ];

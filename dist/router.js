@@ -4742,8 +4742,8 @@ var require_multipleOf = __commonJS({
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
         const res = gen.let("res");
-        const invalid = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid}))`);
+        const invalid2 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+        cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid2}))`);
       }
     };
     exports.default = def;
@@ -6571,7 +6571,7 @@ var require_ajv = __commonJS({
 });
 
 // src/cli/args.ts
-var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run", "all", "explain-savings"]);
+var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "force", "keep", "help", "approve", "dry-run", "all", "explain-savings", "status"]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "id",
   "title",
@@ -6638,10 +6638,10 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync10, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync12, writeFileSync as writeFileSync5 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname6, join as join10, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -9651,6 +9651,20 @@ function git(cwd, args, input) {
 function resolveCommit(cwd, ref) {
   return git(cwd, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]).trim();
 }
+function currentRef(cwd) {
+  const branch = tryGit(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  return branch.ok ? branch.stdout.trim() : resolveCommit(cwd, "HEAD");
+}
+function checkoutRef(cwd, ref) {
+  git(cwd, ["checkout", "--quiet", ref]);
+}
+function checkoutBranch(cwd, branch) {
+  if (branchExists(cwd, branch)) {
+    checkoutRef(cwd, branch);
+    return;
+  }
+  git(cwd, ["checkout", "--quiet", "-b", branch, "HEAD"]);
+}
 function splitNul(s) {
   const parts = s.split("\0");
   if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
@@ -9788,11 +9802,17 @@ function resetHard(cwd, sha) {
   git(cwd, ["reset", "--hard", sha]);
   git(cwd, ["clean", "-fd"]);
 }
+function resetHardTracked(cwd, sha) {
+  git(cwd, ["reset", "--hard", sha]);
+}
 function mergeNoFF(cwd, branch) {
   git(cwd, ["merge", "--no-ff", "--no-edit", branch]);
 }
 function mergeAbort(cwd) {
   tryGit(cwd, ["merge", "--abort"]);
+}
+function branchExists(cwd, branch) {
+  return tryGit(cwd, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok;
 }
 function deleteBranch(cwd, branch) {
   tryGit(cwd, ["branch", "-D", branch]);
@@ -9820,6 +9840,7 @@ function routerPaths(routerDir) {
     worktreesDir: join2(root, "worktrees"),
     symbolsDir: join2(root, "symbols"),
     symbolLatest: join2(root, "symbols", "latest"),
+    gateLock: () => join2(root, "gate.lock"),
     symbolCache: (hash) => join2(root, "symbols", `${hash}.json`),
     taskDir,
     taskYaml: (id) => join2(taskDir(id), "task.yaml"),
@@ -9830,6 +9851,7 @@ function routerPaths(routerDir) {
     diffPatch: (id, run) => join2(runDir(id, run), "diff.patch"),
     delivery: (id, run) => join2(runDir(id, run), "DELIVERY.md"),
     workerLog: (id, run) => join2(runDir(id, run), "logs", "worker.log"),
+    gateLog: (id, run) => join2(runDir(id, run), "logs", "gate.log"),
     worktree: (id, run) => join2(root, "worktrees", id, run)
   };
 }
@@ -10472,20 +10494,23 @@ function codexLauncher(worker) {
       if (effort !== void 0) argv.push("-c", `model_reasoning_effort=${effort}`);
       return argv;
     },
-    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
-    // resume flag can vary by codex version; the session-id continuity guard in
-    // `router resume` catches a wrong invocation instead of silently not resuming.
+    // `codex exec resume <session-id> <prompt>` continues that rollout. Its flags are NOT
+    // the same as `codex exec`'s, which a real run proved: `exec resume` rejects `-C`
+    // outright ("unexpected argument '-C' found") and has no `-s`, so this path never
+    // worked against the real CLI while the fakes were happy with it. The working
+    // directory comes from the spawn (`superviseWorker` sets cwd), making `-C` redundant
+    // anyway, and the sandbox is expressed as a config override -- verified honoured, the
+    // run header reports the mode it was given.
     buildResumeArgv(worktreeDir, sessionId, feedback) {
+      void worktreeDir;
       const argv = [
         bin,
         "exec",
         "resume",
         sessionId,
         feedback,
-        "-C",
-        worktreeDir,
-        "-s",
-        "workspace-write",
+        "-c",
+        "sandbox_mode=workspace-write",
         "--skip-git-repo-check",
         "--json"
       ];
@@ -10568,8 +10593,8 @@ function makeLauncher(worker) {
 }
 function buildPrompt(ctx) {
   const scope = ctx.task.allowed_globs.join(", ");
-  const gate = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(" "));
-  const gateStep = gate.length > 0 ? `run the project gate yourself (${gate.map((g) => `\`${g}\``).join(", ")}), read what it reports and fix until it passes` : `note that NO gate runs here -- the orchestrator runs the real build and tests later in its own environment, so write the tests but do not try to build this project`;
+  const gate2 = (ctx.task.verify ?? []).filter((argv) => argv.length > 0).map((argv) => argv.join(" "));
+  const gateStep = gate2.length > 0 ? `run the project gate yourself (${gate2.map((g) => `\`${g}\``).join(", ")}), read what it reports and fix until it passes` : `note that NO gate runs here -- the orchestrator runs the real build and tests later in its own environment, so write the tests but do not try to build this project`;
   const planRevision = ctx.task.plan_id ?? "none";
   return `${ctx.contractMdText.trim()}
 
@@ -11260,7 +11285,7 @@ async function resumeTask(deps, id, feedback) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(log);
   const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
-  const mismatch = newSession !== null && newSession !== priorSession;
+  const mismatch = newSession !== priorSession;
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== "ok" && !conflict && detectModelMismatch(log);
@@ -11280,7 +11305,7 @@ async function resumeTask(deps, id, feedback) {
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
-    ...mismatch ? { resume_session_mismatch: true } : {},
+    ...mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
     ...conflict ? { conflict: true } : {},
     ...parsed.commandsRun !== void 0 ? { commands_run: parsed.commandsRun } : {},
@@ -11393,10 +11418,594 @@ function appendMetric2(deps, result2, planId, tier) {
   appendMetric(deps.paths, metric);
 }
 
-// src/app/orchestratorUsage.ts
-import { readdirSync as readdirSync2, statSync as statSync4 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+// src/app/gateConfig.ts
+import { lstatSync, readFileSync as readFileSync7 } from "node:fs";
 import { join as join8 } from "node:path";
+var KEYS = /* @__PURE__ */ new Set([
+  "mode",
+  "integration_branch",
+  "gate",
+  "clean_gate",
+  "clean_triggers",
+  "reset",
+  "lock_wait_minutes",
+  "env",
+  "gate_wall_minutes"
+]);
+function gateYamlPath(paths) {
+  return join8(paths.root, "gate.yaml");
+}
+function invalid(problem) {
+  throw new Error(`invalid gate.yaml: ${problem}`);
+}
+function commandList(value, key) {
+  if (!Array.isArray(value)) invalid(`${key} must be an array of argv arrays`);
+  return value.map((command, commandIndex) => {
+    if (!Array.isArray(command) || command.length === 0) {
+      invalid(`${key}[${commandIndex}] must be a non-empty argv array`);
+    }
+    return command.map((arg, argIndex) => {
+      if (typeof arg !== "string" || arg.length === 0) {
+        invalid(`${key}[${commandIndex}][${argIndex}] must be a non-empty string`);
+      }
+      return arg;
+    });
+  });
+}
+function stringList(value, key) {
+  if (!Array.isArray(value)) invalid(`${key} must be an array of non-empty strings`);
+  return value.map((item, index) => {
+    if (typeof item !== "string" || item.length === 0) {
+      invalid(`${key}[${index}] must be a non-empty string`);
+    }
+    return item;
+  });
+}
+function own(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+function loadGateConfig(paths) {
+  const path = gateYamlPath(paths);
+  let text2;
+  try {
+    text2 = readFileSync7(path, "utf8");
+  } catch (err2) {
+    if (err2.code === "ENOENT") {
+      try {
+        lstatSync(path);
+      } catch (statErr) {
+        if (statErr.code === "ENOENT") return { mode: "worktree" };
+      }
+    }
+    throw new Error(`gate.yaml is unreadable at ${path}: ${err2.message}`);
+  }
+  let raw;
+  try {
+    raw = load(text2, { schema: JSON_SCHEMA });
+  } catch (err2) {
+    throw new Error(`gate.yaml parse error: ${err2.message}`);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    invalid("top level must be a mapping");
+  }
+  const object = raw;
+  for (const key of Object.keys(object)) {
+    if (!KEYS.has(key)) invalid(`unknown top-level key "${key}"`);
+  }
+  const modeValue = object.mode;
+  if (modeValue !== "worktree" && modeValue !== "queue") {
+    invalid('mode must be "worktree" or "queue"');
+  }
+  const mode = modeValue;
+  const config = { mode };
+  if (own(object, "integration_branch")) {
+    if (typeof object.integration_branch !== "string" || object.integration_branch.length === 0) {
+      invalid("integration_branch must be a non-empty string");
+    }
+    config.integration_branch = object.integration_branch;
+  }
+  if (own(object, "gate")) config.gate = commandList(object.gate, "gate");
+  if (own(object, "clean_gate")) {
+    config.clean_gate = commandList(object.clean_gate, "clean_gate");
+  }
+  if (own(object, "clean_triggers")) {
+    config.clean_triggers = stringList(object.clean_triggers, "clean_triggers");
+  }
+  if (own(object, "reset")) config.reset = commandList(object.reset, "reset");
+  if (own(object, "lock_wait_minutes")) {
+    const value = object.lock_wait_minutes;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      invalid("lock_wait_minutes must be a non-negative finite number");
+    }
+    config.lock_wait_minutes = value;
+  }
+  if (own(object, "env")) config.env = stringList(object.env, "env");
+  if (own(object, "gate_wall_minutes")) {
+    const value = object.gate_wall_minutes;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      invalid("gate_wall_minutes must be a positive finite number");
+    }
+    config.gate_wall_minutes = value;
+  }
+  if (mode === "queue") {
+    if (config.integration_branch === void 0) {
+      invalid('integration_branch is required when mode is "queue"');
+    }
+    if (config.gate === void 0) invalid('gate is required when mode is "queue"');
+    if (config.gate.length === 0) invalid("gate must contain at least one argv array in queue mode");
+  }
+  return config;
+}
+
+// src/app/gateQueue.ts
+import { writeFileSync as writeFileSync3 } from "node:fs";
+
+// src/io/lock.ts
+import {
+  closeSync as closeSync3,
+  fstatSync,
+  fsyncSync as fsyncSync2,
+  ftruncateSync,
+  openSync as openSync3,
+  readFileSync as readFileSync8,
+  statSync as statSync4,
+  unlinkSync as unlinkSync2,
+  writeSync as writeSync2
+} from "node:fs";
+var DEFAULT_STALE_MS = 9e4;
+var DEFAULT_POLL_MS = 100;
+var ownerCounter = 0;
+function ownerToken() {
+  ownerCounter += 1;
+  return `${process.pid}-${ownerCounter}-${process.hrtime.bigint()}`;
+}
+function errorCode(err2) {
+  return err2.code;
+}
+function parseStored(text2) {
+  let value;
+  try {
+    value = JSON.parse(text2);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const object = value;
+  if (!Number.isInteger(object.pid) || object.pid <= 0) return null;
+  if (typeof object.startedAtMs !== "number" || !Number.isFinite(object.startedAtMs)) return null;
+  if (typeof object.beatAtMs !== "number" || !Number.isFinite(object.beatAtMs)) return null;
+  if (object.label !== void 0 && typeof object.label !== "string") return null;
+  const info = {
+    pid: object.pid,
+    startedAtMs: object.startedAtMs,
+    beatAtMs: object.beatAtMs
+  };
+  if (typeof object.label === "string") info.label = object.label;
+  return { info, stored: value };
+}
+function readForAcquire(path) {
+  let text2;
+  try {
+    text2 = readFileSync8(path, "utf8");
+  } catch (err2) {
+    if (errorCode(err2) === "ENOENT") return { kind: "missing" };
+    throw new Error(`cannot read lock ${path}: ${err2.message}`);
+  }
+  const parsed = parseStored(text2);
+  if (parsed === null) return { kind: "corrupt" };
+  return { kind: "valid", ...parsed };
+}
+function readLock(path) {
+  try {
+    const parsed = parseStored(readFileSync8(path, "utf8"));
+    return parsed?.info ?? null;
+  } catch {
+    return null;
+  }
+}
+function pidIsGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err2) {
+    return errorCode(err2) === "ESRCH";
+  }
+}
+function staleReason(read, atMs, staleMs) {
+  if (read.kind === "corrupt") return "corrupt";
+  if (atMs - read.info.beatAtMs > staleMs) return "stale-heartbeat";
+  if (pidIsGone(read.info.pid)) return "dead-pid";
+  return null;
+}
+function identity(fd) {
+  const stat = fstatSync(fd, { bigint: true });
+  return { dev: stat.dev, ino: stat.ino };
+}
+function sameIdentity(a, b) {
+  return a.dev === b.dev && a.ino === b.ino;
+}
+function currentIdentity(path) {
+  try {
+    const stat = statSync4(path, { bigint: true });
+    return { dev: stat.dev, ino: stat.ino };
+  } catch (err2) {
+    if (errorCode(err2) === "ENOENT") return null;
+    throw err2;
+  }
+}
+function writeStored(fd, value) {
+  const data = Buffer.from(`${JSON.stringify(value)}
+`);
+  let offset = 0;
+  while (offset < data.length) {
+    const written = writeSync2(fd, data, offset, data.length - offset, offset);
+    if (written === 0) throw new Error("lock write made no progress");
+    offset += written;
+  }
+  ftruncateSync(fd, data.length);
+  fsyncSync2(fd);
+}
+function sleepSync(ms) {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function assertOption(name, value, allowZero) {
+  if (!Number.isFinite(value) || (allowZero ? value < 0 : value <= 0)) {
+    throw new Error(`${name} must be ${allowZero ? "a non-negative" : "a positive"} finite number`);
+  }
+}
+function acquireLock(path, opts) {
+  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  assertOption("waitMs", opts.waitMs, true);
+  assertOption("staleMs", staleMs, true);
+  assertOption("pollMs", pollMs, false);
+  const clock = opts.now ?? Date.now;
+  const usesRealClock = opts.now === void 0;
+  const waitingStartedAt = clock();
+  let atMs = waitingStartedAt;
+  let takeover;
+  for (; ; ) {
+    const token = ownerToken();
+    let fd;
+    try {
+      fd = openSync3(path, "wx");
+    } catch (err2) {
+      if (errorCode(err2) !== "EEXIST") {
+        throw new Error(`cannot acquire lock ${path}: ${err2.message}`);
+      }
+      const holderRead = readForAcquire(path);
+      if (holderRead.kind === "missing") {
+        atMs = clock();
+        continue;
+      }
+      const reason = staleReason(holderRead, atMs, staleMs);
+      if (reason !== null) {
+        const confirmed = readForAcquire(path);
+        if (confirmed.kind === "missing") {
+          takeover = void 0;
+          atMs = clock();
+          continue;
+        }
+        const confirmedReason = staleReason(confirmed, atMs, staleMs);
+        if (confirmedReason === null) {
+          takeover = void 0;
+          atMs = clock();
+          continue;
+        }
+        let removed = false;
+        try {
+          unlinkSync2(path);
+          removed = true;
+        } catch (unlinkErr) {
+          if (errorCode(unlinkErr) !== "ENOENT") {
+            throw new Error(`cannot reclaim stale lock ${path}: ${unlinkErr.message}`);
+          }
+        }
+        if (removed) {
+          takeover = {
+            atMs,
+            reason: confirmedReason,
+            holder: confirmed.kind === "valid" ? confirmed.info : null
+          };
+        } else {
+          takeover = void 0;
+        }
+        atMs = clock();
+        continue;
+      }
+      takeover = void 0;
+      if (atMs - waitingStartedAt >= opts.waitMs) {
+        return {
+          blocked: true,
+          holder: holderRead.kind === "valid" ? holderRead.info : readLock(path)
+        };
+      }
+      if (usesRealClock) {
+        sleepSync(Math.min(pollMs, opts.waitMs - (atMs - waitingStartedAt)));
+      }
+      atMs = clock();
+      continue;
+    }
+    const stored = {
+      pid: process.pid,
+      startedAtMs: atMs,
+      beatAtMs: atMs,
+      ownerToken: token
+    };
+    if (takeover !== void 0) stored.takeover = takeover;
+    let acquiredIdentity;
+    try {
+      writeStored(fd, stored);
+      acquiredIdentity = identity(fd);
+    } catch (err2) {
+      closeSync3(fd);
+      try {
+        unlinkSync2(path);
+      } catch {
+      }
+      throw new Error(`cannot initialize lock ${path}: ${err2.message}`);
+    }
+    closeSync3(fd);
+    const installedIdentity = currentIdentity(path);
+    if (installedIdentity === null || !sameIdentity(installedIdentity, acquiredIdentity)) {
+      takeover = void 0;
+      atMs = clock();
+      continue;
+    }
+    let released = false;
+    return {
+      path,
+      heartbeat() {
+        if (released) return;
+        let heartbeatFd;
+        try {
+          heartbeatFd = openSync3(path, "r+");
+        } catch (err2) {
+          throw new Error(`cannot heartbeat lock ${path}: ${err2.message}`);
+        }
+        try {
+          if (!sameIdentity(identity(heartbeatFd), acquiredIdentity)) {
+            throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
+          }
+          const parsed = parseStored(readFileSync8(heartbeatFd, "utf8"));
+          if (parsed === null || parsed.stored.ownerToken !== token) {
+            throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
+          }
+          parsed.stored.beatAtMs = clock();
+          writeStored(heartbeatFd, parsed.stored);
+        } finally {
+          closeSync3(heartbeatFd);
+        }
+      },
+      release() {
+        if (released) return;
+        let contents;
+        try {
+          contents = readFileSync8(path, "utf8");
+        } catch (err2) {
+          if (errorCode(err2) === "ENOENT") {
+            released = true;
+            return;
+          }
+          throw new Error(`cannot release lock ${path}: ${err2.message}`);
+        }
+        const parsed = parseStored(contents);
+        if (parsed === null || parsed.stored.ownerToken !== token) {
+          released = true;
+          return;
+        }
+        try {
+          unlinkSync2(path);
+          released = true;
+        } catch (err2) {
+          if (errorCode(err2) === "ENOENT") released = true;
+          else throw new Error(`cannot release lock ${path}: ${err2.message}`);
+        }
+      }
+    };
+  }
+}
+
+// src/app/gateQueue.ts
+var RUN2 = runId(1);
+var LOCK_WAIT_MINUTES_DEFAULT = 60;
+var GATE_WALL_MINUTES_DEFAULT = 180;
+var LOCK_HEARTBEAT_MS = 2e4;
+function persistGate(paths, taskId, run, result2, gate2) {
+  result2.gate = gate2;
+  writeResult(paths, taskId, run, result2);
+  return gate2;
+}
+async function runQueueGate(deps, taskId) {
+  const { paths } = deps;
+  const config = loadGateConfig(paths);
+  if (config.mode !== "queue") {
+    throw new Error('runQueueGate requires gate mode "queue"');
+  }
+  const run = RUN2;
+  const result2 = readResult(paths, taskId, run);
+  if (result2 === null) return { ok: false, reason: "result_missing" };
+  if (result2.exit_class === "contract_conflict") {
+    return { ok: false, reason: "contract_conflict" };
+  }
+  if (result2.verifier?.result !== "PASSED") {
+    return { ok: false, reason: "verifier_not_passed" };
+  }
+  const taskBranch = runBranch(taskId, run);
+  if (!branchExists(paths.repoRoot, taskBranch)) {
+    return { ok: false, reason: "run_branch_missing" };
+  }
+  const acquired = acquireLock(paths.gateLock(), {
+    waitMs: (config.lock_wait_minutes ?? LOCK_WAIT_MINUTES_DEFAULT) * 6e4
+  });
+  if ("blocked" in acquired) {
+    return {
+      ok: false,
+      reason: "lock_unavailable",
+      holder: acquired.holder
+    };
+  }
+  const lock = acquired;
+  let originalRef;
+  let baseSha;
+  let mergeSha;
+  let keepMerge = false;
+  let currentPgid;
+  let heartbeatError;
+  let heartbeatTimer;
+  const stopHeartbeat = () => {
+    if (heartbeatTimer !== void 0) clearInterval(heartbeatTimer);
+    heartbeatTimer = void 0;
+  };
+  const startHeartbeat = () => {
+    heartbeatTimer = setInterval(() => {
+      try {
+        lock.heartbeat();
+      } catch (err2) {
+        heartbeatError = err2 instanceof Error ? err2 : new Error(String(err2));
+        if (currentPgid !== void 0) {
+          try {
+            killProcessGroup(currentPgid, "SIGTERM");
+          } catch {
+          }
+        }
+      }
+    }, LOCK_HEARTBEAT_MS);
+  };
+  const supervise = async (argv, logPath, maxWallMs, env) => {
+    if (heartbeatError !== void 0) throw heartbeatError;
+    currentPgid = void 0;
+    const outcome = await superviseWorker({
+      argv,
+      cwd: paths.repoRoot,
+      env,
+      logPath,
+      heartbeatPath: paths.heartbeat(taskId, run),
+      watchDir: paths.repoRoot,
+      maxWallMs,
+      stallMs: maxWallMs,
+      onPgid: (pgid) => {
+        currentPgid = pgid;
+      }
+    });
+    currentPgid = void 0;
+    if (heartbeatError !== void 0) throw heartbeatError;
+    return outcome;
+  };
+  try {
+    if (worktreeDirty(paths.repoRoot)) {
+      return { ok: false, reason: "checkout_dirty" };
+    }
+    originalRef = currentRef(paths.repoRoot);
+    checkoutBranch(paths.repoRoot, config.integration_branch);
+    baseSha = resolveCommit(paths.repoRoot, "HEAD");
+    try {
+      mergeNoFF(paths.repoRoot, taskBranch);
+    } catch {
+      mergeAbort(paths.repoRoot);
+      resetHardTracked(paths.repoRoot, baseSha);
+      return persistGate(paths, taskId, run, result2, {
+        ok: false,
+        reason: "apply_conflict"
+      });
+    }
+    mergeSha = resolveCommit(paths.repoRoot, "HEAD");
+    const changes = collectDiff(paths.repoRoot, baseSha, "HEAD");
+    const useClean = config.clean_gate !== void 0 && (changes.some((entry) => entry.status === "D") || changes.some(
+      (entry) => matchAny(entry.path, config.clean_triggers ?? []) || entry.oldPath !== void 0 && matchAny(entry.oldPath, config.clean_triggers ?? [])
+    ));
+    const level = useClean ? "clean" : "task";
+    const commands = useClean ? config.clean_gate : config.gate;
+    if (commands.length === 0) {
+      throw new Error(`configured ${level === "clean" ? "clean_gate" : "gate"} has no commands`);
+    }
+    const gateLog = paths.gateLog(taskId, run);
+    const maxWallMs = (config.gate_wall_minutes ?? GATE_WALL_MINUTES_DEFAULT) * 6e4;
+    const env = buildWorkerEnv(process.env, config.env ?? []);
+    startHeartbeat();
+    try {
+      const resetLog = `${gateLog}.reset`;
+      for (const argv of config.reset ?? []) {
+        const resetOutcome = await supervise(argv, resetLog, maxWallMs, env);
+        if (resetOutcome.exitClass !== "ok") {
+          writeFileSync3(gateLog, "", { flag: "a" });
+          resetHardTracked(paths.repoRoot, baseSha);
+          return persistGate(paths, taskId, run, result2, {
+            ok: false,
+            reason: "reset_failed",
+            level,
+            integration_branch: config.integration_branch,
+            base_sha: baseSha,
+            head_sha: mergeSha,
+            log: gateLog,
+            // The gate log is empty on purpose -- no gate command ran -- so the reason has
+            // to be reachable, not stranded in an unreferenced sibling file.
+            reset_log: resetLog,
+            rc: resetOutcome.rc
+          });
+        }
+      }
+      for (const argv of commands) {
+        const gateOutcome = await supervise(argv, gateLog, maxWallMs, env);
+        if (gateOutcome.exitClass !== "ok") {
+          resetHardTracked(paths.repoRoot, baseSha);
+          return persistGate(paths, taskId, run, result2, {
+            ok: false,
+            reason: "gate_failed",
+            level,
+            integration_branch: config.integration_branch,
+            base_sha: baseSha,
+            head_sha: mergeSha,
+            log: gateLog,
+            rc: gateOutcome.rc
+          });
+        }
+      }
+    } finally {
+      stopHeartbeat();
+    }
+    resetHardTracked(paths.repoRoot, mergeSha);
+    const gate2 = {
+      ok: true,
+      level,
+      integration_branch: config.integration_branch,
+      base_sha: baseSha,
+      head_sha: mergeSha,
+      log: gateLog
+    };
+    persistGate(paths, taskId, run, result2, gate2);
+    keepMerge = true;
+    return gate2;
+  } finally {
+    stopHeartbeat();
+    let restorationError;
+    if (originalRef !== void 0) {
+      if (!keepMerge && baseSha !== void 0) {
+        try {
+          resetHardTracked(paths.repoRoot, baseSha);
+        } catch (err2) {
+          restorationError = err2;
+        }
+      }
+      try {
+        checkoutRef(paths.repoRoot, originalRef);
+      } catch (err2) {
+        if (restorationError === void 0) restorationError = err2;
+      }
+    }
+    try {
+      lock.release();
+    } catch (err2) {
+      if (restorationError === void 0) restorationError = err2;
+    }
+    if (restorationError !== void 0) throw restorationError;
+  }
+}
+
+// src/app/orchestratorUsage.ts
+import { readdirSync as readdirSync2, statSync as statSync5 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join9 } from "node:path";
 
 // src/core/pricing.ts
 var TABLE = [
@@ -11434,7 +12043,7 @@ function deriveBaselineCost(tokensIn, tokensOut) {
 }
 
 // src/io/transcript.ts
-import { closeSync as closeSync3, openSync as openSync3, readSync } from "node:fs";
+import { closeSync as closeSync4, openSync as openSync4, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 var emptyUsage = () => ({
   inputTokens: 0,
@@ -11467,7 +12076,7 @@ function addLineUsage(line, sinceIso, model, untilIso, total) {
 function sumMainModelUsageSince(transcriptPath, sinceIso, model, untilIso) {
   let fd;
   try {
-    fd = openSync3(transcriptPath, "r");
+    fd = openSync4(transcriptPath, "r");
   } catch {
     return emptyUsage();
   }
@@ -11492,7 +12101,7 @@ function sumMainModelUsageSince(transcriptPath, sinceIso, model, untilIso) {
     readFailed = true;
   } finally {
     try {
-      closeSync3(fd);
+      closeSync4(fd);
     } catch {
     }
   }
@@ -11510,10 +12119,10 @@ function newestTranscript(projectsDir) {
   }
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
-    const path = join8(projectsDir, entry.name);
+    const path = join9(projectsDir, entry.name);
     let mtimeMs;
     try {
-      mtimeMs = statSync4(path).mtimeMs;
+      mtimeMs = statSync5(path).mtimeMs;
     } catch {
       continue;
     }
@@ -11526,7 +12135,7 @@ function newestTranscript(projectsDir) {
 function resolveTranscript(paths, opts) {
   if (opts.transcriptPath !== void 0) return opts.transcriptPath;
   const projectKey = paths.repoRoot.replaceAll("/", "-");
-  const projectsDir = opts.projectsDir ?? join8(homedir2(), ".claude", "projects", projectKey);
+  const projectsDir = opts.projectsDir ?? join9(homedir2(), ".claude", "projects", projectKey);
   return newestTranscript(projectsDir);
 }
 function recordOrchestratorUsage(paths, clock, opts) {
@@ -11559,7 +12168,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync11, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
 import { resolve as resolve3 } from "node:path";
 
 // src/core/symbols.ts
@@ -11673,13 +12282,13 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync7, readdirSync as readdirSync3, readFileSync as readFileSync8, statSync as statSync5 } from "node:fs";
+import { existsSync as existsSync7, readdirSync as readdirSync3, readFileSync as readFileSync10, statSync as statSync6 } from "node:fs";
 import { relative, resolve as resolve2 } from "node:path";
 
 // src/io/treeSitter.ts
-import { readFileSync as readFileSync7 } from "node:fs";
+import { readFileSync as readFileSync9 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname5, join as join9 } from "node:path";
+import { dirname as dirname5, join as join10 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 function locateRuntime() {
   try {
@@ -11687,16 +12296,16 @@ function locateRuntime() {
     const cjs = req.resolve("web-tree-sitter");
     const dir = dirname5(cjs);
     return {
-      moduleHref: pathToFileURL(join9(dir, "tree-sitter.js")).href,
-      tsWasm: join9(dir, "tree-sitter.wasm"),
+      moduleHref: pathToFileURL(join10(dir, "tree-sitter.js")).href,
+      tsWasm: join10(dir, "tree-sitter.wasm"),
       cppWasm: req.resolve("tree-sitter-wasms/out/tree-sitter-cpp.wasm")
     };
   } catch {
     const vendor = fileURLToPath(new URL("./vendor/", import.meta.url));
     return {
-      moduleHref: pathToFileURL(join9(vendor, "tree-sitter.js")).href,
-      tsWasm: join9(vendor, "tree-sitter.wasm"),
-      cppWasm: join9(vendor, "tree-sitter-cpp.wasm")
+      moduleHref: pathToFileURL(join10(vendor, "tree-sitter.js")).href,
+      tsWasm: join10(vendor, "tree-sitter.wasm"),
+      cppWasm: join10(vendor, "tree-sitter-cpp.wasm")
     };
   }
 }
@@ -11706,9 +12315,9 @@ async function getParser() {
     ready = (async () => {
       const rt = locateRuntime();
       const mod = await import(rt.moduleHref);
-      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync7(rt.tsWasm)) });
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync9(rt.tsWasm)) });
       const parser = new mod.Parser();
-      const cpp = await mod.Language.load(new Uint8Array(readFileSync7(rt.cppWasm)));
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync9(rt.cppWasm)));
       parser.setLanguage(cpp);
       return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
     })();
@@ -11794,7 +12403,7 @@ function hashRoots(roots) {
 function walkFiles(root, acc) {
   let st;
   try {
-    st = statSync5(root);
+    st = statSync6(root);
   } catch {
     return;
   }
@@ -11810,7 +12419,7 @@ function walkFiles(root, acc) {
 }
 function loadRaw(cachePath) {
   try {
-    return JSON.parse(readFileSync8(cachePath, "utf8"));
+    return JSON.parse(readFileSync10(cachePath, "utf8"));
   } catch {
     return null;
   }
@@ -11831,14 +12440,14 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
   let bytes = 0;
   for (const abs of files) {
     const rel = relative(repoRoot, abs);
-    const st = statSync5(abs);
+    const st = statSync6(abs);
     const cached = prevByFile.get(rel);
     if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
       out2.push(cached);
       symbols += cached.symbols.length;
       continue;
     }
-    const src = readFileSync8(abs, "utf8");
+    const src = readFileSync10(abs, "utf8");
     bytes += src.length;
     if (bytes > limits.maxBytes) {
       return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
@@ -11866,7 +12475,7 @@ async function refreshIndex(cachePath, repoRoot) {
     const abs = resolve2(repoRoot, f.file);
     let st;
     try {
-      st = statSync5(abs);
+      st = statSync6(abs);
     } catch {
       changed = true;
       continue;
@@ -11875,7 +12484,7 @@ async function refreshIndex(cachePath, repoRoot) {
       out2.push(f);
       continue;
     }
-    const parsed = await parseSymbols(readFileSync8(abs, "utf8"));
+    const parsed = await parseSymbols(readFileSync10(abs, "utf8"));
     grammar = parsed.grammar;
     out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
@@ -11896,7 +12505,7 @@ function loadCodeIntelConfig(paths) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
   let raw;
   try {
-    raw = load(readFileSync9(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync11(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -11929,25 +12538,25 @@ function rootsFor(paths, cfg, dirs) {
   return chosen.map((d) => resolve3(paths.repoRoot, d));
 }
 async function runIndex(paths, cfg, dirs) {
-  const gate = indexEnabled(cfg);
-  if (gate !== null) return gate;
+  const gate2 = indexEnabled(cfg);
+  if (gate2 !== null) return gate2;
   const roots = rootsFor(paths, cfg, dirs);
   const hash = hashRoots(roots);
   const cache2 = paths.symbolCache(hash);
   const r = await buildIndex(roots, cache2, paths.repoRoot, { maxFiles: cfg.index.maxFiles, maxBytes: cfg.index.maxBytes });
   if (r.degraded !== void 0) return { degraded: true, reason: `${r.degraded.reason}; narrow codeIntelligence.index.scope / raise maxFiles / disable; using rg` };
   mkdirSync4(paths.symbolsDir, { recursive: true });
-  writeFileSync3(paths.symbolLatest, hash);
+  writeFileSync4(paths.symbolLatest, hash);
   return { files: r.files, symbols: r.symbols, reparsed: r.reparsed, cache: cache2 };
 }
 async function runQuery(paths, cfg, sub, args) {
-  const gate = indexEnabled(cfg);
-  if (gate !== null) return gate;
+  const gate2 = indexEnabled(cfg);
+  if (gate2 !== null) return gate2;
   let cache2;
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
   } else if (existsSync8(paths.symbolLatest)) {
-    cache2 = paths.symbolCache(readFileSync9(paths.symbolLatest, "utf8").trim());
+    cache2 = paths.symbolCache(readFileSync11(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
@@ -12287,13 +12896,13 @@ var CliError = class extends Error {
 function depsFor(ctx) {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const found = explicit ?? findRouterDir(ctx.cwd);
-  const rd = found ?? join10(ctx.cwd, ROUTER_DIR);
+  const rd = found ?? join11(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
     if (!existsSync9(d)) mkdirSync5(d, { recursive: true });
   }
-  const gi = join10(paths.root, ".gitignore");
-  if (!existsSync9(gi)) writeFileSync4(gi, "*\n");
+  const gi = join11(paths.root, ".gitignore");
+  if (!existsSync9(gi)) writeFileSync5(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -12312,7 +12921,7 @@ function requireIds(ctx) {
   }
   return ids;
 }
-var RUN2 = runId(1);
+var RUN3 = runId(1);
 var pad2 = (s, n) => s.length >= n ? s : s + " ".repeat(n - s.length);
 function taskTemplate(id, title) {
   return dump(
@@ -12384,8 +12993,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync5(paths.taskDir(id), { recursive: true });
-  if (!existsSync9(paths.taskYaml(id))) writeFileSync4(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync9(paths.contractMd(id))) writeFileSync4(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync9(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync9(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -12487,8 +13096,10 @@ var resume = async (ctx) => {
       exit_class: result2.exit_class
     },
     () => {
-      if (mism)
-        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result2.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      if (mism) {
+        const reported = result2.resume_reported_session == null ? "reported no session id at all" : `reported a different session id (${result2.resume_reported_session})`;
+        return `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; nothing committed. Re-dispatch, or check the resume invocation.`;
+      }
       const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
       return `${id}: resumed -> ${v} (${result2.exit_class}); ${next}`;
     }
@@ -12500,15 +13111,15 @@ var land = (ctx) => {
   const ids = requireIds(ctx);
   const landed = [];
   for (const id of ids) {
-    const result2 = readResult(paths, id, RUN2);
+    const result2 = readResult(paths, id, RUN3);
     const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(", ")}` : "";
     if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
     if (result2.conflict === true || result2.exit_class === "contract_conflict") {
-      const report = result2.delivery?.path ?? paths.delivery(id, RUN2);
+      const report = result2.delivery?.path ?? paths.delivery(id, RUN3);
       throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
     }
     if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
-    const branch = runBranch(id, RUN2);
+    const branch = runBranch(id, RUN3);
     try {
       mergeNoFF(paths.repoRoot, branch);
     } catch (e) {
@@ -12516,9 +13127,9 @@ var land = (ctx) => {
       throw new CliError(`merge failed (aborted, tree restored): ${e.message}${prior}`, 1);
     }
     const mergeCommit = resolveCommit(paths.repoRoot, "HEAD");
-    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN2));
+    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN3));
     deleteBranch(paths.repoRoot, branch);
-    writeResult(paths, id, RUN2, { ...result2, merge_commit: mergeCommit });
+    writeResult(paths, id, RUN3, { ...result2, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
   emit(
@@ -12528,15 +13139,50 @@ var land = (ctx) => {
   );
   return 0;
 };
+var gate = async (ctx) => {
+  const deps = depsFor(ctx);
+  const cfg = loadGateConfig(deps.paths);
+  if (flagBool(ctx.args.flags, "status")) {
+    const holder = readLock(deps.paths.gateLock());
+    emit(
+      ctx.json,
+      { ok: true, mode: cfg.mode, integration_branch: cfg.integration_branch ?? null, holder },
+      () => holder === null ? `gate mode ${cfg.mode}; no verification in progress` : `gate mode ${cfg.mode}; BUSY -- pid ${holder.pid} holds the checkout (last beat ${new Date(holder.beatAtMs).toISOString()})`
+    );
+    return 0;
+  }
+  if (cfg.mode !== "queue") {
+    throw new CliError(
+      `gate mode is "${cfg.mode}": this project verifies inside the run worktree via each task's \`verify\`, so there is nothing to queue. Set mode: queue in ${gateYamlPath(deps.paths)} for a project whose real gate needs Docker, a single build directory, or live services.`,
+      2
+    );
+  }
+  const ids = requireIds(ctx);
+  const done = [];
+  for (const id of ids) {
+    const g = await runQueueGate(deps, id);
+    done.push({ id, gate: g });
+    if (!g.ok) break;
+  }
+  const allOk = done.every((d) => d.gate.ok) && done.length === ids.length;
+  emit(
+    ctx.json,
+    { ok: allOk, results: done },
+    () => done.map(
+      ({ id, gate: g }) => g.ok ? `${id}: VERIFIED (${g.level} gate) on ${g.integration_branch} -> ${(g.head_sha ?? "").slice(0, 12)}; evidence: ${g.log}` : `${id}: NOT VERIFIED (${g.reason})${g.log ? `; evidence: ${g.log}` : ""}${g.reset_log ? `; reset output: ${g.reset_log}` : ""}`
+    ).concat(allOk ? [] : ["stopped at the first failure; the remaining tasks were not attempted"]).join("\n")
+  );
+  return allOk ? 0 : 1;
+};
 var result = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
-  const run = flagStr(ctx.args.flags, "run") ?? RUN2;
+  const run = flagStr(ctx.args.flags, "run") ?? RUN3;
   const res = readResult(paths, id, run);
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync10(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync12(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -12554,12 +13200,12 @@ var list = (ctx) => {
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync10(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync12(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
-    const res = readResult(paths, id, RUN2);
+    const res = readResult(paths, id, RUN3);
     const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
-    const worktree = existsSync9(paths.worktree(id, RUN2));
+    const worktree = existsSync9(paths.worktree(id, RUN3));
     return { id, title, status, worktree };
   });
   emit(ctx.json, { ok: true, tasks: rows }, () => {
@@ -12641,13 +13287,13 @@ var orchestratorUsage = (ctx) => {
   return 0;
 };
 var setupStatusline = (ctx) => {
-  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join10(homedir3(), ".claude", "settings.json");
+  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join11(homedir3(), ".claude", "settings.json");
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
   if (existsSync9(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync10(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync12(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }
@@ -12784,6 +13430,7 @@ var HANDLERS = {
   dispatch,
   resume,
   land,
+  gate,
   result,
   list,
   usage,
@@ -12805,6 +13452,7 @@ Usage: router <command> [options]
   dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs
   resume <id> --feedback continue the prior executor session with feedback (no cold restart)
   land <id...>           merge PASSED dispatch diffs sequentially
+  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
   usage [--all]          token/cost usage across recent dispatches (last 7 days)

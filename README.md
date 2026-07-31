@@ -121,6 +121,10 @@ and merges — that is the token saving.
                          #   Several ids run concurrently (--max-parallel <n> caps it),
                          #   so the wall clock is the slowest task, not the sum
 /router:land <id...>     # merge those tasks' verified diffs into your working branch
+/router:gate <id...>     # for a project whose real gate needs Docker or one build directory:
+                         #   verify each commit in your own checkout, one at a time, on the
+                         #   integration head -- keeping the build cache warm (--status shows
+                         #   whether anything currently holds it)
 /router:result <id>      # show task <id>'s per-check verifier report and log tail
 ```
 

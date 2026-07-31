@@ -48,6 +48,29 @@ export interface ModelTierConfig {
   review: WorkerPolicy[];
 }
 
+// -- Real verification gate (config-driven; see app/gateConfig.ts) ------------
+export type GateMode = 'worktree' | 'queue';
+
+export interface GateConfig {
+  mode: GateMode;
+  /** Branch the queue owns and merges verified commits into. Required when mode is 'queue'. */
+  integration_branch?: string;
+  /** The real gate, as argv arrays, run in the borrowed checkout. Required when 'queue'. */
+  gate?: string[][];
+  /** Optional: a heavier gate for changes an incremental build cannot be trusted for. */
+  clean_gate?: string[][];
+  /** Optional: globs that force `clean_gate` (build files, generators). A deletion also does. */
+  clean_triggers?: string[];
+  /** Optional: run before every gate to reset business state (never compile caches). */
+  reset?: string[][];
+  /** How long to wait for the lock before giving up. Default 60. */
+  lock_wait_minutes?: number;
+  /** Additional parent-environment variable names explicitly exposed to the gate. */
+  env?: string[];
+  /** Hard wall-clock limit for each reset/gate command. Default 180. */
+  gate_wall_minutes?: number;
+}
+
 // -- task.yaml (machine contract; schema-validated) ----------------------------
 export interface TaskYaml {
   schema_version: 1;
@@ -134,6 +157,25 @@ export interface VerifierReport {
 }
 
 // -- Run result + metrics ------------------------------------------------------
+export interface GateResult {
+  ok: boolean;
+  reason?: string;
+  level?: 'task' | 'clean';
+  integration_branch?: string;
+  base_sha?: string;
+  head_sha?: string;
+  log?: string;
+  holder?: {
+    pid: number;
+    startedAtMs: number;
+    beatAtMs: number;
+    label?: string;
+  } | null;
+  /** Output of the failing `reset` command, when a reset is what stopped the gate. */
+  reset_log?: string;
+  rc?: number | null;
+}
+
 export interface DeliveryHeader {
   task: string;
   plan_revision?: string;
@@ -164,10 +206,13 @@ export interface RunResult {
   tokens?: { input: number; output: number };
   cost_usd?: number;
   verifier?: VerifierReport;
+  gate?: GateResult;
   diff_sha?: string;
   session_id?: string | null; // executor session/thread id, for a later `router resume`
   resumed?: boolean; // this run continued a prior executor session
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
+  /** What the resumed run actually reported: another id, or `null` for none at all. */
+  resume_reported_session?: string | null;
   base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
   // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
   // Set so a caller can recover work from a run that was killed after it had finished.

@@ -337,7 +337,12 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
   const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
-  const mismatch = newSession !== null && newSession !== priorSession;
+  // A resume that reports NO session id is not proof of re-attachment either. Measured: a
+  // resume invoked with a flag the CLI rejects dies before starting and reports none at all,
+  // and the old guard read that absence as agreement -- so it would have committed work under
+  // a continuity claim nothing supported. A real resume does report the id, so absence means
+  // something went wrong.
+  const mismatch = newSession !== priorSession;
 
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
@@ -358,7 +363,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
-    ...(mismatch ? { resume_session_mismatch: true } : {}),
+    ...(mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(conflict ? { conflict: true } : {}),
     ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),

@@ -90,8 +90,11 @@ Therefore:
    `verify:` for every package (e.g. `verify: [["npm", "run", "check"]]`) -- the diff then
    arrives already proven to compile and pass, and your review goes on judgment instead of on
    breakage. If the real gate needs Docker, a single shared build directory, or CI, leave
-   `verify: []`; the executor must then be told it cannot build there, and you run the gate
-   yourself. Either way `verify` is mechanical: it answers "did it run and pass", never "is it
+   `verify: []`, declare `mode: queue` in `.router/gate.yaml`, and verify with
+   **`/router:gate <id...>`**: it borrows the project's own checkout under an exclusive lock,
+   verifies each commit on the current integration head, keeps the build cache warm, and puts
+   your branch back. Tell the executor plainly that it cannot build there, so it reports
+   `gate_ran: false` instead of burning its budget on a build that cannot work. Either way `verify` is mechanical: it answers "did it run and pass", never "is it
    right". **`${CLAUDE_PLUGIN_ROOT}/references/work-package.md` has the full rules** -- the
    seven faces, risk-to-review mapping, both gate modes (including borrowing the main checkout
    safely), the delivery-report and `CONTRACT_CONFLICT` protocols, and the session policy.

@@ -108,7 +108,15 @@ test('codex resume carries the same model + effort', () => {
     'fix it',
   );
   assert.equal(argv[argv.indexOf('-m') + 1], 'gpt-5.6-terra');
-  assert.equal(argv[argv.indexOf('-c') + 1], 'model_reasoning_effort=xhigh');
+  // Several `-c` overrides now ride along, so look through all of them.
+  const overrides = argv.filter((token, i) => argv[i - 1] === '-c');
+  assert.ok(overrides.includes('model_reasoning_effort=xhigh'), overrides.join(' '));
+  // Measured against the real CLI: `codex exec resume` REJECTS `-C` ("unexpected argument")
+  // and has no `-s`, so this path never worked while only the fakes exercised it. The cwd
+  // comes from the spawn, and the sandbox is expressed as a config override instead.
+  assert.ok(!argv.includes('-C'), 'exec resume does not accept -C');
+  assert.ok(!argv.includes('-s'), 'exec resume does not accept -s');
+  assert.ok(overrides.includes('sandbox_mode=workspace-write'), overrides.join(' '));
 });
 
 test('claude launcher passes --model + --effort', () => {

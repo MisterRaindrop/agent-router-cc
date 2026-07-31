@@ -122,3 +122,32 @@ test('resume requires --feedback', () => {
     fx.cleanup(dir);
   }
 });
+
+// Measured: `codex exec resume` rejects flags that `codex exec` accepts, and such a run dies
+// before the session starts, reporting no session id at all. The old guard read that absence
+// as agreement and committed the work; it must fail loud instead.
+test('a resume that reports no session id is not treated as re-attached', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const bin = fileURLToPath(new URL('../testkit/fakeCodexResumeSilent.mjs', import.meta.url));
+  chmodSync(bin, 0o755);
+  const env = { ROUTER_CODEX_BIN: bin, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'silent'], env);
+    assert.equal(router(dir, ['dispatch', 'silent', '--json'], env).code, 0);
+    const r = router(dir, ['resume', 'silent', '--feedback', 'try again', '--json'], env);
+    assert.equal(r.code, 1, r.out);
+    const out = JSON.parse(r.out.split('\n').find((line) => line.trim().startsWith('{')) ?? '{}') as Record<string, unknown>;
+    assert.equal(out.session_mismatch, true);
+    // Nothing may be committed under a continuity claim nothing supports.
+    const result = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'silent', 'runs', 'run-001', 'result.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    assert.equal(result.resume_session_mismatch, true);
+    assert.equal(result.resume_reported_session, null);
+    assert.equal(result.verifier, undefined);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
