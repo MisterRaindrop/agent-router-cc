@@ -48,6 +48,25 @@ export interface ModelTierConfig {
   review: WorkerPolicy[];
 }
 
+// -- Real verification gate (config-driven; see app/gateConfig.ts) ------------
+export type GateMode = 'worktree' | 'queue';
+
+export interface GateConfig {
+  mode: GateMode;
+  /** Branch the queue owns and merges verified commits into. Required when mode is 'queue'. */
+  integration_branch?: string;
+  /** The real gate, as argv arrays, run in the borrowed checkout. Required when 'queue'. */
+  gate?: string[][];
+  /** Optional: a heavier gate for changes an incremental build cannot be trusted for. */
+  clean_gate?: string[][];
+  /** Optional: globs that force `clean_gate` (build files, generators). A deletion also does. */
+  clean_triggers?: string[];
+  /** Optional: run before every gate to reset business state (never compile caches). */
+  reset?: string[][];
+  /** How long to wait for the lock before giving up. Default 60. */
+  lock_wait_minutes?: number;
+}
+
 // -- task.yaml (machine contract; schema-validated) ----------------------------
 export interface TaskYaml {
   schema_version: 1;
