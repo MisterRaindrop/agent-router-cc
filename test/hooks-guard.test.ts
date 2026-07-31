@@ -43,6 +43,36 @@ test('guard allows editable contract files and non-router paths (exit 0)', () =>
   assert.equal(guard({}), 0); // no path
 });
 
+test('guard allows every artifact the workflow tells the orchestrator to author', () => {
+  // Each of these is written by the documented flow, and a name-list guard refused
+  // them: TASK_CONTEXT.md (go), gate.yaml (gate), models.yaml (models), the plan
+  // directory's critique and decision records (spec/review). Blocking a documented
+  // step is worse than not guarding it -- the operator cannot tell a real corruption
+  // risk from a stale allow list.
+  assert.equal(guard({ file_path: '.router/tasks/t1/TASK_CONTEXT.md' }), 0);
+  assert.equal(guard({ file_path: '/abs/project/.router/tasks/t1/TASK_CONTEXT.md' }), 0);
+  assert.equal(guard({ file_path: '.router/gate.yaml' }), 0);
+  assert.equal(guard({ file_path: '.router/models.yaml' }), 0);
+  assert.equal(guard({ file_path: '.router/REPO_NOTES.md' }), 0);
+  assert.equal(guard({ file_path: '.router/plans/issue-42/PLAN.md' }), 0);
+  assert.equal(guard({ file_path: '.router/plans/issue-42/critique-2.md' }), 0);
+  assert.equal(guard({ file_path: '.router/plans/issue-42/DECISIONS.md' }), 0);
+});
+
+test('a run directory stays protected even for a markdown name', () => {
+  // DELIVERY.md is the executor's own report, written by the CLI from the run log:
+  // if an agent could rewrite it, the header that says whether the gate ran would be
+  // forgeable, and that header is what the review stage trusts.
+  assert.equal(guard({ file_path: '.router/tasks/t1/runs/run-001/DELIVERY.md' }), 2);
+  assert.equal(guard({ file_path: '.router/tasks/t1/runs/run-001/diff.patch' }), 2);
+  assert.equal(guard({ file_path: '.router/tasks/t1/runs/run-001/logs/worker.log' }), 2);
+  // Nor is the plan lock a plan artifact, and root-level state is not config.
+  assert.equal(guard({ file_path: '.router/plans/issue-42/spec.lock' }), 2);
+  assert.equal(guard({ file_path: '.router/metrics.jsonl' }), 2);
+  assert.equal(guard({ file_path: '.router/gate.lock' }), 2);
+  assert.equal(guard({ file_path: '.router/symbols/abc123.json' }), 2);
+});
+
 test('guard allows edits inside worktree checkouts (exit 0)', () => {
   // The worktree lives under .router/worktrees/ but is the executor's working
   // copy, not router state. Both relative and absolute forms must be allowed,
