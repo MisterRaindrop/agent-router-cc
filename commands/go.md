@@ -83,6 +83,28 @@ Therefore:
    risk `Low | Normal | High` per `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`; when
    unsure, escalate -- never downgrade a tier to justify fewer checks.
 
+   **Also write `TASK_CONTEXT.md` -- but only from what you already know.** Authoring the seven
+   faces already required you to establish the invariants, the frozen interfaces and the entry
+   points, so writing them down as a navigation summary is nearly free. The rule that keeps it
+   free: **never explore extra in order to fill it in.** Record verified facts with
+   `path:line`, separate them from assumptions the executor must confirm, paste no source, and
+   if you have nothing established to say, leave the section out rather than padding it.
+   Frontmatter must carry `task_id` and the dispatch `base_sha` (plus `plan_revision` when the
+   contract declares one) -- a summary that cannot be shown to describe the code about to be
+   worked on is refused before any executor starts, never quietly used.
+
+   Known cost, so nobody is surprised by it: on a small, two-file task the summary made the
+   executor's input **21% larger** (474.7k vs 392.6k) for identical quality -- an executor's
+   input is re-sent every turn, so the summary is paid every turn while its benefit is
+   one-off. That is executor quota, which is the cheap side; the expensive side is the
+   orchestrator's own turns, which is exactly why the summary must be a by-product of work
+   already done rather than a reason to go exploring. Whether it pays on a large repository,
+   where finding the entry points genuinely dominates, is still open -- every dispatch now
+   records `task_context_present` and `task_context_chars`, so the answer will come from data.
+
+   **When two tasks would want the same summary, merge them into one package instead**: that
+   is cheaper than writing it twice, and always was.
+
    **The deterministic gate (`verify`).** Where the real build/tests can run is a property of
    the project, not of the task, so decide it once and **check it empirically once**: if a
    fast self-contained gate runs inside a run worktree (`.router/worktrees/<id>/<run>` sits

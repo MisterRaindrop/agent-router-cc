@@ -34,6 +34,11 @@ import { superviseWorker } from '../io/supervisor.ts';
 import { makeLauncher } from './codexLauncher.ts';
 import { loadModelConfig, tierWorkers } from './modelConfig.ts';
 import { loadTask } from './taskLoad.ts';
+import {
+  loadTaskContext,
+  TASK_CONTEXT_SOFT_LIMIT,
+  type TaskContext,
+} from './taskContext.ts';
 import { parseCodexLog, parseDeliveryHeader, type ParsedLog } from './usage.ts';
 import { verifyTask } from './verifier.ts';
 
@@ -55,6 +60,7 @@ export interface PreparedRun {
   worktreeDir: string;
   branch: string;
   baseSha: string;
+  context: TaskContext | null;
   workers: WorkerPolicy[];
   logPath: string;
 }
@@ -99,6 +105,13 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
   const { paths } = deps;
   const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
   const { task, contractMdText } = loadTask(paths, id);
+  const context = loadTaskContext(paths, task);
+  if (context !== null && context.base_sha !== baseSha) {
+    throw new Error(
+      `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", ` +
+        `but dispatch base is "${baseSha}"; regenerate the task context for this revision`,
+    );
+  }
   // An explicit `worker` pin wins; otherwise resolve the difficulty tier (default
   // weak) against the model config into per-executor candidates (each carrying its
   // tier's model + effort). Router then still picks the executor by real quota.
@@ -119,6 +132,7 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
     worktreeDir,
     branch,
     baseSha,
+    context,
     workers,
     logPath: paths.workerLog(id, RUN),
   };
@@ -127,7 +141,7 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
 /** Run one prepared task to a verified (or failed) result on its run branch. */
 export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
   const { paths } = deps;
-  const { id, task, contractMdText, worktreeDir, baseSha, workers, logPath } = prep;
+  const { id, task, contractMdText, worktreeDir, baseSha, context, workers, logPath } = prep;
   if (task.mode === 'probe') rmSync(paths.diffPatch(id, RUN), { force: true });
   // Verification runs repository-controlled commands: never expose provider keys,
   // proxy credentials, or login-session context to them.
@@ -147,7 +161,13 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     const launcher = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const o = await superviseWorker({
-      argv: launcher.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
+      argv: launcher.buildArgv({
+        task,
+        worktreeDir,
+        contractMdText,
+        planExists: false,
+        taskContext: context,
+      }),
       cwd: worktreeDir,
       env: executorEnv,
       logPath,
@@ -197,6 +217,7 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
     worker: workerRecord(used, model),
     base_sha: baseSha,
+    ...(context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {}),
     ...(switches > 0 ? { executor_switches: switches } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(conflict ? { conflict: true } : {}),
@@ -235,7 +256,7 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result, task.plan_id, task.tier);
+  appendMetric(deps, result, task, context);
   return result;
 }
 
@@ -402,7 +423,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result, task.plan_id, task.tier);
+  appendMetric(deps, result, task, null);
   return result;
 }
 
@@ -483,19 +504,28 @@ function attachEffectiveRisk(result: RunResult, task: TaskYaml, worktreeDir: str
 function appendMetric(
   deps: DispatchDeps,
   result: RunResult,
-  planId: string | undefined,
-  tier: TaskYaml['tier'],
+  task: TaskYaml,
+  context: TaskContext | null,
 ): void {
   const metric: MetricRecord = {
     ts: deps.clock.nowIso(),
     task_id: result.task_id,
-    ...(planId !== undefined ? { plan_id: planId } : {}),
+    ...(task.plan_id !== undefined ? { plan_id: task.plan_id } : {}),
+    ...(task.plan_revision !== undefined ? { plan_revision: task.plan_revision } : {}),
+    task_context_present: context !== null,
+    task_context_chars: context?.chars ?? 0,
+    ...(context !== null
+      ? {
+          task_context_sha256: context.sha256,
+          context_base_sha: context.base_sha,
+        }
+      : {}),
     role: 'executor',
     run_id: result.run_id,
     attempt_number: 1,
     model: result.worker.model ?? null,
     executor: result.worker.kind,
-    ...(tier !== undefined ? { tier } : {}),
+    ...(task.tier !== undefined ? { tier: task.tier } : {}),
     ...(result.worker.effort !== undefined ? { effort: result.worker.effort } : {}),
     ...(result.risk !== undefined ? { risk: result.risk } : {}),
     conflict: result.conflict ?? false,

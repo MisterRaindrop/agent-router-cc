@@ -21,6 +21,7 @@ export interface RouterPaths {
   taskDir(id: string): string;
   taskYaml(id: string): string;
   contractMd(id: string): string;
+  taskContext(id: string): string;
   runsDir(id: string): string;
   heartbeat(id: string, runId: string): string;
   resultJson(id: string, runId: string): string;
@@ -59,6 +60,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     taskDir,
     taskYaml: (id) => join(taskDir(id), 'task.yaml'),
     contractMd: (id) => join(taskDir(id), 'TASK_CONTRACT.md'),
+    taskContext: (id) => join(taskDir(id), 'TASK_CONTEXT.md'),
     runsDir: (id) => join(taskDir(id), 'runs'),
     heartbeat: (id, run) => join(runDir(id, run), 'heartbeat'),
     resultJson: (id, run) => join(runDir(id, run), 'result.json'),

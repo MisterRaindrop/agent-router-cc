@@ -201,6 +201,7 @@ export interface RunResult {
   worker: { kind: WorkerKind; model?: string; effort?: string };
   executor_switches?: number; // times we fell back to the next executor (quota/env)
   model_mismatch?: boolean; // executor rejected the configured slug -> config likely stale
+  context_oversize?: boolean; // optional task context exceeded its soft character limit
   conflict?: boolean; // executor found that the code contradicts the frozen contract
   risk?: 'low' | 'normal' | 'high'; // effective risk after deterministic escalation
   risk_raised_by?: string[];
@@ -235,6 +236,12 @@ export interface MetricRecord {
   task_id: string;
   /** Dispatch-plan identifier; absent on metrics recorded before plan grouping. */
   plan_id?: string;
+  /** Revision of the frozen plan associated with this task. */
+  plan_revision?: string;
+  task_context_present?: boolean;
+  task_context_chars?: number;
+  task_context_sha256?: string;
+  context_base_sha?: string;
   /** Whether this metric is for the main model or an executor. */
   role?: 'executor' | 'orchestrator';
   run_id: string;

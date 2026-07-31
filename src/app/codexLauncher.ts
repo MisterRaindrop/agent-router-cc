@@ -11,6 +11,7 @@ export interface WorkerContext {
   worktreeDir: string;
   contractMdText: string;
   planExists: boolean;
+  taskContext?: { text: string } | null;
 }
 export interface WorkerLauncher {
   kind: WorkerKind;
@@ -200,8 +201,21 @@ function buildPrompt(ctx: WorkerContext): string {
   // the id here made every delivery report echo the group name and made the cross-check
   // compare a field against itself.
   const planRevision = ctx.task.plan_revision ?? 'none';
+  const taskContext =
+    ctx.taskContext == null
+      ? ''
+      : `--- TASK CONTEXT (navigation, NOT the source of truth) ---\n` +
+        ctx.taskContext.text +
+        (ctx.taskContext.text.endsWith('\n') ? '' : '\n') +
+        `--- end task context ---\n` +
+        `This summary was written from an earlier reading of the repository. The contract above\n` +
+        `outranks it, and the code outranks them both. Before you change anything: locate the files and\n` +
+        `symbols it points at, read the bounded slices you actually need, and confirm the assumptions\n` +
+        `you are about to rely on. If the code contradicts this summary or the contract, do NOT adapt\n` +
+        `the plan yourself -- report CONTRACT_CONFLICT with the evidence you found.\n\n`;
   return (
     `${ctx.contractMdText.trim()}\n\n` +
+    taskContext +
     `You own this task start to finish: read the code you are about to change, decide your own\n` +
     `internal steps, implement it, write tests for what you changed, ${gateStep}, then check your\n` +
     `own diff against the scope below before finishing.\n\n` +
