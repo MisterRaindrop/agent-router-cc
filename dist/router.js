@@ -6638,7 +6638,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, rmdirSync, writeFileSync as writeFileSync5 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
@@ -9556,7 +9556,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.8.1" : "0.0.0-dev";
+var VERSION = true ? "0.8.2" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -12994,7 +12994,7 @@ function deriveRoutingSuggestions(groups) {
 function deriveSuggestions(rows) {
   if (rows.length === 0) return [];
   const byTask = /* @__PURE__ */ new Map();
-  for (const r of rows) {
+  for (const r of rows.filter((row) => row.role !== "orchestrator")) {
     const g = byTask.get(r.taskId);
     if (g) g.push(r);
     else byTask.set(r.taskId, [r]);
@@ -13439,6 +13439,10 @@ var land = (ctx) => {
     }
     const mergeCommit = resolveCommit(paths.repoRoot, "HEAD");
     worktreeRemove(paths.repoRoot, paths.worktree(id, RUN3));
+    try {
+      rmdirSync(dirname6(paths.worktree(id, RUN3)));
+    } catch {
+    }
     deleteBranch(paths.repoRoot, branch);
     writeResult(paths, id, RUN3, { ...result2, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });

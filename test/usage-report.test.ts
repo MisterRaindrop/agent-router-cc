@@ -244,6 +244,21 @@ test('deriveSuggestions reads real signals (fail / recover / strong-model / env 
   assert.ok(deriveSuggestions([row({ taskId: 'd', envError: true })]).some((s) => /d: environment error/.test(s)));
   // all clean -> healthy
   assert.deepEqual(deriveSuggestions([row({ taskId: 'e' })]), ['No waste -- healthy']);
+
+  // The orchestrator row is never a routing suggestion: it IS the main model, so
+  // "route it to a cheaper tier" names the one row that cannot be routed. Measured on a
+  // real plan, that is exactly what the report said, next to hints that were correct.
+  const orchestrator = row({
+    taskId: 'issue-42/orchestrator',
+    role: 'orchestrator' as const,
+    optimized: false,
+    verifier: null,
+  });
+  assert.deepEqual(deriveSuggestions([orchestrator]), ['No waste -- healthy']);
+  // ...and it must not suppress a real hint from an executor row alongside it.
+  const mixed = deriveSuggestions([orchestrator, row({ taskId: 'f', optimized: false })]);
+  assert.ok(mixed.some((s) => /f ran on the strong model/.test(s)));
+  assert.ok(!mixed.some((s) => /orchestrator/.test(s)), mixed.join(' | '));
 });
 
 test('renderUsage shows the opt column and a Suggestions section', () => {
