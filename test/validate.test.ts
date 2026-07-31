@@ -139,3 +139,19 @@ test('task rejects an unknown tier value', () => {
   const r = validateTaskYaml(t);
   assert.equal(r.ok, false);
 });
+
+// `plan_id` doubles as a directory name under `.router/plans/`, so a branch name pasted in
+// raw ("feat/x") would quietly create a nested directory -- and once a reviewer reads the plan
+// from disk, being handed a different plan is a silent wrong-premise review, not a lost file.
+test('plan_id must be path-safe', () => {
+  const withPlan = (planId: string): unknown => parse(`${GOOD_TASK}plan_id: ${JSON.stringify(planId)}\n`);
+
+  const ok = validateTaskYaml(withPlan('issue-90731'));
+  assert.ok(ok.ok, ok.errors.join('; '));
+  assert.equal(ok.value?.plan_id, 'issue-90731');
+
+  for (const bad of ['feat/p2-probe', '', '../escape', '-leading-dash']) {
+    const r = validateTaskYaml(withPlan(bad));
+    assert.equal(r.ok, false, `expected ${JSON.stringify(bad)} to be rejected`);
+  }
+});

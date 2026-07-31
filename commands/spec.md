@@ -15,9 +15,21 @@ model_reasoning_effort=<effort>` with the `effort` from that entry (the default 
 review beats a max review that times out). Independence is the whole point: it catches
 blind spots a self-review shares.
 
+**Everything this command writes is namespaced by `plan_id`** -- `.router/plans/<plan_id>/`
+holds the frozen `PLAN.md`, each round's critique, and the decision record. One shared
+`.router/PLAN.md` was fine while it was only an output, but two plans reviewed at once in one
+repo would overwrite each other's files, and the moment a reviewer is pointed at a plan on
+disk that stops being a lost file and becomes a **silent review of the wrong plan**. Pick the
+id the way `/router:go` describes (issue or PR number, else the branch name with `/` replaced
+by `-`), record it in the plan's frontmatter alongside `plan_revision`, and **tell the reviewer
+which `plan_id` it must be looking at -- if what it reads says otherwise, it must refuse rather
+than review.** If another session already holds `.router/plans/<plan_id>/spec.lock`, say so and
+stop: two sessions interleaving rounds on one plan produce a decision record that contradicts
+itself.
+
 **Run the reviewer in the background.** A review takes minutes; do not block the session
 on it. Launch it as a background job, **redirecting its full output to a file** (e.g.
-`codex exec ... > .router/spec/critique-<round>.md 2>&1`), tell the user plainly -- e.g.
+`codex exec ... > .router/plans/<plan_id>/critique-<round>.md 2>&1`), tell the user plainly -- e.g.
 "plan review running in the background (<model>, effort <effort>, ~a few minutes); go do
 other work, I'll surface the critique when it lands" -- and continue. Running detached
 also avoids the interactive timeout that a foreground review can hit. When it completes,
@@ -103,7 +115,7 @@ and keeps continuity. (If the installed reviewer CLI cannot resume, re-run it bu
 its previous critique so it has that context.)
 
 The user decides how many rounds to run and when to stop -- there is no automatic
-convergence. When the user is satisfied, write the frozen plan to `.router/PLAN.md` as the
+convergence. When the user is satisfied, write the frozen plan to `.router/plans/<plan_id>/PLAN.md` as the
 input to `/router:go`. It holds: goals & non-goals; the approach; risk tier; Failure Model;
 behaviour scenarios; Must NOT; Verification Matrix; environment & dependency plan; Known
 Unverified; Spec Approval; and a Revision Log (every spec revision recorded, so a later

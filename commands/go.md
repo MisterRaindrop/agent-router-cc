@@ -71,9 +71,16 @@ Therefore:
      lets the rest run concurrently with confidence.
    - `max_wall_minutes`: fit the package -- a bigger package needs a bigger budget.
    - `verify`: see **the deterministic gate** below.
-   - `plan_id`: **the same short slug on every package of this plan** (e.g. the feature
-     name), so `router usage` can group the plan and show main-vs-executor cost. Also
-     **note the current ISO timestamp now** (`date -u +%Y-%m-%dT%H:%M:%SZ`) as the plan's
+   - `plan_id`: **the same identifier on every package of this plan**, so `router usage` can
+     group it and so its artifacts live together under `.router/plans/<plan_id>/`. Pick
+     something that still means something next month, in this order: **the issue or PR number**
+     (`issue-90731`), else **the branch name with `/` replaced by `-`**
+     (`feat-p2-probe-and-routing`), else a dated kebab description (`spec-cost-2026-07-31`).
+     It doubles as a directory name, so it must be path-safe -- the schema enforces that, and
+     a raw branch name with a `/` in it is rejected rather than quietly creating a nested
+     directory. **Decide it once and copy it verbatim onto every task**: a branch can be
+     renamed mid-flight, and re-deriving the id would split one plan's history in two.
+     Also **note the current ISO timestamp now** (`date -u +%Y-%m-%dT%H:%M:%SZ`) as the plan's
      start -- you will pass it to `orchestrator-usage` at the end.
 
    Write each package's `TASK_CONTRACT.md` with **all seven faces** -- goal, invariants,
