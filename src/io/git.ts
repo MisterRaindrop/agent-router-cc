@@ -58,6 +58,26 @@ export function resolveCommit(cwd: string, ref: string): string {
   return git(cwd, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]).trim();
 }
 
+/** Current branch name, or the detached HEAD commit when no branch is checked out. */
+export function currentRef(cwd: string): string {
+  const branch = tryGit(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return branch.ok ? branch.stdout.trim() : resolveCommit(cwd, 'HEAD');
+}
+
+/** Check out an existing branch/ref. A commit SHA naturally restores detached HEAD. */
+export function checkoutRef(cwd: string, ref: string): void {
+  git(cwd, ['checkout', '--quiet', ref]);
+}
+
+/** Create `branch` at the current HEAD when absent, then check it out. */
+export function checkoutBranch(cwd: string, branch: string): void {
+  if (branchExists(cwd, branch)) {
+    checkoutRef(cwd, branch);
+    return;
+  }
+  git(cwd, ['checkout', '--quiet', '-b', branch, 'HEAD']);
+}
+
 /** git-tracked files under cwd, capped to `cap` (reports truncation, never silently). */
 export function listTrackedFiles(cwd: string, cap = 2000): { files: string[]; truncated: boolean } {
   const all = git(cwd, ['ls-files']).split('\n').filter((l) => l !== '');
@@ -252,6 +272,11 @@ export function worktreeDirty(cwd: string): boolean {
 export function resetHard(cwd: string, sha: string): void {
   git(cwd, ['reset', '--hard', sha]);
   git(cwd, ['clean', '-fd']);
+}
+
+/** Reset tracked files and HEAD only. Queue gates must preserve warm untracked artifacts. */
+export function resetHardTracked(cwd: string, sha: string): void {
+  git(cwd, ['reset', '--hard', sha]);
 }
 
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */

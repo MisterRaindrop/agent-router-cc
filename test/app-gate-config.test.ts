@@ -49,6 +49,8 @@ test('loadGateConfig round-trips every queue configuration field', () => {
         'reset:',
         '  - [node, scripts/reset-db.mjs]',
         'lock_wait_minutes: 12.5',
+        'env: [QUEUE_DATABASE_URL, QUEUE_FEATURE_FLAG]',
+        'gate_wall_minutes: 45',
       ].join('\n'),
     );
     assert.deepEqual(loadGateConfig(fixture.paths), {
@@ -62,6 +64,8 @@ test('loadGateConfig round-trips every queue configuration field', () => {
       clean_triggers: ['package.json', 'scripts/**'],
       reset: [['node', 'scripts/reset-db.mjs']],
       lock_wait_minutes: 12.5,
+      env: ['QUEUE_DATABASE_URL', 'QUEUE_FEATURE_FLAG'],
+      gate_wall_minutes: 45,
     });
   } finally {
     fixture.cleanup();
@@ -111,6 +115,14 @@ test('loadGateConfig names invalid modes, unknown keys, and wrong field types', 
     {
       yaml: 'mode: worktree\nlock_wait_minutes: forever',
       message: /lock_wait_minutes.*non-negative finite number/,
+    },
+    {
+      yaml: 'mode: worktree\nenv: [QUEUE_DATABASE_URL, 4]',
+      message: /env\[1\].*non-empty string/,
+    },
+    {
+      yaml: 'mode: worktree\ngate_wall_minutes: 0',
+      message: /gate_wall_minutes.*positive finite number/,
     },
   ];
 
