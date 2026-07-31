@@ -1,7 +1,7 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -296,6 +296,14 @@ const land: Handler = (ctx) => {
     // later review or post-mortem has no way back to the task's diff.
     const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
     worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
+    // The run's checkout is gone; drop its now-empty parent so `.router/worktrees/` does not
+    // keep one empty directory per task that ever ran. rmdir refuses a non-empty directory,
+    // so another run of the same task is never touched.
+    try {
+      rmdirSync(dirname(paths.worktree(id, RUN)));
+    } catch {
+      /* still holds another run, or already gone */
+    }
     deleteBranch(paths.repoRoot, branch);
     store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });

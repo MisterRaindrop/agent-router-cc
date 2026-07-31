@@ -337,7 +337,11 @@ function deriveRoutingSuggestions(groups: RoutingGroup[]): string[] {
 export function deriveSuggestions(rows: UsageRow[]): string[] {
   if (rows.length === 0) return [];
   const byTask = new Map<string, UsageRow[]>();
-  for (const r of rows) {
+  // Orchestrator rows are excluded: every hint below is about how a DISPATCH was routed,
+  // and the orchestrator is the main model by definition. Telling the operator to "route
+  // it to a cheaper tier" names the one row that cannot be routed at all, which reads as
+  // a broken report and costs the real hints their credibility.
+  for (const r of rows.filter((row) => row.role !== 'orchestrator')) {
     const g = byTask.get(r.taskId);
     if (g) g.push(r);
     else byTask.set(r.taskId, [r]);

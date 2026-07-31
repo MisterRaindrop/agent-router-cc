@@ -56,6 +56,10 @@ test('dispatch -> land: synchronous run to a verified diff, then merge', () => {
     assert.match(fx.git(dir, ['show', '--stat', sha]), /src\/a\.ts/);
     const landed = JSON.parse(readFileSync(join(dir, '.router', 'tasks', 'demo', 'runs', 'run-001', 'result.json'), 'utf8'));
     assert.match(landed.merge_commit, new RegExp(`^${sha}`));
+    // land takes the worktree away, and its parent with it: leaving an empty directory per
+    // task that ever ran turns `.router/worktrees/` into a misleading list of live runs.
+    assert.equal(existsSync(join(dir, '.router', 'worktrees', 'demo')), false);
+    assert.equal(existsSync(join(dir, '.router', 'worktrees')), true);
   } finally {
     fx.cleanup(dir);
   }
