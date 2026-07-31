@@ -400,12 +400,25 @@ const list: Handler = (ctx) => {
     const res = store.readResult(paths, id, RUN);
     const status = res === null ? 'none' : (res.verifier?.result ?? res.exit_class);
     const worktree = existsSync(paths.worktree(id, RUN));
-    return { id, title, status, worktree };
+    const risk = res?.risk ?? '-';
+    const report = res?.delivery ? 'yes' : '-';
+    return { id, title, status, worktree, risk, report };
   });
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return 'No tasks in .router/tasks.';
-    const lines = [`Tasks (${rows.length}):`, pad('id', 22) + pad('status', 10) + pad('worktree', 10) + 'title'];
-    for (const r of rows) lines.push(pad(r.id, 22) + pad(String(r.status), 10) + pad(r.worktree ? 'present' : '-', 10) + r.title);
+    const lines = [
+      `Tasks (${rows.length}):`,
+      pad('id', 22) + pad('status', 10) + pad('worktree', 10) + pad('risk', 10) + pad('report', 10) + 'title',
+    ];
+    for (const r of rows)
+      lines.push(
+        pad(r.id, 22) +
+          pad(String(r.status), 10) +
+          pad(r.worktree ? 'present' : '-', 10) +
+          pad(r.risk, 10) +
+          pad(r.report, 10) +
+          r.title,
+      );
     const leftover = rows.filter((r) => r.worktree).length;
     if (leftover > 0)
       lines.push(`\n${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
