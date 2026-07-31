@@ -10472,20 +10472,23 @@ function codexLauncher(worker) {
       if (effort !== void 0) argv.push("-c", `model_reasoning_effort=${effort}`);
       return argv;
     },
-    // `codex exec resume <session-id> <prompt>` continues that rollout. The exact
-    // resume flag can vary by codex version; the session-id continuity guard in
-    // `router resume` catches a wrong invocation instead of silently not resuming.
+    // `codex exec resume <session-id> <prompt>` continues that rollout. Its flags are NOT
+    // the same as `codex exec`'s, which a real run proved: `exec resume` rejects `-C`
+    // outright ("unexpected argument '-C' found") and has no `-s`, so this path never
+    // worked against the real CLI while the fakes were happy with it. The working
+    // directory comes from the spawn (`superviseWorker` sets cwd), making `-C` redundant
+    // anyway, and the sandbox is expressed as a config override -- verified honoured, the
+    // run header reports the mode it was given.
     buildResumeArgv(worktreeDir, sessionId, feedback) {
+      void worktreeDir;
       const argv = [
         bin,
         "exec",
         "resume",
         sessionId,
         feedback,
-        "-C",
-        worktreeDir,
-        "-s",
-        "workspace-write",
+        "-c",
+        "sandbox_mode=workspace-write",
         "--skip-git-repo-check",
         "--json"
       ];
@@ -11260,7 +11263,7 @@ async function resumeTask(deps, id, feedback) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(log);
   const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
-  const mismatch = newSession !== null && newSession !== priorSession;
+  const mismatch = newSession !== priorSession;
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== "ok" && !conflict && detectModelMismatch(log);
@@ -11280,7 +11283,7 @@ async function resumeTask(deps, id, feedback) {
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
-    ...mismatch ? { resume_session_mismatch: true } : {},
+    ...mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
     ...conflict ? { conflict: true } : {},
     ...parsed.commandsRun !== void 0 ? { commands_run: parsed.commandsRun } : {},
@@ -12487,8 +12490,10 @@ var resume = async (ctx) => {
       exit_class: result2.exit_class
     },
     () => {
-      if (mism)
-        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result2.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      if (mism) {
+        const reported = result2.resume_reported_session == null ? "reported no session id at all" : `reported a different session id (${result2.resume_reported_session})`;
+        return `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; nothing committed. Re-dispatch, or check the resume invocation.`;
+      }
       const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
       return `${id}: resumed -> ${v} (${result2.exit_class}); ${next}`;
     }
