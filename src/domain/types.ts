@@ -173,6 +173,8 @@ export interface GateResult {
   } | null;
   /** The tracked modifications that made the checkout unborrowable (capped for display). */
   dirty?: string[];
+  /** Output of the same gate re-run on the pre-merge head, when it failed there too. */
+  baseline_log?: string;
   /** Output of the failing `reset` command, when a reset is what stopped the gate. */
   reset_log?: string;
   rc?: number | null;

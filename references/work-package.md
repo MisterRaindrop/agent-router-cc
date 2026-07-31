@@ -89,6 +89,11 @@ Borrowing the user's checkout demands hard rules:
 4. Only the verification step borrows the checkout; executor worktrees stay parallel.
 5. It must be **explicitly enabled**, because it touches the user's working directory.
 
+A gate that fails is re-run on the pre-merge head before any verdict: a lived-in checkout
+carries residue CI never sees, so "your change broke it" and "it was already broken" have
+to be told apart. The second is reported as `gate_failed_pre_existing` and is never sent
+back to the task's executor.
+
 Queue semantics: **verify on the integration head, not on the task's own older base.** Once one
 task merges, every later task's base is stale, so "verified" would be a claim about code nobody
 will ship. Apply conflict -> back to its executor. Three gate depths: **Task** (affected modules,

@@ -219,14 +219,24 @@ export async function runQueueGate(
         const gateOutcome = await supervise(argv, gateLog, maxWallMs, env);
         if (gateOutcome.exitClass !== 'ok') {
           resetHardTracked(paths.repoRoot, baseSha);
+          // Was it already failing before this change? A lived-in checkout carries residue CI
+          // never sees -- measured on a real ClickHouse tree, the project's own style gate
+          // failed on symlinks under `ci/tmp` and `tmp/venv`, nothing to do with any diff.
+          // Blaming the task for that sends its executor off to fix someone else's mess, so
+          // the same command is re-run on the pre-merge head before any verdict is issued.
+          // This costs a second run only when the gate has already failed.
+          const baselineLog = `${gateLog}.baseline`;
+          const baseline = await supervise(argv, baselineLog, maxWallMs, env);
+          const preExisting = baseline.exitClass !== 'ok';
           return persistGate(paths, taskId, run, result, {
             ok: false,
-            reason: 'gate_failed',
+            reason: preExisting ? 'gate_failed_pre_existing' : 'gate_failed',
             level,
             integration_branch: config.integration_branch!,
             base_sha: baseSha,
             head_sha: mergeSha,
             log: gateLog,
+            ...(preExisting ? { baseline_log: baselineLog } : {}),
             rc: gateOutcome.rc,
           });
         }

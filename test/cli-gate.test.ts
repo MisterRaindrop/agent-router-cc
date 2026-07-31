@@ -97,7 +97,11 @@ test('a passing gate moves the integration branch and leaves the checkout where 
 });
 
 test('a failing gate reports it, keeps the integration branch put, and exits non-zero', () => {
-  const { dir, env } = setup([[NODE, '-e', 'process.exit(4)']]);
+  // Fails only once the task's edit is present: a genuine regression, not a gate that was
+  // already red (which is reported separately as gate_failed_pre_existing).
+  const { dir, env } = setup([
+    [NODE, '-e', 'process.exit(require("node:fs").readFileSync("src/a.ts","utf8").includes("fake codex") ? 4 : 0)'],
+  ]);
   try {
     const integrationBefore = fx.git(dir, ['rev-parse', 'HEAD']).trim();
     const g = router(dir, ['gate', 't1', '--json'], env);

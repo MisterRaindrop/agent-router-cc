@@ -21,8 +21,14 @@ Report per task: verified or not, the reason when not, and **the path to the evi
 never the build output itself. Read a log only when you need to act on a specific failure.
 
 Handle each outcome as what it is:
-- `gate_failed` -> a real defect. Send a **precise error summary** (not a log dump) back to
-  that task's executor with `/router:resume`, which keeps its session context.
+- `gate_failed` -> a real defect: the same gate passed on the pre-merge head. Send a
+  **precise error summary** (not a log dump) back to that task's executor with
+  `/router:resume`, which keeps its session context.
+- `gate_failed_pre_existing` -> the gate fails the same way **without** this change, so the
+  task is not the cause. Do not send it back to its executor -- that sends someone off to fix
+  a mess they did not make. Take it to the user: the baseline is red. (Measured on a real
+  ClickHouse checkout, its own style gate failed on symlinks under `ci/tmp` and `tmp/venv` --
+  build residue a clean CI checkout never has.)
 - `apply_conflict` -> the task was written against a base that has since moved; it goes back to
   its executor to redo on the new head.
 - `checkout_dirty` -> the user has uncommitted work. Say so and stop. **Never** stash, discard,

@@ -139,9 +139,12 @@ test('failing queue gate rolls back tracked files but preserves an untracked bui
   const fixture = setup();
   try {
     stageTask(fixture, 'fail', (repo) => fx.write(repo, 'fail.txt', 'task\n'));
+    // Fails only once the task's file is present, so this is a genuine regression rather
+    // than a gate that was already red -- the two are now reported differently.
     const script =
       'const fs=require("fs");fs.mkdirSync("build",{recursive:true});' +
-      'fs.writeFileSync("build/gate-artifact.txt","warm\\n");process.exit(7)';
+      'fs.writeFileSync("build/gate-artifact.txt","warm\\n");' +
+      'process.exit(fs.existsSync("fail.txt") ? 7 : 0)';
     writeGate(fixture, [[NODE, '-e', script]]);
 
     const gate = await runQueueGate(fixture.deps, 'fail');
@@ -356,6 +359,51 @@ test('a tracked modification still refuses, and names what is uncommitted', asyn
     assert.equal(gate.ok, false);
     assert.equal(gate.reason, 'checkout_dirty');
     assert.ok(gate.dirty?.some((entry) => entry.includes('tracked.txt')), JSON.stringify(gate.dirty));
+  } finally {
+    fx.cleanup(fixture.repo);
+  }
+});
+
+// Measured on a real ClickHouse checkout: the project's own style gate failed on symlinks
+// under `ci/tmp` and `tmp/venv` -- build residue that CI never sees and no diff caused. A
+// queue that blames the task for that sends its executor off to fix someone else's mess.
+test('a gate that already failed without the change is not blamed on the task', async () => {
+  const fixture = setup();
+  try {
+    stageTask(fixture, 'blameless', (repo) => fx.write(repo, 'blameless.txt', 'task\n'));
+    // Fails regardless of what the diff contains.
+    writeGate(fixture, [[NODE, '-e', 'process.exit(3)']]);
+
+    const gate = await runQueueGate(fixture.deps, 'blameless');
+
+    assert.equal(gate.ok, false);
+    assert.equal(gate.reason, 'gate_failed_pre_existing');
+    assert.ok(gate.baseline_log, 'the baseline run must be reachable as evidence');
+    assert.equal(existsSync(gate.baseline_log ?? ''), true);
+    // Still fail-closed: nothing lands, the branch is restored, the lock is freed.
+    assert.equal(fx.git(fixture.repo, ['rev-parse', INTEGRATION]).trim(), fixture.base);
+    assert.equal(currentBranch(fixture.repo), 'main');
+    assert.equal(existsSync(fixture.paths.gateLock()), false);
+  } finally {
+    fx.cleanup(fixture.repo);
+  }
+});
+
+test('a gate the change actually broke is still reported as gate_failed', async () => {
+  const fixture = setup();
+  try {
+    // Passes on the base tree, fails once the task's file exists: a real regression.
+    stageTask(fixture, 'breaker', (repo) => fx.write(repo, 'breaker.txt', 'task\n'));
+    writeGate(fixture, [
+      [NODE, '-e', 'process.exit(require("node:fs").existsSync("breaker.txt") ? 5 : 0)'],
+    ]);
+
+    const gate = await runQueueGate(fixture.deps, 'breaker');
+
+    assert.equal(gate.ok, false);
+    assert.equal(gate.reason, 'gate_failed');
+    assert.equal(gate.baseline_log, undefined, 'a genuine regression has no pre-existing excuse');
+    assert.equal(gate.rc, 5);
   } finally {
     fx.cleanup(fixture.repo);
   }
