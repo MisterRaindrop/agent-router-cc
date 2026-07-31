@@ -85,13 +85,17 @@ test('claude launcher narrowly pre-approves each declared verify command', () =>
   assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'acceptEdits');
   assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
   const allowedTools = argv.indexOf('--allowedTools');
-  assert.deepEqual(argv.slice(allowedTools + 1, allowedTools + 3), [
+  // Also grant the program+subcommand prefix. Measured: with only the exact string, a real
+  // sonnet run read files freely (`acceptEdits` auto-approves read-only Bash) but was blocked
+  // reaching for `npm run typecheck` -- a sub-step of its own gate -- and stalled asking a
+  // human who, headless, was not there. Reading is open; doing is confined to this list.
+  const grants = argv.slice(allowedTools + 1, argv.indexOf('--model'));
+  assert.deepEqual(grants, [
     'Bash(npm run check)',
+    'Bash(npm run:*)',
     'Bash(node --test test/unit.test.ts)',
+    'Bash(node --test:*)',
   ]);
-  // What this buys is measured: pre-approval removes the prompt for the gate. It does NOT
-  // confine Bash to these commands -- a real sonnet run also executed `git diff` unprompted --
-  // so the containment is the worktree cwd and the stripped environment, not this list.
   assert.ok(!argv.includes('bypassPermissions'));
 });
 
@@ -130,4 +134,28 @@ test('no effort -> no effort flag (backward compatible)', () => {
   assert.ok(!codexArgv.includes('-c'));
   const claudeArgv = claudeLauncher({ model: 'haiku' }).buildArgv(CTX);
   assert.ok(!claudeArgv.includes('--effort'));
+});
+
+// A resume is almost always "the gate failed, fix it", so the resumed run has to keep the same
+// permission to run that gate. It did not: the resume argv hard-coded Read/Edit/Write and never
+// received the task, so the executor was asked to fix a failure it was no longer allowed to
+// reproduce.
+test('a resumed claude run keeps permission to run the gate it is being asked to fix', () => {
+  const withGate = claudeLauncher({ model: 'sonnet' }).buildResumeArgv('/wt', 'sess-1', 'fix it', {
+    ...CTX.task,
+    verify: [['npm', 'run', 'check']],
+  });
+  assert.equal(withGate[withGate.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
+  const grants = withGate.slice(withGate.indexOf('--allowedTools') + 1, withGate.indexOf('--model'));
+  assert.deepEqual(grants, ['Bash(npm run check)', 'Bash(npm run:*)']);
+
+  // No gate declared -> no Bash, and no task at all -> unchanged from before.
+  const noGate = claudeLauncher({ model: 'sonnet' }).buildResumeArgv('/wt', 'sess-1', 'fix it', {
+    ...CTX.task,
+    verify: [],
+  });
+  assert.equal(noGate[noGate.indexOf('--tools') + 1], 'Read,Edit,Write');
+  assert.ok(!noGate.includes('--allowedTools'));
+  const noTask = claudeLauncher({ model: 'sonnet' }).buildResumeArgv('/wt', 'sess-1', 'fix it');
+  assert.equal(noTask[noTask.indexOf('--tools') + 1], 'Read,Edit,Write');
 });

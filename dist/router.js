@@ -10544,7 +10544,7 @@ function claudeLauncher(worker) {
     ...model !== void 0 ? { model } : {},
     parseLog: parseClaudeLog,
     buildArgv(ctx) {
-      const verifyCommands = (ctx.task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(" "));
+      const verifyCommands = gateCommands(ctx.task);
       const argv = [
         bin,
         "-p",
@@ -10561,9 +10561,7 @@ function claudeLauncher(worker) {
         "--add-dir",
         ctx.worktreeDir
       ];
-      if (verifyCommands.length > 0) {
-        argv.push("--allowedTools", ...verifyCommands.map((command) => `Bash(${command})`));
-      }
+      if (verifyCommands.length > 0) argv.push("--allowedTools", ...bashGrants(verifyCommands));
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
@@ -10571,7 +10569,8 @@ function claudeLauncher(worker) {
     // `claude --resume <session-id> -p <feedback>` continues that session with its
     // context retained. The session-id continuity guard in `router resume` verifies
     // it re-attached.
-    buildResumeArgv(worktreeDir, sessionId, feedback) {
+    buildResumeArgv(worktreeDir, sessionId, feedback, task) {
+      const verifyCommands = task === void 0 ? [] : gateCommands(task);
       const argv = [
         bin,
         "-p",
@@ -10586,15 +10585,28 @@ function claudeLauncher(worker) {
         "--strict-mcp-config",
         // no MCP servers: do not inherit the user's own
         "--tools",
-        "Read,Edit,Write",
+        verifyCommands.length > 0 ? "Read,Edit,Write,Bash" : "Read,Edit,Write",
         "--add-dir",
         worktreeDir
       ];
+      if (verifyCommands.length > 0) argv.push("--allowedTools", ...bashGrants(verifyCommands));
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
     }
   };
+}
+function gateCommands(task) {
+  return (task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(" "));
+}
+function bashGrants(verifyCommands) {
+  const grants = /* @__PURE__ */ new Set();
+  for (const command of verifyCommands) {
+    grants.add(`Bash(${command})`);
+    const prefix = command.split(" ").slice(0, 2).join(" ");
+    if (prefix !== "" && prefix !== command) grants.add(`Bash(${prefix}:*)`);
+  }
+  return [...grants];
 }
 function makeLauncher(worker) {
   switch (worker.kind) {
@@ -11450,7 +11462,7 @@ async function resumeTask(deps, id, feedback) {
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
   const o = await superviseWorker({
-    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback, task),
     cwd: worktreeDir,
     env: executorEnv,
     logPath,

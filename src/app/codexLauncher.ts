@@ -21,8 +21,12 @@ export interface WorkerLauncher {
    * Argv to RESUME a prior session (context retained) with a follow-up message,
    * instead of a cold restart. `router resume` compares the resumed run's reported
    * session id back to `sessionId` to prove it re-attached.
+   *
+   * `task` is needed because a resume is usually "the gate failed, fix it" -- so the resumed
+   * run has to keep the same permission to run that gate. Without it the executor is asked to
+   * fix a failure it is no longer allowed to reproduce.
    */
-  buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[];
+  buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string, task?: TaskYaml): string[];
   /** Parse this executor's own log for usage/model/cost. Defaults to codex. */
   parseLog?: (log: string) => ParsedLog;
 }
@@ -88,13 +92,14 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
 // declares a gate additionally gets Bash, with its verify commands named in
 // `--allowedTools` so running the gate needs no prompt.
 //
-// Be precise about what that grant is, because it was measured rather than assumed: in
-// `acceptEdits` mode `--allowedTools` suppresses prompting, it does NOT confine Bash to
-// the listed commands -- a real sonnet run also executed `git diff` unprompted. So Bash
-// here is a shell in the run worktree, bounded by that cwd and by the stripped
-// environment (`io/env.ts`), not by the allow list. Only give a task a `verify` command
-// when that is acceptable; the codex executor's `workspace-write` sandbox is the tighter
-// of the two.
+// Be precise about what that grant is, because two real runs measured it and the first
+// reading was wrong. `acceptEdits` auto-approves **read-only** Bash on its own -- which is
+// why an earlier run executed `git diff` unprompted, not because the allow list was ignored.
+// Anything that is not read-only must match `--allowedTools`: a later run was blocked
+// reaching for `npm run typecheck` and stalled asking a human who, headless, was not there.
+// So the grant does confine what the executor can *do*, while reading is open. The bound on
+// reading is the worktree cwd plus the stripped environment (`io/env.ts`); codex's
+// `workspace-write` sandbox is still the tighter of the two.
 //
 // `--strict-mcp-config` is deliberate: without it a headless run inherits every MCP
 // server configured for the user's own session (observed: a personal vault and a sync
@@ -112,9 +117,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
     ...(model !== undefined ? { model } : {}),
     parseLog: parseClaudeLog,
     buildArgv(ctx: WorkerContext): string[] {
-      const verifyCommands = (ctx.task.verify ?? [])
-        .filter((command) => command.length > 0)
-        .map((command) => command.join(' '));
+      const verifyCommands = gateCommands(ctx.task);
       const argv = [
         bin,
         '-p',
@@ -130,9 +133,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         '--add-dir',
         ctx.worktreeDir,
       ];
-      if (verifyCommands.length > 0) {
-        argv.push('--allowedTools', ...verifyCommands.map((command) => `Bash(${command})`));
-      }
+      if (verifyCommands.length > 0) argv.push('--allowedTools', ...bashGrants(verifyCommands));
       if (model !== undefined) argv.push('--model', model);
       if (effort !== undefined) argv.push('--effort', effort);
       return argv;
@@ -140,7 +141,8 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
     // `claude --resume <session-id> -p <feedback>` continues that session with its
     // context retained. The session-id continuity guard in `router resume` verifies
     // it re-attached.
-    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
+    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string, task?: TaskYaml): string[] {
+      const verifyCommands = task === undefined ? [] : gateCommands(task);
       const argv = [
         bin,
         '-p',
@@ -154,15 +156,39 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         'acceptEdits',
         '--strict-mcp-config', // no MCP servers: do not inherit the user's own
         '--tools',
-        'Read,Edit,Write',
+        verifyCommands.length > 0 ? 'Read,Edit,Write,Bash' : 'Read,Edit,Write',
         '--add-dir',
         worktreeDir,
       ];
+      if (verifyCommands.length > 0) argv.push('--allowedTools', ...bashGrants(verifyCommands));
       if (model !== undefined) argv.push('--model', model);
       if (effort !== undefined) argv.push('--effort', effort);
       return argv;
     },
   };
+}
+
+/** The gate commands a task declares, as single strings. */
+function gateCommands(task: TaskYaml): string[] {
+  return (task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(' '));
+}
+
+/**
+ * Bash pre-approvals for a task's gate: the exact command, plus its program+subcommand prefix.
+ * Measured why the prefix is needed: with only the exact string, a real sonnet run read files
+ * freely (`acceptEdits` auto-approves read-only Bash) but was blocked the moment it reached for
+ * `npm run typecheck` -- a sub-step of its own gate. Headless there is nobody to approve, so it
+ * stalled asking, shipped no tests, and emitted no delivery header. The prefix keeps the grant
+ * inside the project's own script runner while letting the executor iterate normally.
+ */
+function bashGrants(verifyCommands: readonly string[]): string[] {
+  const grants = new Set<string>();
+  for (const command of verifyCommands) {
+    grants.add(`Bash(${command})`);
+    const prefix = command.split(' ').slice(0, 2).join(' ');
+    if (prefix !== '' && prefix !== command) grants.add(`Bash(${prefix}:*)`);
+  }
+  return [...grants];
 }
 
 // Executor factory: map a policy worker entry to its launcher.
