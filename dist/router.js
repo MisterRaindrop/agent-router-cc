@@ -9798,6 +9798,11 @@ function worktreeDirty(cwd) {
   const r = tryGit(cwd, ["status", "--porcelain"]);
   return r.ok && r.stdout.trim() !== "";
 }
+function trackedChanges(cwd) {
+  const r = tryGit(cwd, ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules=dirty"]);
+  if (!r.ok) return [];
+  return r.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+}
 function resetHard(cwd, sha) {
   git(cwd, ["reset", "--hard", sha]);
   git(cwd, ["clean", "-fd"]);
@@ -11910,8 +11915,9 @@ async function runQueueGate(deps, taskId) {
     return outcome;
   };
   try {
-    if (worktreeDirty(paths.repoRoot)) {
-      return { ok: false, reason: "checkout_dirty" };
+    const dirty = trackedChanges(paths.repoRoot);
+    if (dirty.length > 0) {
+      return { ok: false, reason: "checkout_dirty", dirty: dirty.slice(0, 10) };
     }
     originalRef = currentRef(paths.repoRoot);
     checkoutBranch(paths.repoRoot, config.integration_branch);
@@ -13298,7 +13304,7 @@ var gate = async (ctx) => {
     ctx.json,
     { ok: allOk, results: done },
     () => done.map(
-      ({ id, gate: g }) => g.ok ? `${id}: VERIFIED (${g.level} gate) on ${g.integration_branch} -> ${(g.head_sha ?? "").slice(0, 12)}; evidence: ${g.log}` : `${id}: NOT VERIFIED (${g.reason})${g.log ? `; evidence: ${g.log}` : ""}${g.reset_log ? `; reset output: ${g.reset_log}` : ""}`
+      ({ id, gate: g }) => g.ok ? `${id}: VERIFIED (${g.level} gate) on ${g.integration_branch} -> ${(g.head_sha ?? "").slice(0, 12)}; evidence: ${g.log}` : `${id}: NOT VERIFIED (${g.reason})${g.dirty && g.dirty.length > 0 ? `; uncommitted: ${g.dirty.join(", ")}` : ""}${g.log ? `; evidence: ${g.log}` : ""}${g.reset_log ? `; reset output: ${g.reset_log}` : ""}`
     ).concat(allOk ? [] : ["stopped at the first failure; the remaining tasks were not attempted"]).join("\n")
   );
   return allOk ? 0 : 1;

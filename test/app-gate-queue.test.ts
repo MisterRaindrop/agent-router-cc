@@ -168,7 +168,8 @@ test('dirty checkout refuses before changing refs or taking the task commit', as
 
     const gate = await runQueueGate(fixture.deps, 'dirty');
 
-    assert.deepEqual(gate, { ok: false, reason: 'checkout_dirty' });
+    // The refusal names what is uncommitted, so the user knows what to deal with.
+    assert.deepEqual(gate, { ok: false, reason: 'checkout_dirty', dirty: ['M tracked.txt'] });
     assert.equal(currentBranch(fixture.repo), 'main');
     assert.equal(fx.git(fixture.repo, ['rev-parse', 'HEAD']).trim(), before);
     assert.equal(readFileSync(join(fixture.repo, 'tracked.txt'), 'utf8'), 'user work\n');
@@ -313,6 +314,48 @@ test('a thrown gate error still restores the original ref and releases the lock'
     assert.equal(currentBranch(fixture.repo), 'main');
     assert.equal(fx.git(fixture.repo, ['rev-parse', INTEGRATION]).trim(), fixture.base);
     assert.equal(existsSync(fixture.paths.gateLock()), false);
+  } finally {
+    fx.cleanup(fixture.repo);
+  }
+});
+
+// Measured on a real ClickHouse checkout: plain `git status --porcelain` reported 110 entries,
+// 107 of them build residue inside `contrib/*` submodules and 2 untracked scratch files, with
+// exactly one real uncommitted edit. Refusing on all 110 would lock the queue out of the very
+// kind of project it exists for -- so only tracked modifications count.
+test('untracked files and build residue do not block the queue', async () => {
+  const fixture = setup();
+  try {
+    stageTask(fixture, 'residue', (repo) => fx.write(repo, 'residue.txt', 'task\n'));
+    writeGate(fixture, [[NODE, '-e', 'process.exit(0)']]);
+    // What a build leaves behind: untracked, and surviving every checkout and reset.
+    mkdirSync(join(fixture.repo, 'build'), { recursive: true });
+    writeFileSync(join(fixture.repo, 'build', 'artifact.o'), 'warm\n');
+    writeFileSync(join(fixture.repo, 'scratch.log'), 'noise\n');
+
+    const gate = await runQueueGate(fixture.deps, 'residue');
+
+    assert.equal(gate.ok, true, JSON.stringify(gate));
+    assert.equal(existsSync(join(fixture.repo, 'build', 'artifact.o')), true);
+  } finally {
+    fx.cleanup(fixture.repo);
+  }
+});
+
+test('a tracked modification still refuses, and names what is uncommitted', async () => {
+  const fixture = setup();
+  try {
+    stageTask(fixture, 'midedit', (repo) => fx.write(repo, 'midedit.txt', 'task\n'));
+    writeGate(fixture, [[NODE, '-e', 'process.exit(0)']]);
+    // `tracked.txt` is committed by the fixture, so editing it is a real uncommitted change --
+    // the kind a checkout would overwrite, and the only kind worth refusing over.
+    fx.write(fixture.repo, 'tracked.txt', 'the user is mid-edit\n');
+
+    const gate = await runQueueGate(fixture.deps, 'midedit');
+
+    assert.equal(gate.ok, false);
+    assert.equal(gate.reason, 'checkout_dirty');
+    assert.ok(gate.dirty?.some((entry) => entry.includes('tracked.txt')), JSON.stringify(gate.dirty));
   } finally {
     fx.cleanup(fixture.repo);
   }

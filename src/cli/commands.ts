@@ -352,7 +352,9 @@ const gate: Handler = async (ctx) => {
       .map(({ id, gate: g }) =>
         g.ok
           ? `${id}: VERIFIED (${g.level} gate) on ${g.integration_branch} -> ${(g.head_sha ?? '').slice(0, 12)}; evidence: ${g.log}`
-          : `${id}: NOT VERIFIED (${g.reason})${g.log ? `; evidence: ${g.log}` : ''}${g.reset_log ? `; reset output: ${g.reset_log}` : ''}`,
+          : `${id}: NOT VERIFIED (${g.reason})${
+              g.dirty && g.dirty.length > 0 ? `; uncommitted: ${g.dirty.join(', ')}` : ''
+            }${g.log ? `; evidence: ${g.log}` : ''}${g.reset_log ? `; reset output: ${g.reset_log}` : ''}`,
       )
       .concat(allOk ? [] : ['stopped at the first failure; the remaining tasks were not attempted'])
       .join('\n'),
