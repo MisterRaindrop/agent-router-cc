@@ -114,7 +114,23 @@ export function parseClaudeLog(logText: string): ParsedLog {
       message?: { content?: unknown };
     };
     if (rec.type === 'result' && rec.usage) {
-      usage = { input: num(rec.usage.input_tokens), output: num(rec.usage.output_tokens), cached: num(rec.usage.cache_read_input_tokens) };
+      // `input` must mean the SAME thing for both executors, because usage compares them and
+      // derives savings from it. Codex already reports an inclusive `input_tokens` with
+      // `cached_input_tokens` as its subset (observed: 1,080,432 total of which 993,536 cached).
+      // Claude splits input three ways instead, so total input is the sum -- reading only
+      // `input_tokens` reported 9 for a run that had just read a repository, which silently
+      // understates every token-derived saving for a claude executor. `cached` stays the read
+      // subset. (`deriveCost` still applies one input rate to the total, so its number remains
+      // approximate for cached and cache-writing runs; the provider-reported cost is preferred
+      // wherever it exists.)
+      usage = {
+        input:
+          num(rec.usage.input_tokens) +
+          num(rec.usage.cache_read_input_tokens) +
+          num(rec.usage.cache_creation_input_tokens),
+        output: num(rec.usage.output_tokens),
+        cached: num(rec.usage.cache_read_input_tokens),
+      };
       if (typeof rec.total_cost_usd === 'number') costUsd = rec.total_cost_usd;
     }
     if (model === null && typeof rec.model === 'string' && rec.model !== '') model = rec.model;

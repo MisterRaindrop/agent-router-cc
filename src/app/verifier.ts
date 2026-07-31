@@ -38,6 +38,7 @@ export interface TaskVerifyRequest {
   worktreeDir: string;
   baseSha: string;
   head: string;
+  mode?: 'implement' | 'probe';
   allowedGlobs: string[];
   forbiddenGlobs?: string[];
   maxChangedLines?: number;
@@ -51,6 +52,16 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
   const checks: VerifierCheck[] = [];
 
   const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  if (req.mode === 'probe') {
+    if (changes.length === 0) {
+      checks.push(pass('probe_no_diff'));
+      return { result: 'PASSED', checks };
+    }
+    const files = `${changes.length} file${changes.length === 1 ? '' : 's'}`;
+    checks.push(fail('probe_no_diff', `probe wrote ${files}; expected no diff`));
+    return { result: 'FAILED', checks };
+  }
+
   const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
   if (patch.trim() === '') {
     checks.push(fail('diff_applies', 'diff is empty - executor produced no committed change'));
