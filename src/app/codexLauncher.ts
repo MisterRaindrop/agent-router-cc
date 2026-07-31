@@ -79,11 +79,13 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
   };
 }
 
-// The claude CLI as a headless executor. It gets only Read/Edit/Write tools and
-// normal edit-acceptance permissions: reads outside the worktree are denied, and
-// it has no Bash escape hatch. Router runs verification commands itself afterward.
-// Plan-auth comes from the user's Claude session; ROUTER_CLAUDE_BIN overrides the
-// binary in tests. Cost comes from the stream's total_cost_usd.
+// The claude CLI as a headless executor. It gets Read/Edit/Write tools and normal
+// edit-acceptance permissions: reads outside the worktree are denied. A task with a
+// gate also gets only those exact verify commands pre-approved for Bash. The narrow
+// grant lets the executor prove its own work; it does not give the executor a shell.
+// Router still verifies independently afterward. Plan-auth comes from the user's
+// Claude session; ROUTER_CLAUDE_BIN overrides the binary in tests. Cost comes from
+// the stream's total_cost_usd.
 export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): WorkerLauncher {
   const bin = process.env.ROUTER_CLAUDE_BIN ?? 'claude';
   const model = worker.model;
@@ -93,6 +95,9 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
     ...(model !== undefined ? { model } : {}),
     parseLog: parseClaudeLog,
     buildArgv(ctx: WorkerContext): string[] {
+      const verifyCommands = (ctx.task.verify ?? [])
+        .filter((command) => command.length > 0)
+        .map((command) => command.join(' '));
       const argv = [
         bin,
         '-p',
@@ -103,10 +108,13 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         '--permission-mode',
         'acceptEdits',
         '--tools',
-        'Read,Edit,Write',
+        verifyCommands.length > 0 ? 'Read,Edit,Write,Bash' : 'Read,Edit,Write',
         '--add-dir',
         ctx.worktreeDir,
       ];
+      if (verifyCommands.length > 0) {
+        argv.push('--allowedTools', ...verifyCommands.map((command) => `Bash(${command})`));
+      }
       if (model !== undefined) argv.push('--model', model);
       if (effort !== undefined) argv.push('--effort', effort);
       return argv;
