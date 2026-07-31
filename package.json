@@ -1,7 +1,7 @@
 {
   "name": "agent-router-cc",
-  "version": "0.7.0",
-  "description": "Deterministic task-orchestration CLI + Claude Code plugin (router). LLM produces artifacts; the CLI owns every gate.",
+  "version": "0.8.0",
+  "description": "Task-routing CLI + Claude Code plugin (router). The main session plans, reviews and verifies; the CLI owns worktree isolation, supervision, concurrency, and environment-free gates on every diff.",
   "type": "module",
   "bin": {
     "router": "dist/router.js"
@@ -11,6 +11,7 @@
   },
   "files": [
     "dist/",
+    "docs/",
     "schema/",
     ".claude-plugin/",
     "commands/",
