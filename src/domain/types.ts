@@ -171,6 +171,8 @@ export interface GateResult {
     beatAtMs: number;
     label?: string;
   } | null;
+  /** Output of the failing `reset` command, when a reset is what stopped the gate. */
+  reset_log?: string;
   rc?: number | null;
 }
 

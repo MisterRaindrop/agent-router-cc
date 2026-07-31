@@ -13,6 +13,9 @@ import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } fr
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, dispatchTasks, resolvePoolSize, resumeTask } from '../app/dispatch.ts';
+import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
+import { runQueueGate } from '../app/gateQueue.ts';
+import { readLock } from '../io/lock.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
@@ -307,6 +310,56 @@ const land: Handler = (ctx) => {
   return 0;
 };
 
+// Verify dispatched commits in the project's REAL environment. That environment exists once
+// -- one Docker container bound to a fixed host path, one build directory, one database -- so
+// the queue is serial by nature and borrows the user's own checkout under an exclusive lock.
+// A run worktree cannot substitute: it is a different source path with none of those caches.
+const gate: Handler = async (ctx) => {
+  const deps = depsFor(ctx);
+  const cfg = loadGateConfig(deps.paths);
+
+  if (flagBool(ctx.args.flags, 'status')) {
+    const holder = readLock(deps.paths.gateLock());
+    emit(ctx.json, { ok: true, mode: cfg.mode, integration_branch: cfg.integration_branch ?? null, holder }, () =>
+      holder === null
+        ? `gate mode ${cfg.mode}; no verification in progress`
+        : `gate mode ${cfg.mode}; BUSY -- pid ${holder.pid} holds the checkout (last beat ${new Date(holder.beatAtMs).toISOString()})`,
+    );
+    return 0;
+  }
+
+  if (cfg.mode !== 'queue') {
+    throw new CliError(
+      `gate mode is "${cfg.mode}": this project verifies inside the run worktree via each task's ` +
+        `\`verify\`, so there is nothing to queue. Set mode: queue in ${gateYamlPath(deps.paths)} ` +
+        `for a project whose real gate needs Docker, a single build directory, or live services.`,
+      2,
+    );
+  }
+
+  const ids = requireIds(ctx);
+  const done: { id: string; gate: Awaited<ReturnType<typeof runQueueGate>> }[] = [];
+  // Sequential on purpose, and it stops at the first failure: a failure means the plan or the
+  // executor needs attention, and `checkout_dirty`/`lock_unavailable` would stop the rest anyway.
+  for (const id of ids) {
+    const g = await runQueueGate(deps, id);
+    done.push({ id, gate: g });
+    if (!g.ok) break;
+  }
+  const allOk = done.every((d) => d.gate.ok) && done.length === ids.length;
+  emit(ctx.json, { ok: allOk, results: done }, () =>
+    done
+      .map(({ id, gate: g }) =>
+        g.ok
+          ? `${id}: VERIFIED (${g.level} gate) on ${g.integration_branch} -> ${(g.head_sha ?? '').slice(0, 12)}; evidence: ${g.log}`
+          : `${id}: NOT VERIFIED (${g.reason})${g.log ? `; evidence: ${g.log}` : ''}${g.reset_log ? `; reset output: ${g.reset_log}` : ''}`,
+      )
+      .concat(allOk ? [] : ['stopped at the first failure; the remaining tasks were not attempted'])
+      .join('\n'),
+  );
+  return allOk ? 0 : 1;
+};
+
 const result: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
@@ -593,6 +646,7 @@ export const HANDLERS: Record<string, Handler> = {
   dispatch,
   resume,
   land,
+  gate,
   result,
   list,
   usage,
@@ -615,6 +669,7 @@ export function helpText(): string {
     `  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs\n` +
     `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
     `  land <id...>           merge PASSED dispatch diffs sequentially\n` +
+    `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
     `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +

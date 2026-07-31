@@ -188,8 +188,9 @@ export async function runQueueGate(
 
     startHeartbeat();
     try {
+      const resetLog = `${gateLog}.reset`;
       for (const argv of config.reset ?? []) {
-        const resetOutcome = await supervise(argv, `${gateLog}.reset`, maxWallMs, env);
+        const resetOutcome = await supervise(argv, resetLog, maxWallMs, env);
         if (resetOutcome.exitClass !== 'ok') {
           // The public evidence path exists but contains no gate output because
           // reset failure prevented every gate command from starting.
@@ -203,6 +204,9 @@ export async function runQueueGate(
             base_sha: baseSha,
             head_sha: mergeSha,
             log: gateLog,
+            // The gate log is empty on purpose -- no gate command ran -- so the reason has
+            // to be reachable, not stranded in an unreferenced sibling file.
+            reset_log: resetLog,
             rc: resetOutcome.rc,
           });
         }

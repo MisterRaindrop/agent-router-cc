@@ -242,6 +242,10 @@ test('failing reset rolls back without running the gate and leaves the gate log 
     assert.equal(gate.rc, 9);
     assert.equal(existsSync(marker), false);
     assert.equal(readMaybe(fixture.paths.gateLog('reset', RUN)), '');
+    // An empty gate log is honest -- no gate command ran -- but the reason must still be
+    // reachable from the result rather than stranded in an unreferenced sibling file.
+    assert.equal(gate.reset_log, `${fixture.paths.gateLog('reset', RUN)}.reset`);
+    assert.ok(existsSync(gate.reset_log ?? ''), 'the reset log the result points at must exist');
     assert.equal(fx.git(fixture.repo, ['rev-parse', INTEGRATION]).trim(), fixture.base);
     assert.equal(currentBranch(fixture.repo), 'main');
     assert.equal(existsSync(fixture.paths.gateLock()), false);
