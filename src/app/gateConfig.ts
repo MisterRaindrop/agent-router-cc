@@ -15,6 +15,8 @@ const KEYS = new Set([
   'clean_triggers',
   'reset',
   'lock_wait_minutes',
+  'env',
+  'gate_wall_minutes',
 ]);
 
 /** Absolute path to the optional per-repo gate configuration. */
@@ -120,6 +122,14 @@ export function loadGateConfig(paths: RouterPaths): GateConfig {
       invalid('lock_wait_minutes must be a non-negative finite number');
     }
     config.lock_wait_minutes = value;
+  }
+  if (own(object, 'env')) config.env = stringList(object.env, 'env');
+  if (own(object, 'gate_wall_minutes')) {
+    const value = object.gate_wall_minutes;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      invalid('gate_wall_minutes must be a positive finite number');
+    }
+    config.gate_wall_minutes = value;
   }
 
   if (mode === 'queue') {

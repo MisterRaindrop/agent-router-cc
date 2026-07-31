@@ -65,6 +65,10 @@ export interface GateConfig {
   reset?: string[][];
   /** How long to wait for the lock before giving up. Default 60. */
   lock_wait_minutes?: number;
+  /** Additional parent-environment variable names explicitly exposed to the gate. */
+  env?: string[];
+  /** Hard wall-clock limit for each reset/gate command. Default 180. */
+  gate_wall_minutes?: number;
 }
 
 // -- task.yaml (machine contract; schema-validated) ----------------------------
@@ -153,6 +157,23 @@ export interface VerifierReport {
 }
 
 // -- Run result + metrics ------------------------------------------------------
+export interface GateResult {
+  ok: boolean;
+  reason?: string;
+  level?: 'task' | 'clean';
+  integration_branch?: string;
+  base_sha?: string;
+  head_sha?: string;
+  log?: string;
+  holder?: {
+    pid: number;
+    startedAtMs: number;
+    beatAtMs: number;
+    label?: string;
+  } | null;
+  rc?: number | null;
+}
+
 export interface DeliveryHeader {
   task: string;
   plan_revision?: string;
@@ -183,6 +204,7 @@ export interface RunResult {
   tokens?: { input: number; output: number };
   cost_usd?: number;
   verifier?: VerifierReport;
+  gate?: GateResult;
   diff_sha?: string;
   session_id?: string | null; // executor session/thread id, for a later `router resume`
   resumed?: boolean; // this run continued a prior executor session

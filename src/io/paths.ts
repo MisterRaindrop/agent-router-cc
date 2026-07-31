@@ -16,6 +16,7 @@ export interface RouterPaths {
   readonly worktreesDir: string;
   readonly symbolsDir: string; // code-intelligence symbol caches (gitignored, per-repo)
   readonly symbolLatest: string; // pointer file: hash of the most recently built index
+  gateLock(): string;
   symbolCache(hash: string): string;
   taskDir(id: string): string;
   taskYaml(id: string): string;
@@ -26,6 +27,7 @@ export interface RouterPaths {
   diffPatch(id: string, runId: string): string;
   delivery(id: string, runId: string): string;
   workerLog(id: string, runId: string): string;
+  gateLog(id: string, runId: string): string;
   worktree(id: string, runId: string): string;
 }
 
@@ -52,6 +54,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     worktreesDir: join(root, 'worktrees'),
     symbolsDir: join(root, 'symbols'),
     symbolLatest: join(root, 'symbols', 'latest'),
+    gateLock: () => join(root, 'gate.lock'),
     symbolCache: (hash: string) => join(root, 'symbols', `${hash}.json`),
     taskDir,
     taskYaml: (id) => join(taskDir(id), 'task.yaml'),
@@ -62,6 +65,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     diffPatch: (id, run) => join(runDir(id, run), 'diff.patch'),
     delivery: (id, run) => join(runDir(id, run), 'DELIVERY.md'),
     workerLog: (id, run) => join(runDir(id, run), 'logs', 'worker.log'),
+    gateLog: (id, run) => join(runDir(id, run), 'logs', 'gate.log'),
     worktree: (id, run) => join(root, 'worktrees', id, run),
   };
 }
