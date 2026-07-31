@@ -128,6 +128,7 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
 export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
   const { paths } = deps;
   const { id, task, contractMdText, worktreeDir, baseSha, workers, logPath } = prep;
+  if (task.mode === 'probe') rmSync(paths.diffPatch(id, RUN), { force: true });
   // Verification runs repository-controlled commands: never expose provider keys,
   // proxy credentials, or login-session context to them.
   const verifyEnv = buildWorkerEnv(process.env);
@@ -213,14 +214,17 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
   if (exitClass !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
 
   if (exitClass === 'ok') {
-    const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
-    writeFileSync(paths.diffPatch(id, RUN), patch);
-    result.diff_sha = createHash('sha256').update(patch).digest('hex');
+    if (task.mode !== 'probe') {
+      const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
+      writeFileSync(paths.diffPatch(id, RUN), patch);
+      result.diff_sha = createHash('sha256').update(patch).digest('hex');
+    }
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: 'HEAD',
+      ...(task.mode !== undefined ? { mode: task.mode } : {}),
       allowedGlobs: task.allowed_globs,
       ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
       ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
