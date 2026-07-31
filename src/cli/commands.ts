@@ -254,8 +254,13 @@ const resume: Handler = async (ctx) => {
       exit_class: result.exit_class,
     },
     () => {
-      if (mism)
-        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      if (mism) {
+        const reported =
+          result.resume_reported_session == null
+            ? 'reported no session id at all'
+            : `reported a different session id (${result.resume_reported_session})`;
+        return `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; nothing committed. Re-dispatch, or check the resume invocation.`;
+      }
       const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
       return `${id}: resumed -> ${v} (${result.exit_class}); ${next}`;
     },

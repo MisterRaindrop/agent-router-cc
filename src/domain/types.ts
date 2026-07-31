@@ -168,6 +168,8 @@ export interface RunResult {
   session_id?: string | null; // executor session/thread id, for a later `router resume`
   resumed?: boolean; // this run continued a prior executor session
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
+  /** What the resumed run actually reported: another id, or `null` for none at all. */
+  resume_reported_session?: string | null;
   base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
   // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
   // Set so a caller can recover work from a run that was killed after it had finished.
