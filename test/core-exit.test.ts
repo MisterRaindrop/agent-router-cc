@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   countsAsAttempt,
+  detectContractConflict,
   detectModelMismatch,
   reclassifyEnvironmentFailure,
   reclassifyQuota,
@@ -16,6 +17,16 @@ test('countsAsAttempt: env_error and quota_exhausted do not count', () => {
   assert.equal(countsAsAttempt('timeout'), true);
   assert.equal(countsAsAttempt('env_error'), false);
   assert.equal(countsAsAttempt('quota_exhausted'), false);
+  assert.equal(countsAsAttempt('contract_conflict'), false);
+});
+
+test('detectContractConflict only accepts the protocol marker on the first non-empty line', () => {
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT\nDetails follow.'), true);
+  assert.equal(detectContractConflict('\n  \r\nCONTRACT_CONFLICT:\nDetails follow.'), true);
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT.\nDetails follow.'), true);
+  assert.equal(detectContractConflict('Summary first.\nCONTRACT_CONFLICT'), false);
+  assert.equal(detectContractConflict('This report discusses CONTRACT_CONFLICT later.'), false);
+  assert.equal(detectContractConflict(null), false);
 });
 
 test('reclassifyQuota only touches task_failed/worker_crash when the log matches', () => {
@@ -49,4 +60,18 @@ test('detectModelMismatch flags a rejected slug but not ordinary failures', () =
   // ordinary test/compile failures must NOT be flagged as a config problem
   assert.equal(detectModelMismatch('AssertionError: expected 2 to equal 3'), false);
   assert.equal(detectModelMismatch('npm test failed with exit code 1'), false);
+});
+
+// The marker must open the line, but a reason may follow it there: told to "begin with
+// CONTRACT_CONFLICT followed by the reason", a model writes `CONTRACT_CONFLICT: ...`.
+// Requiring the line to hold nothing else missed that shape, and the cost is asymmetric --
+// an undetected conflict gets committed and verified against a false assumption.
+test('a conflict marker followed by its reason on the same line is still a conflict', () => {
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT: the schema cannot express this'), true);
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT -- the assumption is false\n\nevidence: ...'), true);
+  assert.equal(detectContractConflict('\n\n  CONTRACT_CONFLICT\nwhy: ...'), true);
+  // Still not a conflict: the marker has to START the first non-empty line.
+  assert.equal(detectContractConflict('I considered reporting CONTRACT_CONFLICT but did not.'), false);
+  assert.equal(detectContractConflict('Done.\nCONTRACT_CONFLICT'), false);
+  assert.equal(detectContractConflict('CONTRACT_CONFLICTED the build'), false);
 });

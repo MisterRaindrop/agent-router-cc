@@ -84,10 +84,11 @@ claude plugin update router@agent-router-cc
 
 对于中间每个**明确**的任务,工作由两个角色分担:
 
-- **router CLI** 在隔离 worktree 中、用按配额挑选的执行器运行该任务,并对产出的 diff
-  做**快速、无环境的把关**——能否干净地 apply、是否停留在允许的文件范围内、有没有泄漏密钥、
-  新增脚本在同目录兄弟都可执行时是否也带了可执行位。
-  它**不跑**你的 build 或测试。
+- **router CLI** 在隔离 worktree 中、用按配额挑选的执行器运行该任务——彼此独立的任务可以
+  同时跑,各自一个 worktree——并对产出的 diff 做**快速、无环境的把关**:能否干净地 apply、
+  是否停留在允许的文件范围内、有没有泄漏密钥、新增脚本在同目录兄弟都可执行时是否也带了
+  可执行位。只有当该任务的契约设置了 `verify` 命令时它才跑 build 或测试,而且答案是机械的:
+  *跑了没有、过了没有*,绝不是*做对了没有*。
 - 随后 **Opus 读取并复审这个 diff**,识别偷懒或做错的地方——写死的值、空壳或跳过的测试、
   误解的意图(便宜的模型可能一边过了浅层把关、一边做错)。而且**验证归 Opus**:任何有风险的
   改动,它都在**你的**真实环境里亲自跑 build/测试(它有 docker 和完整工具链,沙箱执行器没有),
@@ -104,17 +105,30 @@ claude plugin update router@agent-router-cc
 ——Opus 给子任务起的短名;它的契约位于 `.router/tasks/<id>/task.yaml`。
 
 ```
-/router:dispatch <id>   # 用按配额挑选的执行器把任务 <id> 运行一次,在隔离的 worktree
-                        #   分支上产出一个已机械校验的 diff
-/router:land <id>       # 把任务 <id> 已校验的 diff 合并进你的工作分支
-/router:result <id>     # 显示任务 <id> 的逐项校验报告和日志末尾
+/router:dispatch <id...> # 用按配额挑选的执行器运行这些任务,各自在隔离的 worktree 分支上
+                         #   产出一个已机械校验的 diff。传多个 id 会**并发**跑
+                         #   (--max-parallel <n> 限制并发数),墙钟取最慢的那个而不是求和
+/router:resume <id>      # 把失败原因送回该任务自己的执行器会话,上下文原样保留,
+                         #   而不是再付一次冷启动
+/router:land <id...>     # 把这些任务已校验的 diff 合并进你的工作分支
+/router:gate <id...>     # 针对真实门禁需要 Docker 或单一构建目录的项目:在你自己的
+                         #   checkout 里逐个验证 commit,始终在集成分支头上验证,
+                         #   保住热构建缓存(--status 显示当前是否有人占着)
+/router:result <id>      # 显示任务 <id> 的逐项校验报告和日志末尾
+/router:plans            # 列出 .router/plans/<plan_id> 下的东西:修订号、评审轮次、
+                         #   决策记录,以及是否有会话持着锁
+/router:usage            # 相对"全部用最强模型"的基线,这次花了多少
+                         #   (--routing 把已记录的运行聚合成路由证据)
 ```
 
-任务契约(`.router/tasks/<id>/task.yaml`)自带 `allowed_globs`(文件范围)、可选的
-`verify` 命令(如 `[["npm","test"]]`),以及可选的 `worker`(用于指定执行器)。这些由
-Opus 从你们的对话中生成;没有全局策略文件。
+任务契约(`.router/tasks/<id>/task.yaml`)自带 `allowed_globs`(文件范围)、`tier`
+(这活需要多强的能力)与 `risk`(它值多少复审 —— 这是两个不同的问题)、可选的
+`verify` 命令(如 `[["npm","test"]]`)、`depends_on`(顺序依赖),以及可选的 `worker`
+(用于指定执行器)。这些由 Opus 从你们的对话中生成;没有全局策略文件。
 
-参见 **[docs/quickstart.md](docs/quickstart.md)**,以及
+**[docs/workflow.md](docs/workflow.md)** 是完整的流程说明 —— 工作包、档位与风险、
+两种门禁模式、执行器必须交回什么,以及什么时候该续会话。另见
+**[docs/quickstart.md](docs/quickstart.md)**,以及
 **[examples/minimal/](examples/minimal/)** 中一个可运行的任务。
 
 ## 工作原理
@@ -122,16 +136,32 @@ Opus 从你们的对话中生成;没有全局策略文件。
 - **任务范围化,无策略文件。** 每个任务自带自己的范围和 `verify` 命令;没有全局的
   `policy.yaml`,也不从 git 读取任何东西。执行器默认为 codex + claude。
 - **隔离执行。** 执行器在 `.router/` 下一个全新的 `git worktree` 中运行,受墙钟超时和
-  停滞看门狗监督;它的输出永不进入编排器的上下文。Codex 使用其 `workspace-write` 沙箱。
-  Claude 只拿到 `Read`/`Edit`/`Write` 工具,处于普通的 `acceptEdits` 模式(没有 Bash,
-  也没有 `bypassPermissions`),因此 worktree 之外的访问会被拒绝。在你 `land` 之前,
-  你的工作区不会被改动。
+  停滞看门狗监督;它的输出永不进入编排器的上下文,并且**不会继承你自己会话里的任何 MCP
+  服务器**。Codex 使用其 `workspace-write` 沙箱。Claude 拿到 `Read`/`Edit`/`Write`,处于
+  普通的 `acceptEdits` 模式(绝不用 `bypassPermissions`);**只有**当任务声明了 `verify`
+  命令时才额外拿到 `Bash`,以便它能自证工作。两次真实运行量出了这到底意味着什么:
+  `acceptEdits` 会**自行放行只读的 Bash**,所以"看"是开放的;而任何**会做事**的命令必须
+  精确匹配授权 —— 授的是那条门禁命令本身,加上它的"程序 + 子命令"前缀,好让执行器能反复
+  跑到绿,而不是白拿一个 shell。"看"的边界来自 worktree 和被剥净的环境。两者之中 codex
+  的沙箱更紧;没有 `verify` 的任务完全拿不到 Bash。在你 `land` 之前,你的工作区不会被改动。
 - **凭据隔离。** 执行器 CLI 只拿到复用套餐认证所需的登录会话 / 网络上下文,外加一个显式
   配置的 provider key——绝不透传完整父环境(里面可能有无关的 `AWS_*`、代理或 API 凭据)。
 - **验证由你掌控。** CLI 对每个 diff 做快速、**无环境**的把关(能 apply、在 `allowed_globs`
   内、无密钥)——这是便宜模型伪造不了的确定性保证。真正的 build/测试由主会话(Opus)在**你的**
   真实环境里跑(含 docker):按风险逐任务触发,并且在报"完成"前**必定**跑一遍全链路。Opus 读完整
   输出、自己判断——便宜模型永不给自己下"过/挂"的结论,日志也不会被压缩掉。
+- **真实门禁能在哪里跑,是项目的属性,不是任务的属性。** `mode: worktree` 让它在 run worktree
+  里跑,于是实现和验证都能全并行。`mode: queue` 面向"真实环境只有一份"的项目(单一构建目录、
+  绑在固定宿主路径上的容器):执行器并行写代码和测试但**不编译**,由 `/router:gate` 拿着独占锁
+  把它们的 commit 逐个送进**你自己的 checkout** —— 有未提交的被跟踪改动就**直接拒绝**、
+  每个都在**当前集成分支头**上验证(而不是过期的旧 base)、保住构建缓存(**绝不 `git clean`**)、
+  最后把你的分支还原。门禁失败还会在合并前的头上再跑一遍基线,所以本来就红的项目不会被算到
+  这次改动头上。
+- **执行器必须交回什么。** 每次运行都以一份交付报告收尾 —— 人读的散文,加一个
+  `router-delivery` 头(`gate_ran`、`scope_drift`、`escalate_review`)—— 落在
+  `.router/tasks/<id>/runs/<run>/DELIVERY.md`。头缺失会被当作**合约违规**明确报出来,而不是
+  含糊过去。而且执行器**永远不许悄悄改方案**:当代码与它的合约冲突时,它必须报
+  `CONTRACT_CONFLICT` 并给出证据,什么都不提交,决定权回到你手里。
 - **真实配额均衡。** codex 用量从 `~/.codex/sessions` 读取,claude 用量从 statusline
   快照读取(`statusline/router-usage.mjs`,可选);余量更多的执行器先跑,遇到真实的
   429 则切换到另一个。

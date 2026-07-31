@@ -5,18 +5,23 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { dump, load } from 'js-yaml';
+import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask, resumeTask } from '../app/dispatch.ts';
+import { dispatchTask, dispatchTasks, resolvePoolSize, resumeTask } from '../app/dispatch.ts';
+import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
+import { runQueueGate } from '../app/gateQueue.ts';
+import { readLock } from '../io/lock.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
+import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
-import { buildUsageReport, explainSavingsText, renderUsage } from '../app/usageReport.ts';
+import { buildRoutingReport, buildUsageReport, explainSavingsText, renderRouting, renderUsage } from '../app/usageReport.ts';
+import { STRONG_BASELINE_MODEL } from '../core/pricing.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
@@ -58,6 +63,18 @@ function requireId(ctx: Ctx): string {
   return id;
 }
 
+function requireIds(ctx: Ctx): string[] {
+  const flagId = flagStr(ctx.args.flags, 'id');
+  const ids = [...(flagId !== undefined ? [flagId] : []), ...ctx.args.positionals];
+  if (ids.length === 0 || ids.some((id) => id === '')) throw new CliError('missing task id', 2);
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) throw new CliError(`duplicate task id: ${id}`, 2);
+    seen.add(id);
+  }
+  return ids;
+}
+
 const RUN = fmtRunId(1); // one synchronous attempt per task
 
 const pad = (s: string, n: number): string => (s.length >= n ? s : s + ' '.repeat(n - s.length));
@@ -77,13 +94,25 @@ function taskTemplate(id: string, title: string): string {
     { lineWidth: 120 },
   );
 }
+// The seven headings are the dispatchability test: a package an executor can own end to
+// end has all seven, and one that cannot state its invariants, its blast radius, or when to
+// stop is still a decision the orchestrator owes the user, not a task to hand off. They are
+// also what the reviewer judges drift against -- "it changed something it was told not to"
+// is only checkable when the contract said so.
 // The test-hygiene block is boilerplate on purpose: these are the mistakes BOTH cheap
 // and strong models make (measured, not guessed) -- a fixed global resource name that
 // collides when a test runner repeats the test, state left behind when a test aborts
 // mid-way, and a test script created without its executable bit. Keep this block short:
 // a longer contract gets skimmed, which defeats the point.
 const contractTemplate = (id: string, title: string): string =>
-  `# ${title}\n\ntask: ${id}\n\n## Goal\n\n_What to accomplish._\n\n## Definition of Done\n\n- [ ] ...\n` +
+  `# ${title}\n\ntask: ${id}\n\n## Goal\n\n_What to accomplish._\n\n` +
+  `## Invariants (must not change)\n\n_What this task may NOT alter, however convenient._\n\n` +
+  `## Frozen interfaces / dependencies\n\n` +
+  `_The already-agreed signatures and files this builds on; the tasks it depends on._\n\n` +
+  `## Definition of Done\n\n- [ ] ...\n- [ ] Carries tests for the code it changes.\n\n` +
+  `## Blast radius (worst case if this is wrong)\n\n_What breaks, and how visibly._\n\n` +
+  `## Stop conditions (stop and report instead of improvising)\n\n` +
+  `_Report \`CONTRACT_CONFLICT\` rather than working around any of these._\n\n` +
   `\n## Test hygiene (applies whenever this task adds or changes tests)\n\n` +
   `- [ ] Every shared or globally-scoped thing the test creates (server-wide entities,\n` +
   `      fixed table/user/file names, paths outside a per-run temp dir) is namespaced per\n` +
@@ -118,36 +147,92 @@ const newTask: Handler = (ctx) => {
 
 const dispatch: Handler = async (ctx) => {
   const deps = depsFor(ctx);
-  const id = requireId(ctx);
-  const result = await dispatchTask(deps, id);
-  const v = result.verifier?.result ?? 'FAILED';
+  const ids = requireIds(ctx);
+  const maxParallelText = flagStr(ctx.args.flags, 'max-parallel');
+  const maxParallel = maxParallelText === undefined ? undefined : Number(maxParallelText);
+  if (maxParallel !== undefined && (!Number.isInteger(maxParallel) || maxParallel < 1)) {
+    throw new CliError('--max-parallel must be an integer >= 1', 2);
+  }
+  if (ids.length === 1) {
+    const id = ids[0]!;
+    const result = await dispatchTask(deps, id);
+    const v = result.verifier?.result ?? 'FAILED';
+    emit(ctx.json, dispatchOutput(id, result), () => dispatchLine(id, result));
+    return v === 'PASSED' ? 0 : 1;
+  }
+
+  const results = await dispatchTasks(deps, ids, maxParallel);
+  const parallel = resolvePoolSize(ids.length, maxParallel);
+  const passed = results.filter((result) => result.verifier?.result === 'PASSED').length;
   emit(
     ctx.json,
     {
-      ok: v === 'PASSED',
-      id,
-      executor: result.worker.kind,
-      model: result.worker.model ?? null,
-      verifier: v,
-      exit_class: result.exit_class,
-      tokens: result.tokens ?? null,
-      cost_usd: result.cost_usd ?? null,
-      executor_switches: result.executor_switches ?? 0,
-      model_mismatch: result.model_mismatch ?? false,
+      ok: passed === results.length,
+      parallel,
+      results: results.map((result, index) => dispatchOutput(ids[index]!, result, false)),
     },
-    () => {
-      const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
-      const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
-      const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      const warn = result.model_mismatch
-        ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
-          `(provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.`
-        : '';
-      return `${id}: ${v} (executor ${who}${sw}); ${next}${warn}`;
-    },
+    () => [...results.map((result, index) => dispatchLine(ids[index]!, result)), `${passed}/${results.length} PASSED`].join('\n'),
   );
-  return v === 'PASSED' ? 0 : 1;
+  return passed === results.length ? 0 : 1;
 };
+
+function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTask>>, includeOk = true): Record<string, unknown> {
+  const v = result.verifier?.result ?? 'FAILED';
+  return {
+    ...(includeOk ? { ok: v === 'PASSED' } : {}),
+    id,
+    executor: result.worker.kind,
+    model: result.worker.model ?? null,
+    // `null` when the verifier never ran (a contract conflict, a timeout, a stalled run) --
+    // distinct from a gate that ran and failed. `router result` already says `n/a` here, and
+    // reporting a machine-readable "FAILED" for something never attempted is the kind of
+    // dressed-up gap the assurance rules forbid. `ok` is unaffected: it needs PASSED.
+    verifier: result.verifier?.result ?? null,
+    exit_class: result.exit_class,
+    conflict: result.conflict ?? false,
+    risk: result.risk ?? null,
+    commands_run: result.commands_run ?? null,
+    tokens: result.tokens ?? null,
+    cost_usd: result.cost_usd ?? null,
+    executor_switches: result.executor_switches ?? 0,
+    model_mismatch: result.model_mismatch ?? false,
+    delivery: result.delivery?.path ?? null,
+    delivery_header: result.delivery?.header_error ?? (result.delivery?.header ? 'ok' : 'missing'),
+    uncommitted_changes: result.uncommitted_changes ?? false,
+  };
+}
+
+function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask>>): string {
+  const v = result.verifier?.result ?? 'FAILED';
+  const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
+  const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
+  if (result.conflict === true || result.exit_class === 'contract_conflict') {
+    const report = result.delivery?.path ?? `.router/tasks/${id}/runs/${result.run_id}/DELIVERY.md`;
+    const recoverable = result.uncommitted_changes
+      ? `\nNOTE: the uncommitted worktree remains available at .router/worktrees/${id}/${result.run_id}`
+      : '';
+    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing committed or verified; the plan needs revising; report: ${report}${recoverable}`;
+  }
+  const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
+  const warn = result.model_mismatch
+    ? `\nWARNING: ${result.worker.kind} rejected model '${result.worker.model ?? '?'}' -- your model config may be stale ` +
+      `(provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.`
+    : '';
+  const report = result.delivery
+    ? ` report: ${result.delivery.path}${result.delivery.header_error ? ` [delivery_header: ${result.delivery.header_error}]` : ''}`
+    : '';
+  // Nothing is committed unless the run ended ok, so an unfinished run's work is only
+  // discoverable if we say where it is.
+  const recoverable = result.uncommitted_changes
+    ? `\nNOTE: this run did not commit, but its worktree still holds changes -- the work is ` +
+      `recoverable: git -C .router/worktrees/${id}/${result.run_id} status`
+    : '';
+  const raisedRisk =
+    result.risk_raised_by && result.risk_raised_by.length > 0
+      ? `\nRISK RAISED to ${result.risk}: ${result.risk_raised_by.join(', ')}`
+      : '';
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}${raisedRisk}`;
+}
 
 // Resume the prior dispatch's executor session with feedback (context retained) instead
 // of a cold re-dispatch. Fail-loud: if the executor reports a different session id, the
@@ -172,8 +257,13 @@ const resume: Handler = async (ctx) => {
       exit_class: result.exit_class,
     },
     () => {
-      if (mism)
-        return `${id}: RESUME DID NOT RE-ATTACH -- executor reported a new session id (${result.session_id}); nothing committed. Re-dispatch, or check the resume invocation.`;
+      if (mism) {
+        const reported =
+          result.resume_reported_session == null
+            ? 'reported no session id at all'
+            : `reported a different session id (${result.resume_reported_session})`;
+        return `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; nothing committed. Re-dispatch, or check the resume invocation.`;
+      }
       const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
       return `${id}: resumed -> ${v} (${result.exit_class}); ${next}`;
     },
@@ -183,28 +273,93 @@ const resume: Handler = async (ctx) => {
 
 const land: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
-  const id = requireId(ctx);
-  const result = store.readResult(paths, id, RUN);
-  if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)`, 1);
-  if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED`, 1);
-  const branch = runBranch(id, RUN);
-  try {
-    mergeNoFF(paths.repoRoot, branch);
-  } catch (e) {
-    mergeAbort(paths.repoRoot);
-    throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}`, 1);
+  const ids = requireIds(ctx);
+  const landed: { id: string; merged: string; merge_commit: string }[] = [];
+  for (const id of ids) {
+    const result = store.readResult(paths, id, RUN);
+    const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(', ')}` : '';
+    if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
+    if (result.conflict === true || result.exit_class === 'contract_conflict') {
+      const report = result.delivery?.path ?? paths.delivery(id, RUN);
+      throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
+    }
+    if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
+    const branch = runBranch(id, RUN);
+    try {
+      mergeNoFF(paths.repoRoot, branch);
+    } catch (e) {
+      mergeAbort(paths.repoRoot);
+      throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}${prior}`, 1);
+    }
+    // The run branch is deleted right after the merge, so record the merge commit: it is
+    // the only durable handle on what this task changed (`git show <sha>`). Without it a
+    // later review or post-mortem has no way back to the task's diff.
+    const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
+    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
+    deleteBranch(paths.repoRoot, branch);
+    store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
+    landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
-  // The run branch is deleted right after the merge, so record the merge commit: it is
-  // the only durable handle on what this task changed (`git show <sha>`). Without it a
-  // later review or post-mortem has no way back to the task's diff.
-  const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
-  worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
-  deleteBranch(paths.repoRoot, branch);
-  store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
-  emit(ctx.json, { ok: true, id, merged: branch, merge_commit: mergeCommit }, () =>
-    `${id} landed (${branch} -> ${mergeCommit.slice(0, 12)}); diff: git show ${mergeCommit.slice(0, 12)}`,
+  // Report once, after the loop: a batch has to leave stdout as ONE json document, so
+  // emitting per merge is not an option. A single id keeps the original object shape.
+  emit(ctx.json, landed.length === 1 ? { ok: true, ...landed[0]! } : { ok: true, landed }, () =>
+    landed
+      .map((l) => `${l.id} landed (${l.merged} -> ${l.merge_commit.slice(0, 12)}); diff: git show ${l.merge_commit.slice(0, 12)}`)
+      .join('\n'),
   );
   return 0;
+};
+
+// Verify dispatched commits in the project's REAL environment. That environment exists once
+// -- one Docker container bound to a fixed host path, one build directory, one database -- so
+// the queue is serial by nature and borrows the user's own checkout under an exclusive lock.
+// A run worktree cannot substitute: it is a different source path with none of those caches.
+const gate: Handler = async (ctx) => {
+  const deps = depsFor(ctx);
+  const cfg = loadGateConfig(deps.paths);
+
+  if (flagBool(ctx.args.flags, 'status')) {
+    const holder = readLock(deps.paths.gateLock());
+    emit(ctx.json, { ok: true, mode: cfg.mode, integration_branch: cfg.integration_branch ?? null, holder }, () =>
+      holder === null
+        ? `gate mode ${cfg.mode}; no verification in progress`
+        : `gate mode ${cfg.mode}; BUSY -- pid ${holder.pid} holds the checkout (last beat ${new Date(holder.beatAtMs).toISOString()})`,
+    );
+    return 0;
+  }
+
+  if (cfg.mode !== 'queue') {
+    throw new CliError(
+      `gate mode is "${cfg.mode}": this project verifies inside the run worktree via each task's ` +
+        `\`verify\`, so there is nothing to queue. Set mode: queue in ${gateYamlPath(deps.paths)} ` +
+        `for a project whose real gate needs Docker, a single build directory, or live services.`,
+      2,
+    );
+  }
+
+  const ids = requireIds(ctx);
+  const done: { id: string; gate: Awaited<ReturnType<typeof runQueueGate>> }[] = [];
+  // Sequential on purpose, and it stops at the first failure: a failure means the plan or the
+  // executor needs attention, and `checkout_dirty`/`lock_unavailable` would stop the rest anyway.
+  for (const id of ids) {
+    const g = await runQueueGate(deps, id);
+    done.push({ id, gate: g });
+    if (!g.ok) break;
+  }
+  const allOk = done.every((d) => d.gate.ok) && done.length === ids.length;
+  emit(ctx.json, { ok: allOk, results: done }, () =>
+    done
+      .map(({ id, gate: g }) =>
+        g.ok
+          ? `${id}: VERIFIED (${g.level} gate) on ${g.integration_branch} -> ${(g.head_sha ?? '').slice(0, 12)}; evidence: ${g.log}`
+          : `${id}: NOT VERIFIED (${g.reason})${
+              g.dirty && g.dirty.length > 0 ? `; uncommitted: ${g.dirty.join(', ')}` : ''
+            }${g.log ? `; evidence: ${g.log}` : ''}${g.reset_log ? `; reset output: ${g.reset_log}` : ''}`,
+      )
+      .concat(allOk ? [] : ['stopped at the first failure; the remaining tasks were not attempted'])
+      .join('\n'),
+  );
+  return allOk ? 0 : 1;
 };
 
 const result: Handler = (ctx) => {
@@ -245,15 +400,109 @@ const list: Handler = (ctx) => {
     const res = store.readResult(paths, id, RUN);
     const status = res === null ? 'none' : (res.verifier?.result ?? res.exit_class);
     const worktree = existsSync(paths.worktree(id, RUN));
-    return { id, title, status, worktree };
+    const risk = res?.risk ?? '-';
+    const report = res?.delivery ? 'yes' : '-';
+    return { id, title, status, worktree, risk, report };
   });
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return 'No tasks in .router/tasks.';
-    const lines = [`Tasks (${rows.length}):`, pad('id', 22) + pad('status', 10) + pad('worktree', 10) + 'title'];
-    for (const r of rows) lines.push(pad(r.id, 22) + pad(String(r.status), 10) + pad(r.worktree ? 'present' : '-', 10) + r.title);
+    const lines = [
+      `Tasks (${rows.length}):`,
+      pad('id', 22) + pad('status', 10) + pad('worktree', 10) + pad('risk', 10) + pad('report', 10) + 'title',
+    ];
+    for (const r of rows)
+      lines.push(
+        pad(r.id, 22) +
+          pad(String(r.status), 10) +
+          pad(r.worktree ? 'present' : '-', 10) +
+          pad(r.risk, 10) +
+          pad(r.report, 10) +
+          r.title,
+      );
     const leftover = rows.filter((r) => r.worktree).length;
     if (leftover > 0)
       lines.push(`\n${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+    return lines.join('\n');
+  });
+  return 0;
+};
+
+const PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+
+// A malformed or missing PLAN.md must not fail the whole `plans` listing -- it just
+// means this one row's revision is unknown; see the `plans` handler below.
+function planRevision(text: string): string | null {
+  const match = PLAN_FRONTMATTER_RE.exec(text);
+  if (match === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = load(match[1]!, { schema: JSON_SCHEMA });
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const rev = (parsed as Record<string, unknown>).plan_revision;
+  return typeof rev === 'string' || typeof rev === 'number' ? String(rev) : null;
+}
+
+function highestCritiqueRound(entries: string[]): number | null {
+  let max: number | null = null;
+  for (const name of entries) {
+    const m = /^critique-(\d+)\.md$/.exec(name);
+    if (m === null) continue;
+    const n = Number(m[1]);
+    if (max === null || n > max) max = n;
+  }
+  return max;
+}
+
+// List plan artifacts under .router/plans -- PLAN.md's declared revision, the highest
+// critique-<n>.md round on disk, whether DECISIONS.md exists, and whether a spec.lock is
+// currently held. Read-only: this is a browsing aid so a plan from last week is findable
+// without remembering its id by heart.
+const plans: Handler = (ctx) => {
+  const { paths } = depsFor(ctx);
+  // `.router/plans` has no dedicated field on RouterPaths (only per-plan-id accessors do);
+  // this is the one directory we must list to discover which plan ids even exist.
+  const plansRoot = join(paths.root, 'plans');
+  const ids = existsSync(plansRoot)
+    ? readdirSync(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
+    : [];
+  const rows = ids.map((id) => {
+    let revision: string | null = null;
+    try {
+      revision = planRevision(readFileSync(paths.planMd(id), 'utf8'));
+    } catch {
+      /* no PLAN.md, or unreadable -- revision stays unknown */
+    }
+    let critiqueRound: number | null = null;
+    try {
+      critiqueRound = highestCritiqueRound(readdirSync(paths.planDir(id)));
+    } catch {
+      /* plan dir unreadable -- treat as no critiques rather than failing the row */
+    }
+    return {
+      id,
+      plan_revision: revision,
+      critique_round: critiqueRound,
+      decisions: existsSync(paths.specDecisions(id)),
+      locked: readLock(paths.specLock(id)) !== null,
+    };
+  });
+  emit(ctx.json, { ok: true, plans: rows }, () => {
+    if (rows.length === 0) return 'No plans in .router/plans.';
+    const lines = [
+      `Plans (${rows.length}):`,
+      pad('id', 24) + pad('revision', 12) + pad('critique', 10) + pad('decisions', 12) + 'locked',
+    ];
+    for (const r of rows)
+      lines.push(
+        pad(r.id, 24) +
+          pad(r.plan_revision ?? 'unknown', 12) +
+          pad(r.critique_round === null ? '-' : String(r.critique_round), 10) +
+          pad(r.decisions ? 'yes' : '-', 12) +
+          (r.locked ? 'yes' : '-'),
+      );
     return lines.join('\n');
   });
   return 0;
@@ -265,10 +514,76 @@ const usage: Handler = (ctx) => {
   const { paths, clock } = depsFor(ctx);
   const all = flagBool(ctx.args.flags, 'all');
   const report = buildUsageReport(paths, clock.nowIso(), { all });
+  if (flagBool(ctx.args.flags, 'routing')) {
+    const routing = buildRoutingReport(report.rows);
+    emit(ctx.json, { ok: true, routing }, () => renderRouting(routing));
+    return 0;
+  }
   emit(ctx.json, { ok: true, usage: report }, () => {
     const body = renderUsage(report);
     return flagBool(ctx.args.flags, 'explain-savings') ? `${body}\n\n${explainSavingsText(report.baselineModel)}` : body;
   });
+  return 0;
+};
+
+const orchestratorUsage: Handler = (ctx) => {
+  const planId = flagStr(ctx.args.flags, 'plan');
+  if (planId === undefined || planId === '') throw new CliError('orchestrator-usage needs --plan <id>', 2);
+  const sinceIso = flagStr(ctx.args.flags, 'since');
+  if (sinceIso === undefined || sinceIso === '')
+    throw new CliError('orchestrator-usage needs --since <iso>', 2);
+
+  const { paths, clock } = depsFor(ctx);
+  const untilIso = flagStr(ctx.args.flags, 'until');
+  const transcriptPath = flagStr(ctx.args.flags, 'transcript');
+  const projectsDir = flagStr(ctx.args.flags, 'projects-dir');
+  const model = flagStr(ctx.args.flags, 'model') ?? STRONG_BASELINE_MODEL;
+  const recorded = recordOrchestratorUsage(paths, clock, {
+    planId,
+    sinceIso,
+    model,
+    ...(untilIso !== undefined ? { untilIso } : {}),
+    ...(transcriptPath !== undefined ? { transcriptPath } : {}),
+    ...(projectsDir !== undefined ? { projectsDir } : {}),
+  });
+
+  if (!recorded.recorded) {
+    const message = `orchestrator usage not recorded: ${recorded.reason}; usage will show execution side only`;
+    emit(
+      ctx.json,
+      {
+        ok: true,
+        recorded: false,
+        plan: planId,
+        tokens_input: 0,
+        tokens_output: 0,
+        cost_usd: null,
+        reason: recorded.reason,
+        message,
+      },
+      () => message,
+    );
+    return 0;
+  }
+
+  emit(
+    ctx.json,
+    {
+      ok: true,
+      recorded: true,
+      plan: planId,
+      tokens_input: recorded.inputTokens,
+      tokens_output: recorded.outputTokens,
+      cost_usd: recorded.cost_usd,
+    },
+    () => {
+      const cost = recorded.cost_usd === null ? 'unknown' : `$${recorded.cost_usd.toFixed(6)} est`;
+      return (
+        `orchestrator usage recorded: plan ${planId}; ` +
+        `${recorded.inputTokens} tokens in, ${recorded.outputTokens} tokens out; cost ${cost}`
+      );
+    },
+  );
   return 0;
 };
 
@@ -432,9 +747,12 @@ export const HANDLERS: Record<string, Handler> = {
   dispatch,
   resume,
   land,
+  gate,
   result,
   list,
+  plans,
   usage,
+  'orchestrator-usage': orchestratorUsage,
   models,
   symbol,
   doctor,
@@ -450,17 +768,20 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)\n` +
-    `  dispatch <id>          run the task on the quota-picked executor to a verified diff\n` +
+    `  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs\n` +
     `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
-    `  land <id>              merge a PASSED dispatch's diff\n` +
+    `  land <id...>           merge PASSED dispatch diffs sequentially\n` +
+    `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
-    `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
+    `  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock\n` +
+    `  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches\n` +
+    `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
     `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>\n` +
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --all, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --routing, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }

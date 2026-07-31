@@ -16,15 +16,28 @@ export interface RouterPaths {
   readonly worktreesDir: string;
   readonly symbolsDir: string; // code-intelligence symbol caches (gitignored, per-repo)
   readonly symbolLatest: string; // pointer file: hash of the most recently built index
+  gateLock(): string;
+  /** Per-plan directory. Plan artifacts are namespaced so two plans reviewed at once in one
+   * repo cannot clobber each other -- and, more sharply, so a reviewer told to read the plan
+   * from disk cannot silently be handed a different one. `plan_id` is schema-constrained to a
+   * path-safe shape for exactly this reason. */
+  planDir(planId: string): string;
+  planMd(planId: string): string;
+  specCritique(planId: string, round: number): string;
+  specDecisions(planId: string): string;
+  specLock(planId: string): string;
   symbolCache(hash: string): string;
   taskDir(id: string): string;
   taskYaml(id: string): string;
   contractMd(id: string): string;
+  taskContext(id: string): string;
   runsDir(id: string): string;
   heartbeat(id: string, runId: string): string;
   resultJson(id: string, runId: string): string;
   diffPatch(id: string, runId: string): string;
+  delivery(id: string, runId: string): string;
   workerLog(id: string, runId: string): string;
+  gateLog(id: string, runId: string): string;
   worktree(id: string, runId: string): string;
 }
 
@@ -51,15 +64,24 @@ export function routerPaths(routerDir: string): RouterPaths {
     worktreesDir: join(root, 'worktrees'),
     symbolsDir: join(root, 'symbols'),
     symbolLatest: join(root, 'symbols', 'latest'),
+    gateLock: () => join(root, 'gate.lock'),
+    planDir: (planId) => join(root, 'plans', planId),
+    planMd: (planId) => join(root, 'plans', planId, 'PLAN.md'),
+    specCritique: (planId, round) => join(root, 'plans', planId, `critique-${round}.md`),
+    specDecisions: (planId) => join(root, 'plans', planId, 'DECISIONS.md'),
+    specLock: (planId) => join(root, 'plans', planId, 'spec.lock'),
     symbolCache: (hash: string) => join(root, 'symbols', `${hash}.json`),
     taskDir,
     taskYaml: (id) => join(taskDir(id), 'task.yaml'),
     contractMd: (id) => join(taskDir(id), 'TASK_CONTRACT.md'),
+    taskContext: (id) => join(taskDir(id), 'TASK_CONTEXT.md'),
     runsDir: (id) => join(taskDir(id), 'runs'),
     heartbeat: (id, run) => join(runDir(id, run), 'heartbeat'),
     resultJson: (id, run) => join(runDir(id, run), 'result.json'),
     diffPatch: (id, run) => join(runDir(id, run), 'diff.patch'),
+    delivery: (id, run) => join(runDir(id, run), 'DELIVERY.md'),
     workerLog: (id, run) => join(runDir(id, run), 'logs', 'worker.log'),
+    gateLog: (id, run) => join(runDir(id, run), 'logs', 'gate.log'),
     worktree: (id, run) => join(root, 'worktrees', id, run),
   };
 }

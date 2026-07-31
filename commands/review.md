@@ -42,7 +42,7 @@ codex is unavailable or out of quota, fall to the next same-strength entry (e.g.
 model for adversarial review.
 
 **Run the reviewer in the background**, **redirecting its full output to a file** (e.g.
-`codex exec ... > .router/review/critique-<lens>.md 2>&1`), and tell the user (e.g. "code
+`codex exec ... > .router/plans/<plan_id>/review-<lens>.md 2>&1`), and tell the user (e.g. "code
 review running in the background (<model>, effort <effort>); I'll surface the critique
 when it lands") -- reviews take minutes and running detached avoids the interactive
 timeout. `max` effort is opt-in, used only when the user explicitly asks for the deepest
@@ -63,6 +63,39 @@ landed diff; whether the diff is within the spec's declared scope; whether the s
 approved; and whether the code changed again after the last verification run (if so, prior
 evidence is stale). **If scope drifted or the spec was never approved, stop and return to
 `/router:spec`** -- do not review against a spec that no longer matches the code.
+
+**Start from router's own record rather than from scratch.** For each package `/router:go`
+landed, `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" result <id> --json` returns the run
+record. Read these fields first -- they say what is already proven, what is only claimed, and
+where this review must start:
+
+- **`delivery.header`** -- the executor's own report (`gate_ran`, `scope_drift`,
+  `escalate_review`), with the prose at `delivery.path`. `escalate_review: true` forces the full
+  two-lens pass whatever the tier says: the executor is telling you something in there needs
+  judgment. `scope_drift: true` is a Phase 1 finding, not a Phase 2 one. A missing or unparsed
+  header (`delivery_header: missing`, `delivery.header_error`) is a **contract violation** --
+  investigate that before the code, and never read it as "probably fine".
+- **`risk` and `risk_raised_by`** -- the *effective* risk after the CLI's one-way escalation.
+  Review at that level or higher and **never below it**; the tier in the spec is a floor, not a
+  ceiling. `risk_raised_by` names the deterministic signal that lifted it (changed-line count, a
+  diff touching a path the contract declared invariant, a change spread across several top-level
+  directories). Treat a named signal as a **lead to check**, never as a finding on its own.
+- **`verifier.checks`** -- which environment-free gates ran (`diff_applies`, `scope`,
+  `secret_scan`, `exec_bit`, `verify`) and their per-check result. `verifier: null` means no gate
+  ran at all (contract conflict, timeout, stall) -- that is `unverified`, not a defect in the
+  code, and it makes this stage the first real verification.
+- **`gate`** -- the queue verdict when the project verifies in its own checkout, with `log` as a
+  **path**. `gate_failed_pre_existing` means the same gate also failed on the pre-merge baseline:
+  the failure belongs to the project, not to this change -- and it is equally not evidence *for*
+  this change.
+- **`base_sha` and `merge_commit`** -- the version binding. `land` deletes the run branch, so
+  `git diff <merge_commit>^1 <merge_commit>` is the durable way to see exactly what one package
+  changed.
+
+Judge drift against the contract's declared **`invariants`** in `.router/tasks/<id>/task.yaml`
+and its `TASK_CONTRACT.md`, not against your impression of the scope -- "it changed something it
+was told not to" is only checkable because the contract said so. **Cite log paths; never paste
+build output into the report.**
 
 ## Phase 2 -- Independent semantic review
 
@@ -115,6 +148,14 @@ regression test fails against the OLD code). **Honesty rules from assurance-core
 tool that will not run here (e.g. C++ coverage/mutation needing a Docker-only compile db) is
 `unverified`, never a faked `pass`; obey the anti-gaming contract. Tooling-dependent matrix
 rows that cannot run become Known Limits, not silent passes.
+
+**A package the gate never ran on is unproven, and this stage is where that shows.** When
+Phase 1 turned up `gate_ran: false`, `verifier: null`, or a queue verdict that never reached a
+pass, the matrix rows whose only evidence would have been that gate are `unverified` until you
+run them here -- run the real gate yourself (`/router:gate <id>` on a queue project, the
+project's own command otherwise) and read the whole output, or record them as Known Limits.
+Do not carry the executor's word across from the delivery report: the report is what it
+*claims*, the gate record is what *ran*, and a claim is not an evidence row.
 
 ## Phase 4 -- Evidence audit & verdict (print verbatim for the user)
 

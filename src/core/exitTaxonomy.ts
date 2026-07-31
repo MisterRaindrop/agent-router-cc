@@ -26,9 +26,65 @@ export function classifyExit(o: SupervisionObservation): ExitClass {
   return 'task_failed';
 }
 
-/** Neither an env error nor a provider quota hit counts toward the escalation ladder. */
+/** Setup/quota failures and a correct contract refusal do not burn a task attempt. */
 export function countsAsAttempt(exitClass: ExitClass): boolean {
-  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted';
+  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted' && exitClass !== 'contract_conflict';
+}
+
+/**
+ * The executor reports a contract/code contradiction by opening its final message with this
+ * protocol marker. The marker must START the first non-empty line -- a later mention is
+ * ordinary prose, not a state transition -- but anything may follow it on that line, because
+ * a model told to "begin with CONTRACT_CONFLICT followed by the reason" routinely writes
+ * `CONTRACT_CONFLICT: the schema cannot express this`. Requiring the line to contain nothing
+ * else missed exactly that shape, and the cost is asymmetric: an undetected conflict gets
+ * committed, verified, and possibly landed on a false assumption, while an over-detection
+ * merely asks a human to look. So this errs toward detecting.
+ */
+export function detectContractConflict(finalMessage: string | null | undefined): boolean {
+  if (finalMessage == null) return false;
+  const first = finalMessage.split(/\r?\n/).find((line) => line.trim() !== '');
+  if (first === undefined) return false;
+  return /^CONTRACT_CONFLICT\b/u.test(first.trim());
+}
+
+/**
+ * The worker log is not all *about* the worker: it relays whole command transcripts and file
+ * contents from the work the executor did. Classifying on that text is unsound -- this
+ * project's own sources and test names contain "quota" and "unknown model", so an executor
+ * that merely ran the test suite and then failed would be reclassified as a provider quota
+ * hit or a stale model config. (Both were observed on a real run.)
+ *
+ * So keep only what the executor said about *itself*: raw non-JSON diagnostic lines, plus
+ * JSON events that are not relayed content. A provider failure arrives as a raw `ERROR: {...}`
+ * line (observed) and therefore survives this filter, while codex `item.*` events and claude
+ * `assistant`/`user` events -- command output, file diffs, tool results, model prose -- do not.
+ *
+ * Erring this way is the safe direction: missing a real quota hit costs one re-dispatch,
+ * whereas inventing one silently switches executors and does not count as an attempt. PURE.
+ */
+export function executorDiagnostics(logText: string): string {
+  const kept: string[] = [];
+  for (const line of logText.split('\n')) {
+    const t = line.trim();
+    if (t === '') continue;
+    if (!t.startsWith('{')) {
+      kept.push(line); // raw stderr/stdout: this is where provider errors show up
+      continue;
+    }
+    let type: unknown;
+    try {
+      type = (JSON.parse(t) as { type?: unknown }).type;
+    } catch {
+      kept.push(line); // not valid JSON after all -> treat as raw text
+      continue;
+    }
+    if (typeof type === 'string' && (type.startsWith('item.') || type === 'assistant' || type === 'user')) {
+      continue; // relayed content, not a statement about the executor
+    }
+    kept.push(line);
+  }
+  return kept.join('\n');
 }
 
 // Default signatures for a provider rate-limit / quota exhaustion in the worker log.
@@ -48,7 +104,7 @@ export function reclassifyQuota(
   pattern: string = DEFAULT_QUOTA_PATTERN,
 ): ExitClass {
   if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
-  return new RegExp(pattern, 'i').test(logText) ? 'quota_exhausted' : exitClass;
+  return new RegExp(pattern, 'i').test(executorDiagnostics(logText)) ? 'quota_exhausted' : exitClass;
 }
 
 // Provider authentication failures are environment/setup failures, not evidence
@@ -62,18 +118,18 @@ export function reclassifyEnvironmentFailure(
   pattern: string = DEFAULT_ENV_ERROR_PATTERN,
 ): ExitClass {
   if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
-  return new RegExp(pattern, 'i').test(logText) ? 'env_error' : exitClass;
+  return new RegExp(pattern, 'i').test(executorDiagnostics(logText)) ? 'env_error' : exitClass;
 }
 
 // A configured model slug the executor rejects: the tier config is likely stale
 // (provider updated its lineup, or the plan lacks that tier). Detected so the CLI
 // can warn the user to edit .router/models.yaml -- never auto-changed. PURE.
 export const DEFAULT_MODEL_MISMATCH_PATTERN =
-  '\\b(unknown model|model not found|no such model|model .*not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b';
+  '\\b(unknown model|model not found|no such model|model[^\\n]{0,40}?not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b';
 
 export function detectModelMismatch(
   logText: string,
   pattern: string = DEFAULT_MODEL_MISMATCH_PATTERN,
 ): boolean {
-  return new RegExp(pattern, 'i').test(logText);
+  return new RegExp(pattern, 'i').test(executorDiagnostics(logText));
 }

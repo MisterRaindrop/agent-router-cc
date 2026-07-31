@@ -89,10 +89,12 @@ at exactly **three points**:
 For each *clear* task in between, the work is split between two actors:
 
 - **The router CLI** runs the task on the quota-picked executor inside an isolated
-  worktree and applies **fast, environment-free gates** to the resulting diff — it applies
-  cleanly, stays within its allowed file scope, leaks no secrets, and a script added where
-  its siblings are executable carries the executable bit. It does **not** run your build or
-  tests.
+  worktree — several independent tasks at once, each in its own worktree — and applies
+  **fast, environment-free gates** to the resulting diff: it applies cleanly, stays within
+  its allowed file scope, leaks no secrets, and a script added where its siblings are
+  executable carries the executable bit. It runs a build or tests only if that task's
+  contract sets a `verify` command, and even then the answer is mechanical: *did it run and
+  pass*, never *is it right*.
 - **Opus** then **reads and reviews the diff** for laziness or wrong work — hardcoded
   values, skipped or hollow tests, misread intent (a cheap model can clear a shallow gate
   while still being wrong). And **Opus owns verification**: for anything risky it runs the
@@ -114,18 +116,33 @@ and merges — that is the token saving.
 `.router/tasks/<id>/task.yaml`.
 
 ```
-/router:dispatch <id>   # run task <id> once on the quota-picked executor, producing a
-                        #   mechanically-verified diff on an isolated worktree branch
-/router:land <id>       # merge task <id>'s verified diff into your working branch
-/router:result <id>     # show task <id>'s per-check verifier report and log tail
+/router:dispatch <id...> # run each task on the quota-picked executor, producing a
+                         #   mechanically-verified diff on its own worktree branch.
+                         #   Several ids run concurrently (--max-parallel <n> caps it),
+                         #   so the wall clock is the slowest task, not the sum
+/router:resume <id>      # send a failure back to that task's own executor session --
+                         #   its context intact, instead of another cold start
+/router:land <id...>     # merge those tasks' verified diffs into your working branch
+/router:gate <id...>     # for a project whose real gate needs Docker or one build directory:
+                         #   verify each commit in your own checkout, one at a time, on the
+                         #   integration head -- keeping the build cache warm (--status shows
+                         #   whether anything currently holds it)
+/router:result <id>      # show task <id>'s per-check verifier report and log tail
+/router:plans            # what is under .router/plans/<plan_id>: revision, critique
+                         #   rounds, decisions, and whether a session holds the lock
+/router:usage            # what this cost against an all-strongest-model baseline
+                         #   (--routing aggregates recorded runs into routing evidence)
 ```
 
 A task's contract (`.router/tasks/<id>/task.yaml`) carries `allowed_globs` (its file
-scope), an optional `verify` command like `[["npm","test"]]`, and an optional `worker`
-to pin an executor. Opus authors these from your conversation; there is no global policy
-file.
+scope), a `tier` (how much capability the work needs) and a `risk` (how much review it
+earns — different questions), an optional `verify` command like `[["npm","test"]]`,
+`depends_on` for ordering, and an optional `worker` to pin an executor. Opus authors these
+from your conversation; there is no global policy file.
 
-See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
+**[docs/workflow.md](docs/workflow.md)** is the whole protocol end to end — work packages,
+tiers and risk, both gate modes, what the executor owes back, and when to resume a session.
+See also **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
 **[examples/minimal/](examples/minimal/)**.
 
 ## How it works
@@ -135,10 +152,15 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   codex + claude.
 - **Isolated execution.** The executor runs in a fresh `git worktree` under `.router/`,
   supervised with a wall timeout and a stall watchdog; its output never enters the
-  orchestrator's context. Codex uses its `workspace-write` sandbox. Claude receives
-  only `Read`/`Edit`/`Write` tools in normal `acceptEdits` mode (no Bash and no
-  `bypassPermissions`), so access outside the worktree is denied. Your working tree
-  is untouched until you `land`.
+  orchestrator's context, and no MCP server from your own session is inherited. Codex uses
+  its `workspace-write` sandbox. Claude receives `Read`/`Edit`/`Write` in normal
+  `acceptEdits` mode (never `bypassPermissions`), plus `Bash` **only** when the task
+  declares a `verify` command, so it can prove its own work. Two real runs measured what that
+  means: `acceptEdits` auto-approves **read-only** Bash on its own, so reading is open, while
+  anything that *does* something must match the grant — which is the exact gate command plus
+  its program+subcommand prefix, so the executor can iterate without being handed a shell.
+  Reading is bounded by the worktree and the stripped environment; codex's sandbox is still
+  the tighter of the two, and a task with no `verify` gets no Bash at all. Your working tree is untouched until you `land`.
 - **Credential separation.** Executor CLIs receive only the login-session/network
   context needed for plan authentication plus an explicitly configured provider key —
   never the full parent environment (which might hold unrelated `AWS_*`, proxy, or API
@@ -149,6 +171,21 @@ See **[docs/quickstart.md](docs/quickstart.md)** and a runnable task in
   *your* actual environment (Docker and all): risk-driven per task, and always as a
   mandatory full-chain gate before "done". Opus reads the complete output and judges it —
   a cheap model never decides its own pass/fail, and logs are never compressed away.
+- **Where the real gate runs is a property of the project.** `mode: worktree` runs it inside
+  the run worktree, so implementation and verification are both parallel. `mode: queue` is for
+  the project whose environment exists *once* (one build directory, a container bound to a
+  fixed host path): executors write code and tests in parallel but don't build, and
+  `/router:gate` feeds their commits one at a time into your own checkout under an exclusive
+  lock — refusing outright if tracked files are modified, verifying each on the current
+  integration head rather than a stale base, keeping the build cache (never `git clean`), and
+  putting your branch back. A gate that fails is re-run on the pre-merge head, so a project
+  that was already red doesn't get blamed on the change.
+- **What the executor owes back.** Every run ends with a delivery report — prose plus a
+  `router-delivery` header (`gate_ran`, `scope_drift`, `escalate_review`) — stored at
+  `.router/tasks/<id>/runs/<run>/DELIVERY.md`. A missing header is reported as a contract
+  violation, not smoothed over. And the executor may never quietly rewrite the plan: when the
+  code contradicts its contract it reports `CONTRACT_CONFLICT` with evidence, nothing is
+  committed, and the decision comes back to you.
 - **Real-quota balancing.** codex usage is read from `~/.codex/sessions`, claude usage
   from a statusline snapshot (`statusline/router-usage.mjs`, optional); the executor
   with more headroom goes first, and a real 429 switches to the other.

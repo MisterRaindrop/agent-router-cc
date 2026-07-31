@@ -41,16 +41,22 @@ points:
 `/router:go` drives these; you can also call them directly:
 
 ```
-/router:dispatch <id>   # run one task on the quota-picked executor, to a verified diff
-/router:result <id>     # the per-check verifier report + log tail
-/router:land <id>       # merge a PASSED dispatch into your branch
+/router:dispatch <id...> # run these tasks on quota-picked executors, concurrently, to
+                         #   verified diffs (one call, so the wall clock is the slowest one)
+/router:result <id>      # the per-check verifier report + log tail
+/router:resume <id>      # send a failure back to that task's own executor session
+/router:land <id...>     # merge PASSED dispatches into your branch
+/router:gate <id...>     # verify in your own checkout, one at a time, when the real gate
+                         #   needs Docker or a single build directory
 ```
 
 Or from a shell (same thing): `router dispatch <id>`, `router land <id>`.
 
-Claude executors run with worktree-scoped `Read`/`Edit`/`Write` tools only. The CLI
+Claude executors run with worktree-scoped `Read`/`Edit`/`Write`, plus `Bash` limited to the
+task's `verify` command when it declares one, so they can prove their own work. The CLI
 applies environment-free gates to the diff (applies + scope + secrets + exec bit); the real
-build/tests are run by Opus in your actual environment, not by the CLI.
+build/tests are either that `verify` command or a `/router:gate` run in your own checkout, and
+the final full-chain verdict is always Opus's, in your actual environment.
 
 ## The task contract
 
@@ -60,15 +66,26 @@ Opus writes one per subtask at `.router/tasks/<id>/task.yaml`:
 schema_version: 1
 id: add-validators
 title: Add signup validators
+plan_id: issue-4213                    # same on every task of one plan; groups its artifacts
 allowed_globs: ["src/validators/**"]   # the ONLY paths the executor may change
-max_changed_lines: 200
-verify: []                             # usually empty -- Opus runs the real build/tests
-# verify: [["npm", "test"]]            # optional: also run this in the CLI's minimal env
+max_changed_lines: 200                 # budget for the task's own tests too
+tier: weak                             # how much capability: weak | strong | critical
+risk: normal                           # how much review it earns: low | normal | high
+verify: [["npm", "run", "check"]]      # the gate the executor must get to green itself
+# depends_on: [migrate-schema]         # optional: must land before this one runs
 # worker: { kind: claude, model: sonnet }   # optional: pin an executor
 ```
 
-`router new <id>` scaffolds this skeleton if you want to author one by hand. Under the
-Opus-driven flow you leave `verify: []`; the real build/tests happen in your environment.
+`router new <id>` scaffolds this skeleton if you want to author one by hand. Alongside it,
+`TASK_CONTRACT.md` states the seven things that make a task dispatchable at all -- goal,
+invariants, frozen interfaces, definition of done, blast radius, stop conditions, version
+binding. **If those cannot be written down, it is a decision rather than a task**, and Opus
+keeps it instead of handing it off.
+
+`tier` and `risk` answer different questions: a mechanical change to an auth path is `weak`
+**and** `high`. Set `verify` to a fast self-contained gate if one runs inside a worktree --
+then the diff arrives already compiling and passing. If the real gate needs Docker or one
+shared build directory, leave `verify: []` and use `/router:gate` instead.
 
 ## What each gate guarantees
 
@@ -82,12 +99,16 @@ A dispatched diff must clear the CLI's environment-free gates, in order:
 | `exec_bit`     | a script added where its same-extension siblings are executable carries the executable bit (a test script created `100644` dies with "permission denied" in CI before running one assertion) |
 | `verify`       | optional: any `verify` command(s) exit 0 (skipped when `verify: []`) |
 
-These are the deterministic guarantees a cheap model can't fake. **The real build/tests
-are Opus's job**, run in your actual environment (Docker and all): risk-driven per task,
-and always as a mandatory full-chain gate before "done". Opus also reviews every diff for
-correctness/laziness and reads the full test output itself -- a cheap model never decides
-its own pass/fail. Leave `verify: []` unless you want the CLI to also run a quick
-environment-free check.
+These are the deterministic guarantees a cheap model can't fake. Each run also ends with a
+**delivery report** (`.router/tasks/<id>/runs/<run>/DELIVERY.md`) whose header states whether
+the gate actually ran -- read it before the diff; `gate_ran: false` means unproven, whatever
+the prose says.
+
+**The final verdict is Opus's**, in your actual environment (Docker and all): risk-driven per
+task, and always as a mandatory full-chain gate before "done", because a per-task `verify`
+proved each task in isolation and not the combination. Opus reviews every diff for
+correctness/laziness and reads the full test output itself -- a cheap model never decides its
+own pass/fail. **[docs/workflow.md](workflow.md)** has the whole protocol.
 
 ## Real-quota routing
 

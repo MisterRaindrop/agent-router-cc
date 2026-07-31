@@ -15,9 +15,21 @@ model_reasoning_effort=<effort>` with the `effort` from that entry (the default 
 review beats a max review that times out). Independence is the whole point: it catches
 blind spots a self-review shares.
 
+**Everything this command writes is namespaced by `plan_id`** -- `.router/plans/<plan_id>/`
+holds the frozen `PLAN.md`, each round's critique, and the decision record. One shared
+`.router/PLAN.md` was fine while it was only an output, but two plans reviewed at once in one
+repo would overwrite each other's files, and the moment a reviewer is pointed at a plan on
+disk that stops being a lost file and becomes a **silent review of the wrong plan**. Pick the
+id the way `/router:go` describes (issue or PR number, else the branch name with `/` replaced
+by `-`), record it in the plan's frontmatter alongside `plan_revision`, and **tell the reviewer
+which `plan_id` it must be looking at -- if what it reads says otherwise, it must refuse rather
+than review.** If another session already holds `.router/plans/<plan_id>/spec.lock`, say so and
+stop: two sessions interleaving rounds on one plan produce a decision record that contradicts
+itself.
+
 **Run the reviewer in the background.** A review takes minutes; do not block the session
 on it. Launch it as a background job, **redirecting its full output to a file** (e.g.
-`codex exec ... > .router/spec/critique-<round>.md 2>&1`), tell the user plainly -- e.g.
+`codex exec ... > .router/plans/<plan_id>/critique-<round>.md 2>&1`), tell the user plainly -- e.g.
 "plan review running in the background (<model>, effort <effort>, ~a few minutes); go do
 other work, I'll surface the critique when it lands" -- and continue. Running detached
 also avoids the interactive timeout that a foreground review can hit. When it completes,
@@ -70,6 +82,43 @@ High-risk change needs all of it):
 This is the promise; `/router:review` is the check. Some items appear in both stages -- not
 redundancy: spec commits, review verifies.
 
+## What this spec hands to `/router:go`
+
+The assurance plan is not prose that gets re-derived at dispatch time: each part has a slot in
+the machine contract `/router:go` writes, so state it in a form that can be **copied** rather
+than re-decided.
+
+- **Risk tier -> `risk:` on every package.** It buys independent review, and it is **one-way**:
+  the CLI raises it from deterministic signals and never lowers it, so a tier set too low is
+  only a floor while a tier set too high really does spend review effort. Keep it distinct from
+  `tier:` (how capable the executor must be) -- a mechanical change on an auth path is `weak`
+  **and** `high`.
+- **Must NOT / invariants -> `invariants:`** in the contract. This is the yardstick
+  `/router:review` judges drift against, and the CLI escalates risk when a diff touches a path
+  listed there. An invariant nobody wrote down cannot be checked by either one.
+- **Verification Matrix -> where each row is actually proven.** Sort the rows: what the
+  environment-free gates settle (scope, secrets, executable bit, and whether the `verify` command
+  exited 0), what the real gate settles (`/router:gate`, one commit at a time, on a project whose
+  environment exists once), and what only the main session can settle. A row no available check
+  can cover stays `unverified` and visible -- never quietly replaced by a unit test that does not
+  test it.
+- **A high-reversal-risk assumption -> a `mode: probe` package.** When one matrix row would
+  invalidate the whole approach if it turned out false (platform behaviour, what a dependency
+  really does, the real shape of a migration), check it *before* code is written: probe inverts
+  the gate so an **empty diff passes**, and its findings enter the implementation package's
+  contract as text. Skip it where the project already has the pattern.
+- **`plan_revision`** is frozen here and copied onto every package. Revising later is allowed and
+  visible (the Revision Log), but packages already dispatched are bound to the old revision -- a
+  `TASK_CONTEXT.md` whose revision disagrees with its contract is refused before the executor
+  starts rather than quietly used.
+- **Environment & dependency plan -> the gate config.** A check needing a tool the project does
+  not have is not silently installed; without the user's approval that check is `unverified`.
+  `.router/gate.yaml` is confirmed by the user once, and a `reset` command -- the one that wipes
+  state -- is never inferred.
+
+None of this is a second copy of the plan. It is the same decisions, written where the machinery
+can enforce them instead of hoping they are remembered.
+
 ## Each round
 
 1. Hand the reviewer the current plan plus this instruction:
@@ -103,7 +152,7 @@ and keeps continuity. (If the installed reviewer CLI cannot resume, re-run it bu
 its previous critique so it has that context.)
 
 The user decides how many rounds to run and when to stop -- there is no automatic
-convergence. When the user is satisfied, write the frozen plan to `.router/PLAN.md` as the
+convergence. When the user is satisfied, write the frozen plan to `.router/plans/<plan_id>/PLAN.md` as the
 input to `/router:go`. It holds: goals & non-goals; the approach; risk tier; Failure Model;
 behaviour scenarios; Must NOT; Verification Matrix; environment & dependency plan; Known
 Unverified; Spec Approval; and a Revision Log (every spec revision recorded, so a later

@@ -7,6 +7,7 @@
 // env_error is special: it does NOT count as a real attempt.
 export type ExitClass =
   | 'ok'
+  | 'contract_conflict'
   | 'task_failed'
   | 'timeout'
   | 'stalled'
@@ -31,7 +32,7 @@ export interface WorkerPolicy {
 // Opus judges each dispatch task's difficulty and tags a tier; the config maps
 // tier -> {model, effort} per executor, and router still picks the executor by
 // quota. spec/review always use the strongest, independent reviewer (config.review).
-export type ModelTier = 'weak' | 'strong';
+export type ModelTier = 'weak' | 'strong' | 'critical';
 
 /** One model choice: a slug plus an optional reasoning-effort level. */
 export interface ModelSpec {
@@ -39,18 +40,53 @@ export interface ModelSpec {
   effort?: string;
 }
 
-/** The model menu: per-executor weak/strong slugs + the ordered reviewer chain. */
+/** The model menu: per-executor tier slugs + the ordered reviewer chain. */
 export interface ModelTierConfig {
-  codex: { weak: ModelSpec; strong: ModelSpec };
-  claude: { weak: ModelSpec; strong: ModelSpec };
+  codex: { weak: ModelSpec; strong: ModelSpec; critical: ModelSpec };
+  claude: { weak: ModelSpec; strong: ModelSpec; critical: ModelSpec };
   /** spec/review reviewer candidates, strongest first (kind + model + effort). */
   review: WorkerPolicy[];
+}
+
+// -- Real verification gate (config-driven; see app/gateConfig.ts) ------------
+export type GateMode = 'worktree' | 'queue';
+
+export interface GateConfig {
+  mode: GateMode;
+  /** Branch the queue owns and merges verified commits into. Required when mode is 'queue'. */
+  integration_branch?: string;
+  /** The real gate, as argv arrays, run in the borrowed checkout. Required when 'queue'. */
+  gate?: string[][];
+  /** Optional: a heavier gate for changes an incremental build cannot be trusted for. */
+  clean_gate?: string[][];
+  /** Optional: globs that force `clean_gate` (build files, generators). A deletion also does. */
+  clean_triggers?: string[];
+  /** Optional: run before every gate to reset business state (never compile caches). */
+  reset?: string[][];
+  /** How long to wait for the lock before giving up. Default 60. */
+  lock_wait_minutes?: number;
+  /** Additional parent-environment variable names explicitly exposed to the gate. */
+  env?: string[];
+  /** Hard wall-clock limit for each reset/gate command. Default 180. */
+  gate_wall_minutes?: number;
 }
 
 // -- task.yaml (machine contract; schema-validated) ----------------------------
 export interface TaskYaml {
   schema_version: 1;
   id: string;
+  /** Dispatch-plan identifier; absent for tasks created before plan grouping. */
+  plan_id?: string;
+  /** Revision of the frozen plan this contract belongs to. */
+  plan_revision?: string;
+  /** Task ids that must land before this task may run. */
+  depends_on?: string[];
+  /** Constraints the task may not change, used by reviewers to judge drift. */
+  invariants?: string[];
+  /** Assurance risk using the shared low/normal/high vocabulary. */
+  risk?: 'low' | 'normal' | 'high';
+  /** Contract intent; probe is reserved for a future read-only pre-check. */
+  mode?: 'implement' | 'probe';
   title: string;
   base_sha: string | null; // null until a diff is produced against a base commit (40-hex)
   max_wall_minutes: number;
@@ -121,6 +157,35 @@ export interface VerifierReport {
 }
 
 // -- Run result + metrics ------------------------------------------------------
+export interface GateResult {
+  ok: boolean;
+  reason?: string;
+  level?: 'task' | 'clean';
+  integration_branch?: string;
+  base_sha?: string;
+  head_sha?: string;
+  log?: string;
+  holder?: {
+    pid: number;
+    startedAtMs: number;
+    beatAtMs: number;
+    label?: string;
+  } | null;
+  /** The tracked modifications that made the checkout unborrowable (capped for display). */
+  dirty?: string[];
+  /** Output of the failing `reset` command, when a reset is what stopped the gate. */
+  reset_log?: string;
+  rc?: number | null;
+}
+
+export interface DeliveryHeader {
+  task: string;
+  plan_revision?: string;
+  gate_ran: boolean;
+  scope_drift: boolean;
+  escalate_review: boolean;
+}
+
 export interface RunResult {
   run_id: string;
   task_id: string;
@@ -136,14 +201,30 @@ export interface RunResult {
   worker: { kind: WorkerKind; model?: string; effort?: string };
   executor_switches?: number; // times we fell back to the next executor (quota/env)
   model_mismatch?: boolean; // executor rejected the configured slug -> config likely stale
+  context_oversize?: boolean; // optional task context exceeded its soft character limit
+  conflict?: boolean; // executor found that the code contradicts the frozen contract
+  risk?: 'low' | 'normal' | 'high'; // effective risk after deterministic escalation
+  risk_raised_by?: string[];
+  commands_run?: number; // executor command_execution events (codex; absent when unavailable)
   tokens?: { input: number; output: number };
   cost_usd?: number;
   verifier?: VerifierReport;
+  gate?: GateResult;
   diff_sha?: string;
   session_id?: string | null; // executor session/thread id, for a later `router resume`
   resumed?: boolean; // this run continued a prior executor session
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
+  /** What the resumed run actually reported: another id, or `null` for none at all. */
+  resume_reported_session?: string | null;
   base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
+  // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
+  // Set so a caller can recover work from a run that was killed after it had finished.
+  uncommitted_changes?: boolean;
+  delivery?: {
+    path: string;
+    header: DeliveryHeader | null;
+    header_error?: string;
+  };
   // `land` merges the run branch with --no-ff and then deletes it, so this merge
   // commit is the only durable handle on what the task changed:
   // `git show <merge_commit>` / `git diff <merge_commit>^1 <merge_commit>`.
@@ -153,10 +234,25 @@ export interface RunResult {
 export interface MetricRecord {
   ts: string;
   task_id: string;
+  /** Dispatch-plan identifier; absent on metrics recorded before plan grouping. */
+  plan_id?: string;
+  /** Revision of the frozen plan associated with this task. */
+  plan_revision?: string;
+  task_context_present?: boolean;
+  task_context_chars?: number;
+  task_context_sha256?: string;
+  context_base_sha?: string;
+  /** Whether this metric is for the main model or an executor. */
+  role?: 'executor' | 'orchestrator';
   run_id: string;
   attempt_number: number;
   model: string | null;
   executor?: WorkerKind | null; // which executor produced this run
+  tier?: ModelTier;
+  effort?: string;
+  risk?: 'low' | 'normal' | 'high';
+  conflict?: boolean;
+  commands_run?: number;
   exit_class: ExitClass;
   verifier_result: 'PASSED' | 'FAILED' | null;
   first_pass: boolean;

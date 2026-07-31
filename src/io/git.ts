@@ -58,6 +58,26 @@ export function resolveCommit(cwd: string, ref: string): string {
   return git(cwd, ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]).trim();
 }
 
+/** Current branch name, or the detached HEAD commit when no branch is checked out. */
+export function currentRef(cwd: string): string {
+  const branch = tryGit(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return branch.ok ? branch.stdout.trim() : resolveCommit(cwd, 'HEAD');
+}
+
+/** Check out an existing branch/ref. A commit SHA naturally restores detached HEAD. */
+export function checkoutRef(cwd: string, ref: string): void {
+  git(cwd, ['checkout', '--quiet', ref]);
+}
+
+/** Create `branch` at the current HEAD when absent, then check it out. */
+export function checkoutBranch(cwd: string, branch: string): void {
+  if (branchExists(cwd, branch)) {
+    checkoutRef(cwd, branch);
+    return;
+  }
+  git(cwd, ['checkout', '--quiet', '-b', branch, 'HEAD']);
+}
+
 /** git-tracked files under cwd, capped to `cap` (reports truncation, never silently). */
 export function listTrackedFiles(cwd: string, cap = 2000): { files: string[]; truncated: boolean } {
   const all = git(cwd, ['ls-files']).split('\n').filter((l) => l !== '');
@@ -238,11 +258,45 @@ export function commitAll(cwd: string, message: string): boolean {
   return true;
 }
 
+/** Whether the working tree holds any change at all (tracked edits or untracked files).
+ * A run that ends badly is not committed, so this is how the caller can say "the work is
+ * still there" instead of leaving the user to discover it -- an executor killed after it
+ * finished is the case that matters. Best effort: unreadable tree reports clean. */
+export function worktreeDirty(cwd: string): boolean {
+  const r = tryGit(cwd, ['status', '--porcelain']);
+  return r.ok && r.stdout.trim() !== '';
+}
+
+/**
+ * Whether TRACKED content has uncommitted modifications -- the only thing that a checkout or
+ * a `reset --hard` would overwrite, and therefore the only thing worth refusing to borrow a
+ * checkout over. Untracked files survive both (we never `git clean`), and submodule *content*
+ * dirt is build output, not the user's work.
+ *
+ * The distinction is not academic: measured on a real ClickHouse checkout, plain
+ * `git status --porcelain` reported 110 entries, of which 107 were build residue inside
+ * `contrib/*` submodules and 2 were untracked scratch files. Exactly one was a real
+ * uncommitted edit. Refusing on all 110 would lock the verification queue out of the very
+ * kind of project it was built for; refusing on the one is right.
+ *
+ * A submodule *pointer* move is a real tracked change and still counts.
+ */
+export function trackedChanges(cwd: string): string[] {
+  const r = tryGit(cwd, ['status', '--porcelain', '--untracked-files=no', '--ignore-submodules=dirty']);
+  if (!r.ok) return [];
+  return r.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+}
+
 /** Hard-reset a worktree to `sha` and remove untracked files - used to give the
  * next executor in a fallback chain a clean checkout after one quota-failed. */
 export function resetHard(cwd: string, sha: string): void {
   git(cwd, ['reset', '--hard', sha]);
   git(cwd, ['clean', '-fd']);
+}
+
+/** Reset tracked files and HEAD only. Queue gates must preserve warm untracked artifacts. */
+export function resetHardTracked(cwd: string, sha: string): void {
+  git(cwd, ['reset', '--hard', sha]);
 }
 
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */

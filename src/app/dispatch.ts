@@ -2,14 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { ExecutorQuota, ExitClass, MetricRecord, RunResult, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { DeliveryHeader, ExecutorQuota, ExitClass, MetricRecord, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
-import { detectModelMismatch, reclassifyEnvironmentFailure, reclassifyQuota } from '../core/exitTaxonomy.ts';
-import { commitAll, rawDiff, resetHard, resolveCommit, worktreeAdd, worktreeRemove, deleteBranch } from '../io/git.ts';
+import {
+  detectContractConflict,
+  detectModelMismatch,
+  reclassifyEnvironmentFailure,
+  reclassifyQuota,
+} from '../core/exitTaxonomy.ts';
+import { effectiveRisk } from '../core/risk.ts';
+import {
+  collectDiff,
+  commitAll,
+  rawDiff,
+  resetHard,
+  resolveCommit,
+  worktreeAdd,
+  worktreeDirty,
+  worktreeRemove,
+  deleteBranch,
+} from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
@@ -18,7 +34,12 @@ import { superviseWorker } from '../io/supervisor.ts';
 import { makeLauncher } from './codexLauncher.ts';
 import { loadModelConfig, tierWorkers } from './modelConfig.ts';
 import { loadTask } from './taskLoad.ts';
-import { parseCodexLog, type ParsedLog } from './usage.ts';
+import {
+  loadTaskContext,
+  TASK_CONTEXT_SOFT_LIMIT,
+  type TaskContext,
+} from './taskContext.ts';
+import { parseCodexLog, parseDeliveryHeader, type ParsedLog } from './usage.ts';
 import { verifyTask } from './verifier.ts';
 
 // The synchronous dispatch driver. Runs ONE clear task to a verified diff in the
@@ -32,7 +53,26 @@ export interface DispatchDeps {
   clock: Clock;
 }
 
+export interface PreparedRun {
+  id: string;
+  task: TaskYaml;
+  contractMdText: string;
+  worktreeDir: string;
+  branch: string;
+  baseSha: string;
+  context: TaskContext | null;
+  workers: WorkerPolicy[];
+  logPath: string;
+}
+
 const RUN = fmtRunId(1); // sync model: one attempt per task
+
+// How long a silent executor is tolerated before the stall watchdog kills it. The signal is
+// coarse -- log growth plus worktree mtime -- and a high-effort model reasoning between tool
+// calls emits neither. Measured: a run was killed at ten minutes of silence AFTER its gate had
+// already passed, discarding verified work, so the bound has to sit above real thinking time
+// and let `max_wall_minutes` be the hard stop.
+const STALL_MINUTES_DEFAULT = 20;
 
 function quotaFor(paths: RouterPaths, kind: WorkerKind): ExecutorQuota | null {
   if (kind === 'codex') {
@@ -60,11 +100,18 @@ function workerRecord(used: WorkerPolicy, model: string | undefined): RunResult[
   };
 }
 
-/** Run one task synchronously to a verified (or failed) result on its run branch. */
-export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
-  const { paths, clock } = deps;
+/** Prepare one task's isolated worktree and executor candidates. */
+export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
+  const { paths } = deps;
   const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
   const { task, contractMdText } = loadTask(paths, id);
+  const context = loadTaskContext(paths, task);
+  if (context !== null && context.base_sha !== baseSha) {
+    throw new Error(
+      `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", ` +
+        `but dispatch base is "${baseSha}"; regenerate the task context for this revision`,
+    );
+  }
   // An explicit `worker` pin wins; otherwise resolve the difficulty tier (default
   // weak) against the model config into per-executor candidates (each carrying its
   // tier's model + effort). Router then still picks the executor by real quota.
@@ -78,10 +125,27 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   deleteBranch(paths.repoRoot, branch);
   worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
 
+  return {
+    id,
+    task,
+    contractMdText,
+    worktreeDir,
+    branch,
+    baseSha,
+    context,
+    workers,
+    logPath: paths.workerLog(id, RUN),
+  };
+}
+
+/** Run one prepared task to a verified (or failed) result on its run branch. */
+export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
+  const { paths } = deps;
+  const { id, task, contractMdText, worktreeDir, baseSha, context, workers, logPath } = prep;
+  if (task.mode === 'probe') rmSync(paths.diffPatch(id, RUN), { force: true });
   // Verification runs repository-controlled commands: never expose provider keys,
   // proxy credentials, or login-session context to them.
   const verifyEnv = buildWorkerEnv(process.env);
-  const logPath = paths.workerLog(id, RUN);
 
   // Executor chain, quota-ordered: try the executor with the most headroom first;
   // quota/auth/setup failures reset the worktree and fall through to the next.
@@ -97,18 +161,29 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     const launcher = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const o = await superviseWorker({
-      argv: launcher.buildArgv({ task, worktreeDir, contractMdText, planExists: false }),
+      argv: launcher.buildArgv({
+        task,
+        worktreeDir,
+        contractMdText,
+        planExists: false,
+        taskContext: context,
+      }),
       cwd: worktreeDir,
       env: executorEnv,
       logPath,
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
       maxWallMs: task.max_wall_minutes * 60_000,
-      stallMs: (used.stall_minutes ?? 10) * 60_000,
+      stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
     });
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    const parsedAttempt: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
+    if (detectContractConflict(parsedAttempt.finalMessage)) {
+      exitClass = 'contract_conflict';
+      break;
+    }
     if ((exitClass === 'quota_exhausted' || exitClass === 'env_error') && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
@@ -117,15 +192,16 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     break;
   }
 
-  if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${RUN}`);
-
   const launcher = makeLauncher(used);
   const finalLog = safeRead(logPath);
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(finalLog);
+  const conflict = detectContractConflict(parsed.finalMessage);
+  if (conflict) exitClass = 'contract_conflict';
+  if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${RUN}`);
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null; // provider-reported only (no policy pricing table)
   // A configured slug the executor rejected -> the tier config is likely stale.
-  const modelMismatch = exitClass !== 'ok' && detectModelMismatch(finalLog);
+  const modelMismatch = exitClass !== 'ok' && exitClass !== 'contract_conflict' && detectModelMismatch(finalLog);
 
   const result: RunResult = {
     run_id: RUN,
@@ -141,33 +217,103 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1000),
     worker: workerRecord(used, model),
     base_sha: baseSha,
+    ...(context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {}),
     ...(switches > 0 ? { executor_switches: switches } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
+    ...(conflict ? { conflict: true } : {}),
+    ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
     ...(parsed.sessionId ? { session_id: parsed.sessionId } : {}),
   };
+  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  if (delivery !== undefined) result.delivery = delivery;
+  if (conflict) rmSync(paths.diffPatch(id, RUN), { force: true });
+  // A run that did not end `ok` is never committed, so its work would otherwise look lost.
+  // Say plainly that it is still on disk: an executor killed after it had already finished is
+  // recoverable, and silently discarding that work is the worse failure.
+  if (exitClass !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
 
   if (exitClass === 'ok') {
-    const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
-    writeFileSync(paths.diffPatch(id, RUN), patch);
-    result.diff_sha = createHash('sha256').update(patch).digest('hex');
+    if (task.mode !== 'probe') {
+      const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
+      writeFileSync(paths.diffPatch(id, RUN), patch);
+      result.diff_sha = createHash('sha256').update(patch).digest('hex');
+    }
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
       baseSha,
       head: 'HEAD',
+      ...(task.mode !== undefined ? { mode: task.mode } : {}),
       allowedGlobs: task.allowed_globs,
       ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
       ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
       verify: task.verify ?? [],
       env: verifyEnv,
     });
+    attachEffectiveRisk(result, task, worktreeDir, baseSha);
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result);
+  appendMetric(deps, result, task, context);
   return result;
+}
+
+/** Run one task synchronously to a verified (or failed) result on its run branch. */
+export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
+  return runPrepared(deps, prepareRun(deps, id));
+}
+
+/**
+ * How many executor runs may be in flight for a batch of `count` tasks. The single
+ * source of truth for the bound, so what a caller reports is what actually ran: an
+ * explicit `--max-parallel 8` over two tasks is still a pool of two.
+ */
+export function resolvePoolSize(count: number, maxParallel?: number): number {
+  const requested = Math.max(1, Math.floor(maxParallel ?? Math.min(count, 4)));
+  return Math.min(count, requested);
+}
+
+/**
+ * Prepare every task serially, then supervise a bounded pool of executor runs.
+ * Per-run faults are collected so no sibling process is orphaned by early rejection.
+ */
+export async function dispatchTasks(
+  deps: DispatchDeps,
+  ids: readonly string[],
+  maxParallel?: number,
+): Promise<RunResult[]> {
+  if (ids.length === 0) throw new Error('cannot dispatch an empty task list');
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) throw new Error(`duplicate task id: ${id}`);
+    seen.add(id);
+  }
+
+  const prepared = ids.map((id) => prepareRun(deps, id));
+  const results = new Array<RunResult>(ids.length);
+  const faults: { id: string; message: string }[] = [];
+  const poolSize = resolvePoolSize(ids.length, maxParallel);
+  let cursor = 0;
+
+  const worker = async (): Promise<void> => {
+    while (cursor < prepared.length) {
+      const index = cursor++;
+      try {
+        results[index] = await runPrepared(deps, prepared[index]!);
+      } catch (e) {
+        faults.push({ id: ids[index]!, message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  if (faults.length > 0) {
+    faults.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    throw new Error(`dispatch runs failed: ${faults.map((f) => `${f.id}: ${f.message}`).join('; ')}`);
+  }
+  return results;
 }
 
 /**
@@ -202,29 +348,35 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
 
   const o = await superviseWorker({
-    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback),
+    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback, task),
     cwd: worktreeDir,
     env: executorEnv,
     logPath,
     heartbeatPath: paths.heartbeat(id, RUN),
     watchDir: worktreeDir,
     maxWallMs: task.max_wall_minutes * 60_000,
-    stallMs: (used.stall_minutes ?? 10) * 60_000,
+    stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
   });
   const log = safeRead(logPath);
   const exitClass: ExitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
+  const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
-  const mismatch = newSession !== null && newSession !== priorSession;
+  // A resume that reports NO session id is not proof of re-attachment either. Measured: a
+  // resume invoked with a flag the CLI rejects dies before starting and reports none at all,
+  // and the old guard read that absence as agreement -- so it would have committed work under
+  // a continuity claim nothing supported. A real resume does report the id, so absence means
+  // something went wrong.
+  const mismatch = newSession !== priorSession;
 
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
-  const modelMismatch = exitClass !== 'ok' && detectModelMismatch(log);
+  const modelMismatch = exitClass !== 'ok' && !conflict && detectModelMismatch(log);
   const result: RunResult = {
     run_id: RUN,
     task_id: id,
     attempt_number: prev.attempt_number + 1,
-    exit_class: mismatch ? 'task_failed' : exitClass,
+    exit_class: conflict ? 'contract_conflict' : mismatch ? 'task_failed' : exitClass,
     rc: o.rc,
     timed_out: o.timedOut,
     stalled: o.stalled,
@@ -236,13 +388,22 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     base_sha: baseSha,
     resumed: true,
     session_id: newSession ?? priorSession,
-    ...(mismatch ? { resume_session_mismatch: true } : {}),
+    ...(mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
+    ...(conflict ? { conflict: true } : {}),
+    ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
+  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  if (delivery !== undefined) result.delivery = delivery;
+  if (conflict) rmSync(paths.diffPatch(id, RUN), { force: true });
+  // A run that did not end `ok` is never committed, so its work would otherwise look lost.
+  // Say plainly that it is still on disk: an executor killed after it had already finished is
+  // recoverable, and silently discarding that work is the worse failure.
+  if (result.exit_class !== 'ok' && worktreeDirty(worktreeDir)) result.uncommitted_changes = true;
 
-  if (!mismatch && exitClass === 'ok') {
+  if (!conflict && !mismatch && exitClass === 'ok') {
     commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, 'HEAD');
     writeFileSync(paths.diffPatch(id, RUN), patch);
@@ -258,10 +419,11 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
       verify: task.verify ?? [],
       env: verifyEnv,
     });
+    attachEffectiveRisk(result, task, worktreeDir, baseSha);
   }
 
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result);
+  appendMetric(deps, result, task, null);
   return result;
 }
 
@@ -273,14 +435,101 @@ function safeRead(path: string): string {
   }
 }
 
-function appendMetric(deps: DispatchDeps, result: RunResult): void {
+function persistDelivery(
+  paths: RouterPaths,
+  id: string,
+  run: string,
+  task: TaskYaml,
+  finalMessage: string | null | undefined,
+): RunResult['delivery'] | undefined {
+  if (finalMessage == null || finalMessage.length === 0) return undefined;
+
+  const path = paths.delivery(id, run);
+  try {
+    writeFileSync(path, finalMessage);
+  } catch (e) {
+    // The report is auxiliary evidence; failing to store it must never cost the run its
+    // result. Surface the failure instead of throwing it up through the dispatch.
+    return { path, header: null, header_error: `write failed: ${(e as Error).message}` };
+  }
+  const header = parseDeliveryHeader(finalMessage);
+  if (header === null) {
+    return {
+      path,
+      header: null,
+      header_error: finalMessage.includes('```router-delivery') ? 'invalid' : 'missing',
+    };
+  }
+
+  const errors = deliveryHeaderMismatches(header, id, task.plan_revision);
+  return {
+    path,
+    header,
+    ...(errors.length > 0 ? { header_error: errors.join('; ') } : {}),
+  };
+}
+
+function deliveryHeaderMismatches(
+  header: DeliveryHeader,
+  taskId: string,
+  planRevision: string | undefined,
+): string[] {
+  const errors: string[] = [];
+  if (header.task !== taskId) errors.push(`task mismatch: expected ${taskId}, got ${header.task}`);
+  // Compare against the revision the contract declares, not the plan id: comparing the id to
+  // itself could never disagree, so this check proved nothing until now.
+  if (planRevision !== undefined && header.plan_revision !== undefined && header.plan_revision !== planRevision) {
+    errors.push(`plan_revision mismatch: expected ${planRevision}, got ${header.plan_revision}`);
+  }
+  return errors;
+}
+
+function attachEffectiveRisk(result: RunResult, task: TaskYaml, worktreeDir: string, baseSha: string): void {
+  if (result.verifier?.result !== 'PASSED') return;
+  const changes = collectDiff(worktreeDir, baseSha, 'HEAD');
+  const changedPaths = changes.flatMap((change) =>
+    change.oldPath === undefined ? [change.path] : [change.oldPath, change.path],
+  );
+  const assessed = effectiveRisk(task.risk, {
+    changedLines:
+      result.verifier.changed_lines ??
+      changes.reduce((total, change) => total + (change.binary ? 0 : change.added + change.deleted), 0),
+    changedPaths,
+    invariantGlobs: task.invariants ?? [],
+  });
+  result.risk = assessed.risk;
+  result.risk_raised_by = assessed.raisedBy;
+}
+
+function appendMetric(
+  deps: DispatchDeps,
+  result: RunResult,
+  task: TaskYaml,
+  context: TaskContext | null,
+): void {
   const metric: MetricRecord = {
     ts: deps.clock.nowIso(),
     task_id: result.task_id,
+    ...(task.plan_id !== undefined ? { plan_id: task.plan_id } : {}),
+    ...(task.plan_revision !== undefined ? { plan_revision: task.plan_revision } : {}),
+    task_context_present: context !== null,
+    task_context_chars: context?.chars ?? 0,
+    ...(context !== null
+      ? {
+          task_context_sha256: context.sha256,
+          context_base_sha: context.base_sha,
+        }
+      : {}),
+    role: 'executor',
     run_id: result.run_id,
     attempt_number: 1,
     model: result.worker.model ?? null,
     executor: result.worker.kind,
+    ...(task.tier !== undefined ? { tier: task.tier } : {}),
+    ...(result.worker.effort !== undefined ? { effort: result.worker.effort } : {}),
+    ...(result.risk !== undefined ? { risk: result.risk } : {}),
+    conflict: result.conflict ?? false,
+    ...(result.commands_run !== undefined ? { commands_run: result.commands_run } : {}),
     exit_class: result.exit_class,
     verifier_result: result.verifier?.result ?? null,
     first_pass: result.verifier?.result === 'PASSED',
