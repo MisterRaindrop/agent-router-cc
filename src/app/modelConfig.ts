@@ -23,16 +23,20 @@ import type { RouterPaths } from '../io/paths.ts';
 // what to do. Effort is not free capability -- on a task specified down to the
 // signature, deeper deduction mostly re-derives the contract. So: `medium` for
 // mechanical implementation (weak), `high` for a task that needs real capability
-// (strong), and `high` for review. Escalate per task with an explicit `worker`
-// pin, or per repo in `.router/models.yaml`; nothing here is ever auto-modified.
+// (strong), and `xhigh` for critical work. `critical` means security, concurrency,
+// or an architectural invariant is at stake -- not merely "this feels big".
+// Escalate per task with an explicit `worker` pin, or per repo in
+// `.router/models.yaml`; nothing here is ever auto-modified.
 export const DEFAULT_MODEL_CONFIG: ModelTierConfig = {
   codex: {
     weak: { model: 'gpt-5.6-terra', effort: 'medium' },
     strong: { model: 'gpt-5.6-sol', effort: 'high' },
+    critical: { model: 'gpt-5.6-sol', effort: 'xhigh' },
   },
   claude: {
     weak: { model: 'haiku', effort: 'medium' },
-    strong: { model: 'opus', effort: 'high' },
+    strong: { model: 'sonnet', effort: 'high' },
+    critical: { model: 'opus', effort: 'xhigh' },
   },
   // spec/review: strongest + independent (non-Claude first); fall to a same-strength
   // Claude reviewer if codex is unavailable/out of quota. Review runs in the
@@ -80,7 +84,7 @@ export function loadModelConfig(paths: RouterPaths): ModelTierConfig {
   for (const kind of ['codex', 'claude'] as const) {
     const section = o[kind];
     if (typeof section === 'object' && section !== null) {
-      for (const tier of ['weak', 'strong'] as const) {
+      for (const tier of ['weak', 'strong', 'critical'] as const) {
         const spec = (section as Record<string, unknown>)[tier];
         if (isSpec(spec)) cfg[kind][tier] = { model: spec.model, ...(spec.effort ? { effort: spec.effort } : {}) };
       }

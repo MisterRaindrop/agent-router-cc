@@ -31,7 +31,7 @@ export interface WorkerPolicy {
 // Opus judges each dispatch task's difficulty and tags a tier; the config maps
 // tier -> {model, effort} per executor, and router still picks the executor by
 // quota. spec/review always use the strongest, independent reviewer (config.review).
-export type ModelTier = 'weak' | 'strong';
+export type ModelTier = 'weak' | 'strong' | 'critical';
 
 /** One model choice: a slug plus an optional reasoning-effort level. */
 export interface ModelSpec {
@@ -39,10 +39,10 @@ export interface ModelSpec {
   effort?: string;
 }
 
-/** The model menu: per-executor weak/strong slugs + the ordered reviewer chain. */
+/** The model menu: per-executor tier slugs + the ordered reviewer chain. */
 export interface ModelTierConfig {
-  codex: { weak: ModelSpec; strong: ModelSpec };
-  claude: { weak: ModelSpec; strong: ModelSpec };
+  codex: { weak: ModelSpec; strong: ModelSpec; critical: ModelSpec };
+  claude: { weak: ModelSpec; strong: ModelSpec; critical: ModelSpec };
   /** spec/review reviewer candidates, strongest first (kind + model + effort). */
   review: WorkerPolicy[];
 }
@@ -53,6 +53,16 @@ export interface TaskYaml {
   id: string;
   /** Dispatch-plan identifier; absent for tasks created before plan grouping. */
   plan_id?: string;
+  /** Revision of the frozen plan this contract belongs to. */
+  plan_revision?: string;
+  /** Task ids that must land before this task may run. */
+  depends_on?: string[];
+  /** Constraints the task may not change, used by reviewers to judge drift. */
+  invariants?: string[];
+  /** Assurance risk using the shared low/normal/high vocabulary. */
+  risk?: 'low' | 'normal' | 'high';
+  /** Contract intent; probe is reserved for a future read-only pre-check. */
+  mode?: 'implement' | 'probe';
   title: string;
   base_sha: string | null; // null until a diff is produced against a base commit (40-hex)
   max_wall_minutes: number;

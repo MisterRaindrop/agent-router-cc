@@ -39,6 +39,43 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
   assert.equal(argv[argv.indexOf('--add-dir') + 1], '/tmp/router-worktree');
   assert.equal(argv[argv.indexOf('--model') + 1], 'haiku');
   assert.ok(!argv.includes('bypassPermissions'));
+  assert.ok(!argv.includes('--allowedTools'));
+  assert.deepEqual(argv, [
+    'claude',
+    '-p',
+    argv[2],
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--permission-mode',
+    'acceptEdits',
+    '--tools',
+    'Read,Edit,Write',
+    '--add-dir',
+    '/tmp/router-worktree',
+    '--model',
+    'haiku',
+  ]);
+});
+
+test('claude launcher narrowly pre-approves each declared verify command', () => {
+  const argv = claudeLauncher({ model: 'sonnet' }).buildArgv({
+    ...CTX,
+    task: {
+      ...CTX.task,
+      verify: [
+        ['npm', 'run', 'check'],
+        ['node', '--test', 'test/unit.test.ts'],
+      ],
+    },
+  });
+  assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'acceptEdits');
+  assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
+  const allowedTools = argv.indexOf('--allowedTools');
+  assert.deepEqual(argv.slice(allowedTools + 1, allowedTools + 3), [
+    'Bash(npm run check)',
+    'Bash(node --test test/unit.test.ts)',
+  ]);
 });
 
 test('codex launcher passes model + reasoning effort', () => {
