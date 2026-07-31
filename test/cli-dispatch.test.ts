@@ -14,6 +14,7 @@ const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta
 const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const FAKE_DELIVERY = fileURLToPath(new URL('./fixtures/fakeCodexDelivery.mjs', import.meta.url));
 const NODE = process.execPath;
+const FAKE_EDIT_THEN_FAIL = fileURLToPath(new URL('../testkit/fakeCodexEditThenFail.mjs', import.meta.url));
 
 function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): { code: number; out: string } {
   try {
@@ -189,7 +190,9 @@ test('contract conflict overrides exit 0, creates no diff or verifier result, an
     const out = JSON.parse(dispatch.out.split('\n').find((line) => line.trim().startsWith('{')) ?? '{}') as Record<string, unknown>;
     assert.equal(out.exit_class, 'contract_conflict');
     assert.equal(out.conflict, true);
-    assert.equal(out.verifier, 'FAILED');
+    // Never verified is not the same as verified-and-failed: a conflict skips the gate
+    // entirely, so the machine-readable field is null rather than a dressed-up FAILED.
+    assert.equal(out.verifier, null);
     assert.equal(out.commands_run, 1);
 
     const runDir = join(dir, '.router', 'tasks', 'contract-conflict', 'runs', 'run-001');
@@ -298,6 +301,25 @@ test('batch land merges PASSED tasks sequentially in the given order', () => {
     assert.match(readFileSync(join(dir, 'src', 'p1.ts'), 'utf8'), /p1/);
     assert.match(readFileSync(join(dir, 'src', 'p2.ts'), 'utf8'), /p2/);
     assert.equal(fx.git(dir, ['log', '-2', '--pretty=%s']).trim(), "Merge branch 'router/p2/run-001'\nMerge branch 'router/p1/run-001'");
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// A run killed before the gate could run must not be reported as a gate failure either.
+test('dispatch --json reports verifier null when the gate never ran', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  // A fake executor that exits non-zero without editing anything: no commit, no verify.
+  const env = { ROUTER_CODEX_BIN: FAKE_EDIT_THEN_FAIL, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'nogate'], env);
+    const d = router(dir, ['dispatch', 'nogate', '--json'], env);
+    assert.equal(d.code, 1, d.out);
+    const out = JSON.parse(d.out.split('\n').find((line) => line.trim().startsWith('{')) ?? '{}') as Record<string, unknown>;
+    assert.equal(out.verifier, null);
+    assert.equal(out.ok, false);
   } finally {
     fx.cleanup(dir);
   }

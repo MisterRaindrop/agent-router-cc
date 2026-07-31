@@ -12429,7 +12429,11 @@ function dispatchOutput(id, result2, includeOk = true) {
     id,
     executor: result2.worker.kind,
     model: result2.worker.model ?? null,
-    verifier: v,
+    // `null` when the verifier never ran (a contract conflict, a timeout, a stalled run) --
+    // distinct from a gate that ran and failed. `router result` already says `n/a` here, and
+    // reporting a machine-readable "FAILED" for something never attempted is the kind of
+    // dressed-up gap the assurance rules forbid. `ok` is unaffected: it needs PASSED.
+    verifier: result2.verifier?.result ?? null,
     exit_class: result2.exit_class,
     conflict: result2.conflict ?? false,
     risk: result2.risk ?? null,

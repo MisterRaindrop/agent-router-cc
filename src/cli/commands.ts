@@ -180,7 +180,11 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     id,
     executor: result.worker.kind,
     model: result.worker.model ?? null,
-    verifier: v,
+    // `null` when the verifier never ran (a contract conflict, a timeout, a stalled run) --
+    // distinct from a gate that ran and failed. `router result` already says `n/a` here, and
+    // reporting a machine-readable "FAILED" for something never attempted is the kind of
+    // dressed-up gap the assurance rules forbid. `ok` is unaffected: it needs PASSED.
+    verifier: result.verifier?.result ?? null,
     exit_class: result.exit_class,
     conflict: result.conflict ?? false,
     risk: result.risk ?? null,
