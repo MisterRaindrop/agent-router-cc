@@ -32,14 +32,48 @@ export interface UsageRow {
   costUsd: number | null;
   costSource: CostSource;
   verifier: 'PASSED' | 'FAILED' | null;
-  attemptNumber: number; // >1 means this run was a resume of the same task
+  attemptNumber: number | null; // >1 means this run was a resume of the same task
   envError: boolean; // an environment/setup failure, not a task failure
+  // Routing fields were added after the original usage history. Keep absent
+  // values absent so the routing view never turns missing history into a rate.
+  tier?: string | null;
+  effort?: string | null;
+  firstPass?: boolean | null;
+  conflict?: boolean | null;
+  inputTokensRecorded?: number | null;
+  wallSecondsRecorded?: number | null;
   // Estimated saving vs the strong-model baseline: (tokens re-priced at baseline) minus
   // (tokens re-priced at this dispatch's own model). null if the model is unknown.
   savingsUsd: number | null;
   // Did this dispatch use a model cheaper than the strong baseline? Derived from
   // savingsUsd: >0 -> optimized; ===0 -> ran on the baseline model; null -> unknown model.
   optimized: boolean | null;
+}
+
+/** A floor for honesty, not a statistical claim. */
+export const ROUTING_MINIMUM_RUNS = 5;
+
+export interface RoutingGroup {
+  executor: string;
+  tier: string | null;
+  effort: string | null;
+  runs: number;
+  insufficientData: boolean;
+  firstPassRate: number | null;
+  firstPassSamples: number;
+  reDispatchRate: number | null;
+  reDispatchSamples: number;
+  conflictRate: number | null;
+  conflictSamples: number;
+  medianWallSeconds: number | null;
+  medianWallSamples: number;
+  medianInputTokens: number | null;
+  medianInputSamples: number;
+}
+
+export interface RoutingReport {
+  groups: RoutingGroup[];
+  suggestions: string[];
 }
 
 export interface ExecutorRollup {
@@ -120,8 +154,14 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
       costUsd,
       costSource,
       verifier: r.verifier_result,
-      attemptNumber: r.attempt_number,
+      attemptNumber: r.attempt_number ?? null,
       envError: r.env_error,
+      tier: r.tier ?? null,
+      effort: r.effort ?? null,
+      firstPass: typeof r.first_pass === 'boolean' ? r.first_pass : null,
+      conflict: typeof r.conflict === 'boolean' ? r.conflict : null,
+      inputTokensRecorded: r.tokens_input,
+      wallSecondsRecorded: typeof r.wall_seconds === 'number' ? r.wall_seconds : null,
       savingsUsd,
       optimized: savingsUsd === null ? null : savingsUsd > 0,
     });
@@ -208,6 +248,85 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
     baselineModel: STRONG_BASELINE_MODEL,
     suggestions: deriveSuggestions(rows),
   };
+}
+
+// Routing evidence is deliberately independent of the ordinary usage report:
+// it reads only values present in recorded rows and never alters configuration.
+export function buildRoutingReport(rows: UsageRow[]): RoutingReport {
+  const grouped = new Map<string, UsageRow[]>();
+  for (const row of rows) {
+    const key = JSON.stringify([row.executor, row.tier, row.effort]);
+    const group = grouped.get(key);
+    if (group) group.push(row);
+    else grouped.set(key, [row]);
+  }
+
+  const groups = [...grouped.values()].map((group): RoutingGroup => {
+    const firstPass = group.flatMap((row) => (typeof row.firstPass === 'boolean' ? [row.firstPass] : []));
+    const reDispatch = group.flatMap((row) => (row.attemptNumber == null ? [] : [row.attemptNumber > 1]));
+    const conflict = group.flatMap((row) => (typeof row.conflict === 'boolean' ? [row.conflict] : []));
+    const wall = group.flatMap((row) => (row.wallSecondsRecorded == null ? [] : [row.wallSecondsRecorded]));
+    const input = group.flatMap((row) => (row.inputTokensRecorded == null ? [] : [row.inputTokensRecorded]));
+    const insufficientData = group.length < ROUTING_MINIMUM_RUNS;
+    return {
+      executor: group[0]!.executor,
+      tier: group[0]!.tier ?? null,
+      effort: group[0]!.effort ?? null,
+      runs: group.length,
+      insufficientData,
+      firstPassRate: insufficientData ? null : rate(firstPass),
+      firstPassSamples: insufficientData ? 0 : firstPass.length,
+      reDispatchRate: insufficientData ? null : rate(reDispatch),
+      reDispatchSamples: insufficientData ? 0 : reDispatch.length,
+      conflictRate: insufficientData ? null : rate(conflict),
+      conflictSamples: insufficientData ? 0 : conflict.length,
+      medianWallSeconds: insufficientData ? null : median(wall),
+      medianWallSamples: insufficientData ? 0 : wall.length,
+      medianInputTokens: insufficientData ? null : median(input),
+      medianInputSamples: insufficientData ? 0 : input.length,
+    };
+  });
+  groups.sort((a, b) => a.executor.localeCompare(b.executor) || String(a.tier).localeCompare(String(b.tier)) || String(a.effort).localeCompare(String(b.effort)));
+  return { groups, suggestions: deriveRoutingSuggestions(groups) };
+}
+
+function rate(values: boolean[]): number | null {
+  return values.length === 0 ? null : values.filter(Boolean).length / values.length;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+function isAboveMedium(effort: string | null | undefined): boolean {
+  return typeof effort === 'string' && ['high', 'xhigh', 'max', 'ultra'].includes(effort.toLowerCase());
+}
+
+function describeGroup(group: RoutingGroup): string {
+  return `${group.executor}/${group.tier ?? 'unrecorded tier'}/${group.effort ?? 'unrecorded effort'}`;
+}
+
+function percent(value: number): string {
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function deriveRoutingSuggestions(groups: RoutingGroup[]): string[] {
+  const suggestions: string[] = [];
+  for (const group of groups) {
+    if (group.insufficientData || group.firstPassRate === null || !isAboveMedium(group.effort)) continue;
+    if (group.firstPassRate >= 0.9) {
+      suggestions.push(`${describeGroup(group)}: first-pass rate ${percent(group.firstPassRate)} (n=${group.firstPassSamples}) at ${group.effort} effort; it may be worth lowering effort.`);
+    }
+  }
+  for (const group of groups) {
+    if (suggestions.length >= 3) break;
+    if (group.insufficientData || group.reDispatchRate === null || group.reDispatchRate < 0.3) continue;
+    suggestions.push(`${describeGroup(group)}: re-dispatch rate ${percent(group.reDispatchRate)} (n=${group.reDispatchSamples}); it may be worth raising the tier or effort.`);
+  }
+  return suggestions.slice(0, 3);
 }
 
 // Optimization hints derived from real signals in the dispatch history -- never
@@ -361,6 +480,52 @@ export function renderUsage(report: UsageReport): string {
       );
       lines.push(`    execution wall: ${fmtWall(plan.wallSecondsExecutors)}`);
     }
+  }
+  return lines.join('\n');
+}
+
+function routingLabel(value: string | null, missing: string): string {
+  return value ?? missing;
+}
+
+function routingRate(label: string, value: number | null, samples: number): string {
+  return value === null ? `${label} unavailable` : `${label} ${percent(value)} (n=${samples})`;
+}
+
+function routingMedian(label: string, value: number | null, samples: number, format: (n: number) => string): string {
+  return value === null ? `${label} unavailable` : `${label} ${format(value)} (n=${samples})`;
+}
+
+export function renderRouting(report: RoutingReport): string {
+  const lines = ['Router routing evidence'];
+  if (report.groups.length === 0) {
+    lines.push('Nothing meets the threshold.');
+    return lines.join('\n');
+  }
+  lines.push('executor/tier/effort                 runs  first pass             re-dispatch            conflict               median wall          median input');
+  for (const group of report.groups) {
+    const label = `${routingLabel(group.executor, 'unknown')}/${routingLabel(group.tier, 'unrecorded')}/${routingLabel(group.effort, 'unrecorded')}`;
+    if (group.insufficientData) {
+      lines.push(`${pad(label, 36)}${pad(`insufficient data (n=${group.runs})`, 0)}`);
+      continue;
+    }
+    lines.push(
+      pad(label, 36) +
+        pad(String(group.runs), 6) +
+        pad(routingRate('first-pass', group.firstPassRate, group.firstPassSamples), 23) +
+        pad(routingRate('re-dispatch', group.reDispatchRate, group.reDispatchSamples), 23) +
+        pad(routingRate('conflict', group.conflictRate, group.conflictSamples), 23) +
+        pad(routingMedian('wall', group.medianWallSeconds, group.medianWallSamples, fmtWall), 21) +
+        routingMedian('input', group.medianInputTokens, group.medianInputSamples, fmtTokens),
+    );
+  }
+  if (!report.groups.some((group) => !group.insufficientData)) {
+    lines.push('Nothing meets the threshold.');
+    return lines.join('\n');
+  }
+  if (report.suggestions.length > 0) {
+    lines.push('Suggestions:');
+    for (const suggestion of report.suggestions) lines.push(`  · ${suggestion}`);
   }
   return lines.join('\n');
 }
