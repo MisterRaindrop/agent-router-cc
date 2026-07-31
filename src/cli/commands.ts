@@ -20,7 +20,7 @@ import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
-import { buildUsageReport, explainSavingsText, renderUsage } from '../app/usageReport.ts';
+import { buildRoutingReport, buildUsageReport, explainSavingsText, renderRouting, renderUsage } from '../app/usageReport.ts';
 import { STRONG_BASELINE_MODEL } from '../core/pricing.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
 import { CliError, emit } from './output.ts';
@@ -418,6 +418,11 @@ const usage: Handler = (ctx) => {
   const { paths, clock } = depsFor(ctx);
   const all = flagBool(ctx.args.flags, 'all');
   const report = buildUsageReport(paths, clock.nowIso(), { all });
+  if (flagBool(ctx.args.flags, 'routing')) {
+    const routing = buildRoutingReport(report.rows);
+    emit(ctx.json, { ok: true, routing }, () => renderRouting(routing));
+    return 0;
+  }
   emit(ctx.json, { ok: true, usage: report }, () => {
     const body = renderUsage(report);
     return flagBool(ctx.args.flags, 'explain-savings') ? `${body}\n\n${explainSavingsText(report.baselineModel)}` : body;
@@ -672,13 +677,13 @@ export function helpText(): string {
     `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
-    `  usage [--all]          token/cost usage across recent dispatches (last 7 days)\n` +
+    `  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches\n` +
     `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
     `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>\n` +
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --all, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --routing, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }
