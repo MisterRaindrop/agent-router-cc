@@ -8,7 +8,7 @@
     {
       "name": "router",
       "source": "./",
-      "description": "Deterministic task-orchestration for Claude Code: the LLM produces artifacts; the router CLI owns every gate (state machine, locks, supervision, whitelisted execution, diff-side scope enforcement, mechanical verification, metrics)."
+      "description": "Routes coding subtasks to the cheapest capable model to save Opus tokens: the main session plans, reviews and verifies; the router CLI owns worktree isolation, supervision, concurrent dispatch, the verification queue, and environment-free gates on every diff."
     }
   ]
 }
