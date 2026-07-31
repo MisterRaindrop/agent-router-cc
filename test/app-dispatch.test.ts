@@ -93,6 +93,10 @@ test('dispatchTask runs the executor synchronously to a PASSED verifier result',
     assert.equal(metrics.length, 1);
     assert.equal(metrics[0]!.role, 'executor');
     assert.equal('plan_id' in metrics[0]!, false);
+    assert.equal(metrics[0]!.risk, 'normal');
+    assert.equal(metrics[0]!.conflict, false);
+    assert.equal(metrics[0]!.commands_run, 0);
+    assert.equal(metrics[0]!.effort, 'medium');
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;

@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -14,6 +14,7 @@ const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta
 const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const FAKE_DELIVERY = fileURLToPath(new URL('./fixtures/fakeCodexDelivery.mjs', import.meta.url));
 const NODE = process.execPath;
+const FAKE_EDIT_THEN_FAIL = fileURLToPath(new URL('../testkit/fakeCodexEditThenFail.mjs', import.meta.url));
 
 function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): { code: number; out: string } {
   try {
@@ -175,6 +176,108 @@ test('dispatch persists delivery reports and surfaces header status', () => {
   }
 });
 
+test('contract conflict overrides exit 0, creates no diff or verifier result, and cannot land', () => {
+  chmodSync(FAKE_DELIVERY, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const base = fx.git(dir, ['rev-parse', 'HEAD']).trim();
+  const env = { ROUTER_CODEX_BIN: FAKE_DELIVERY, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'contract-conflict'], env);
+    const dispatch = router(dir, ['dispatch', 'contract-conflict', '--json'], env);
+    assert.equal(dispatch.code, 1, dispatch.out);
+    const out = JSON.parse(dispatch.out.split('\n').find((line) => line.trim().startsWith('{')) ?? '{}') as Record<string, unknown>;
+    assert.equal(out.exit_class, 'contract_conflict');
+    assert.equal(out.conflict, true);
+    // Never verified is not the same as verified-and-failed: a conflict skips the gate
+    // entirely, so the machine-readable field is null rather than a dressed-up FAILED.
+    assert.equal(out.verifier, null);
+    assert.equal(out.commands_run, 1);
+
+    const runDir = join(dir, '.router', 'tasks', 'contract-conflict', 'runs', 'run-001');
+    const result = JSON.parse(readFileSync(join(runDir, 'result.json'), 'utf8')) as Record<string, unknown>;
+    assert.equal(result.exit_class, 'contract_conflict');
+    assert.equal(result.conflict, true);
+    assert.equal('verifier' in result, false);
+    assert.equal('diff_sha' in result, false);
+    assert.equal(existsSync(join(runDir, 'diff.patch')), false);
+    assert.match(readFileSync(join(runDir, 'DELIVERY.md'), 'utf8'), /^\s*CONTRACT_CONFLICT:/);
+    assert.equal(fx.git(dir, ['rev-parse', 'router/contract-conflict/run-001']).trim(), base);
+    const conflictMetric = JSON.parse(
+      readFileSync(join(dir, '.router', 'metrics.jsonl'), 'utf8').trim().split('\n').at(-1) ?? '{}',
+    ) as Record<string, unknown>;
+    assert.equal(conflictMetric.conflict, true);
+    assert.equal(conflictMetric.commands_run, 1);
+    assert.equal('risk' in conflictMetric, false);
+
+    const resumed = router(dir, ['resume', 'contract-conflict', '--feedback', 're-check the contract', '--json'], env);
+    assert.equal(resumed.code, 1, resumed.out);
+    const resumedOut = JSON.parse(
+      resumed.out.split('\n').find((line) => line.trim().startsWith('{')) ?? '{}',
+    ) as Record<string, unknown>;
+    assert.equal(resumedOut.exit_class, 'contract_conflict');
+    const resumedResult = JSON.parse(readFileSync(join(runDir, 'result.json'), 'utf8')) as Record<string, unknown>;
+    assert.equal(resumedResult.conflict, true);
+    assert.equal('verifier' in resumedResult, false);
+    assert.equal('diff_sha' in resumedResult, false);
+    assert.equal(existsSync(join(runDir, 'diff.patch')), false);
+    assert.equal(fx.git(dir, ['rev-parse', 'router/contract-conflict/run-001']).trim(), base);
+
+    const land = router(dir, ['land', 'contract-conflict']);
+    assert.equal(land.code, 1);
+    assert.match(land.out, /contract conflict; refusing to land/);
+    assert.match(land.out, /plan needs revising/);
+    assert.match(land.out, /DELIVERY\.md/);
+
+    router(dir, ['new', 'contract-conflict-line'], env);
+    const line = router(dir, ['dispatch', 'contract-conflict-line'], env);
+    assert.equal(line.code, 1);
+    assert.match(line.out, /^contract-conflict-line: CONTRACT CONFLICT /);
+    assert.match(line.out, /nothing committed or verified; the plan needs revising; report: .*DELIVERY\.md/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+test('dispatch reports deterministic risk escalation and writes routing metrics', () => {
+  chmodSync(FAKE_DELIVERY, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_DELIVERY, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'risk-raised'], env);
+    const taskPath = join(dir, '.router', 'tasks', 'risk-raised', 'task.yaml');
+    const task = readFileSync(taskPath, 'utf8');
+    writeFileSync(taskPath, `${task}tier: weak\nrisk: low\ninvariants: ["src/**"]\n`);
+
+    const dispatch = router(dir, ['dispatch', 'risk-raised'], env);
+    assert.equal(dispatch.code, 0, dispatch.out);
+    assert.match(dispatch.out, /RISK RAISED to high: invariant:src\/\*\*/);
+
+    const result = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'risk-raised', 'runs', 'run-001', 'result.json'), 'utf8'),
+    ) as { risk: string; risk_raised_by: string[]; commands_run: number };
+    assert.equal(result.risk, 'high');
+    assert.deepEqual(result.risk_raised_by, ['invariant:src/**']);
+    assert.equal(result.commands_run, 1);
+
+    const metrics = readFileSync(join(dir, '.router', 'metrics.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const metric = metrics.at(-1)!;
+    assert.equal(metric.tier, 'weak');
+    assert.equal(metric.effort, 'medium');
+    assert.equal(metric.risk, 'high');
+    assert.equal(metric.conflict, false);
+    assert.equal(metric.commands_run, 1);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 test('batch land merges PASSED tasks sequentially in the given order', () => {
   chmodSync(FAKE_SCOPED, 0o755);
   const dir = fx.initRepo();
@@ -198,6 +301,25 @@ test('batch land merges PASSED tasks sequentially in the given order', () => {
     assert.match(readFileSync(join(dir, 'src', 'p1.ts'), 'utf8'), /p1/);
     assert.match(readFileSync(join(dir, 'src', 'p2.ts'), 'utf8'), /p2/);
     assert.equal(fx.git(dir, ['log', '-2', '--pretty=%s']).trim(), "Merge branch 'router/p2/run-001'\nMerge branch 'router/p1/run-001'");
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// A run killed before the gate could run must not be reported as a gate failure either.
+test('dispatch --json reports verifier null when the gate never ran', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  // A fake executor that exits non-zero without editing anything: no commit, no verify.
+  const env = { ROUTER_CODEX_BIN: FAKE_EDIT_THEN_FAIL, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'nogate'], env);
+    const d = router(dir, ['dispatch', 'nogate', '--json'], env);
+    assert.equal(d.code, 1, d.out);
+    const out = JSON.parse(d.out.split('\n').find((line) => line.trim().startsWith('{')) ?? '{}') as Record<string, unknown>;
+    assert.equal(out.verifier, null);
+    assert.equal(out.ok, false);
   } finally {
     fx.cleanup(dir);
   }

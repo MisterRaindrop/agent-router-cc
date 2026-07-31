@@ -23,6 +23,7 @@ export interface ParsedLog {
   // run's reported id back to this one proves the resume attached (see `router resume`).
   sessionId?: string | null;
   finalMessage?: string | null;
+  commandsRun?: number;
 }
 
 /** Single pass over the log: token usage (summed) and model slug (if the stream reports one). */
@@ -34,6 +35,7 @@ export function parseCodexLog(logText: string): ParsedLog {
   let model: string | null = null;
   let sessionId: string | null = null;
   let finalMessage: string | undefined;
+  let commandsRun = 0;
   for (const line of logText.split('\n')) {
     const t = line.trim();
     if (!t.startsWith('{')) continue;
@@ -71,11 +73,13 @@ export function parseCodexLog(logText: string): ParsedLog {
     if (rec.type === 'item.completed' && rec.item?.type === 'agent_message' && typeof rec.item.text === 'string') {
       finalMessage = rec.item.text;
     }
+    if (rec.type === 'item.completed' && rec.item?.type === 'command_execution') commandsRun += 1;
   }
   return {
     usage: found ? { input, output, cached } : null,
     model,
     sessionId,
+    commandsRun,
     ...(finalMessage !== undefined ? { finalMessage } : {}),
   };
 }

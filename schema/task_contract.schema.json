@@ -20,6 +20,34 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "plan_id": { "type": "string" },
+    "plan_revision": {
+      "type": "string",
+      "description": "Revision of the frozen plan this contract belongs to."
+    },
+    "depends_on": {
+      "type": "array",
+      "description": "Task ids that must land before this task may run.",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "description": "Constraints the task may not change, used to review drift.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "risk": {
+      "description": "Assurance risk using the shared vocabulary.",
+      "enum": ["low", "normal", "high"]
+    },
+    "mode": {
+      "description": "Contract intent; probe is reserved for a future read-only pre-check.",
+      "enum": ["implement", "probe"]
+    },
     "title": { "type": "string", "minLength": 1 },
     "base_sha": {
       "type": ["string", "null"],
@@ -44,7 +72,7 @@
         "items": { "type": "string", "minLength": 1 }
       }
     },
-    "tier": { "enum": ["weak", "strong"] },
+    "tier": { "enum": ["weak", "strong", "critical"] },
     "worker": {
       "type": "object",
       "additionalProperties": false,

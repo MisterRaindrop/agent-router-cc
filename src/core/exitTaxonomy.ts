@@ -26,9 +26,26 @@ export function classifyExit(o: SupervisionObservation): ExitClass {
   return 'task_failed';
 }
 
-/** Neither an env error nor a provider quota hit counts toward the escalation ladder. */
+/** Setup/quota failures and a correct contract refusal do not burn a task attempt. */
 export function countsAsAttempt(exitClass: ExitClass): boolean {
-  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted';
+  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted' && exitClass !== 'contract_conflict';
+}
+
+/**
+ * The executor reports a contract/code contradiction by opening its final message with this
+ * protocol marker. The marker must START the first non-empty line -- a later mention is
+ * ordinary prose, not a state transition -- but anything may follow it on that line, because
+ * a model told to "begin with CONTRACT_CONFLICT followed by the reason" routinely writes
+ * `CONTRACT_CONFLICT: the schema cannot express this`. Requiring the line to contain nothing
+ * else missed exactly that shape, and the cost is asymmetric: an undetected conflict gets
+ * committed, verified, and possibly landed on a false assumption, while an over-detection
+ * merely asks a human to look. So this errs toward detecting.
+ */
+export function detectContractConflict(finalMessage: string | null | undefined): boolean {
+  if (finalMessage == null) return false;
+  const first = finalMessage.split(/\r?\n/).find((line) => line.trim() !== '');
+  if (first === undefined) return false;
+  return /^CONTRACT_CONFLICT\b/u.test(first.trim());
 }
 
 /**

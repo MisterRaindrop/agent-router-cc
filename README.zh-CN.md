@@ -124,9 +124,13 @@ Opus 从你们的对话中生成;没有全局策略文件。
 - **任务范围化,无策略文件。** 每个任务自带自己的范围和 `verify` 命令;没有全局的
   `policy.yaml`,也不从 git 读取任何东西。执行器默认为 codex + claude。
 - **隔离执行。** 执行器在 `.router/` 下一个全新的 `git worktree` 中运行,受墙钟超时和
-  停滞看门狗监督;它的输出永不进入编排器的上下文。Codex 使用其 `workspace-write` 沙箱。
-  Claude 只拿到 `Read`/`Edit`/`Write` 工具,处于普通的 `acceptEdits` 模式(没有 Bash,
-  也没有 `bypassPermissions`),因此 worktree 之外的访问会被拒绝。在你 `land` 之前,
+  停滞看门狗监督;它的输出永不进入编排器的上下文,并且**不会继承你自己会话里的任何 MCP
+  服务器**。Codex 使用其 `workspace-write` 沙箱。Claude 拿到 `Read`/`Edit`/`Write`,处于
+  普通的 `acceptEdits` 模式(绝不用 `bypassPermissions`);**只有**当任务声明了 `verify`
+  命令时才额外拿到 `Bash`,以便它能自证工作。这里要说清楚一件**实测**出来的事:预授权那条
+  verify 命令只是免掉提示,**并不会把 Bash 限制在这条命令上** —— 所以这种运行在自己的
+  worktree 里是有 shell 的,约束来自那个工作目录和被剥净的环境,而不是这份白名单。
+  两者之中 codex 的沙箱更紧;没有 `verify` 的任务完全拿不到 Bash。在你 `land` 之前,
   你的工作区不会被改动。
 - **凭据隔离。** 执行器 CLI 只拿到复用套餐认证所需的登录会话 / 网络上下文,外加一个显式
   配置的 provider key——绝不透传完整父环境(里面可能有无关的 `AWS_*`、代理或 API 凭据)。

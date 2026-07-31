@@ -39,6 +39,60 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
   assert.equal(argv[argv.indexOf('--add-dir') + 1], '/tmp/router-worktree');
   assert.equal(argv[argv.indexOf('--model') + 1], 'haiku');
   assert.ok(!argv.includes('bypassPermissions'));
+  assert.ok(!argv.includes('--allowedTools'));
+  assert.deepEqual(argv, [
+    'claude',
+    '-p',
+    argv[2],
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--permission-mode',
+    'acceptEdits',
+    '--strict-mcp-config',
+    '--tools',
+    'Read,Edit,Write',
+    '--add-dir',
+    '/tmp/router-worktree',
+    '--model',
+    'haiku',
+  ]);
+});
+
+// Measured, not assumed: without this flag a headless run inherits every MCP server from
+// the user's own session, so a sandboxed executor gets tools far outside its task. Both the
+// fresh-run and the resume invocation need it.
+test('claude launcher never inherits the user MCP servers', () => {
+  assert.ok(claudeLauncher({ model: 'sonnet' }).buildArgv(CTX).includes('--strict-mcp-config'));
+  assert.ok(
+    claudeLauncher({ model: 'sonnet' })
+      .buildResumeArgv('/tmp/router-worktree', 'sess-1', 'fix it')
+      .includes('--strict-mcp-config'),
+  );
+});
+
+test('claude launcher narrowly pre-approves each declared verify command', () => {
+  const argv = claudeLauncher({ model: 'sonnet' }).buildArgv({
+    ...CTX,
+    task: {
+      ...CTX.task,
+      verify: [
+        ['npm', 'run', 'check'],
+        ['node', '--test', 'test/unit.test.ts'],
+      ],
+    },
+  });
+  assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'acceptEdits');
+  assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
+  const allowedTools = argv.indexOf('--allowedTools');
+  assert.deepEqual(argv.slice(allowedTools + 1, allowedTools + 3), [
+    'Bash(npm run check)',
+    'Bash(node --test test/unit.test.ts)',
+  ]);
+  // What this buys is measured: pre-approval removes the prompt for the gate. It does NOT
+  // confine Bash to these commands -- a real sonnet run also executed `git diff` unprompted --
+  // so the containment is the worktree cwd and the stripped environment, not this list.
+  assert.ok(!argv.includes('bypassPermissions'));
 });
 
 test('codex launcher passes model + reasoning effort', () => {

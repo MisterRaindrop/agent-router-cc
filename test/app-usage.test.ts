@@ -43,6 +43,17 @@ test('parseCodexLog returns the last completed agent message', () => {
   assert.equal(parseCodexLog(log).finalMessage, 'final delivery');
 });
 
+test('parseCodexLog counts completed command executions', () => {
+  const log = [
+    '{"type":"item.completed","item":{"type":"command_execution","command":"npm test"}}',
+    '{"type":"item.started","item":{"type":"command_execution","command":"npm run check"}}',
+    '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}',
+    '{"type":"item.completed","item":{"type":"command_execution","command":"npm run check"}}',
+  ].join('\n');
+  assert.equal(parseCodexLog(log).commandsRun, 2);
+  assert.equal(parseCodexLog('{"type":"turn.completed"}').commandsRun, 0);
+});
+
 test('parseClaudeLog reads usage + total_cost_usd from the result event', () => {
   const log =
     '{"type":"assistant"}\n{"type":"result","subtype":"success","total_cost_usd":0.02,"usage":{"input_tokens":800,"output_tokens":60,"cache_read_input_tokens":100}}\n';
