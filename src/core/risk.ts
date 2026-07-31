@@ -21,6 +21,11 @@ function raise(current: Risk, floor: Risk): Risk {
   return RANK[current] >= RANK[floor] ? current : floor;
 }
 
+/** True when `floor` would actually lift `current`; `raisedBy` must not claim otherwise. */
+function raises(current: Risk, floor: Risk): boolean {
+  return RANK[floor] > RANK[current];
+}
+
 function topLevelDirectory(path: string): string {
   const slash = path.indexOf('/');
   return slash === -1 ? '.' : path.slice(0, slash);
@@ -37,19 +42,19 @@ export function effectiveRisk(
     signals.changedPaths.some((path) => matchAny(path, [glob])),
   );
   if (invariant !== undefined) {
+    if (raises(risk, 'high')) raisedBy.push(`invariant:${invariant}`);
     risk = raise(risk, 'high');
-    raisedBy.push(`invariant:${invariant}`);
   }
 
   if (signals.changedLines > CHANGED_LINES_TRIPWIRE) {
+    if (raises(risk, 'normal')) raisedBy.push(`changed_lines>${CHANGED_LINES_TRIPWIRE}`);
     risk = raise(risk, 'normal');
-    raisedBy.push(`changed_lines>${CHANGED_LINES_TRIPWIRE}`);
   }
 
   const directories = new Set(signals.changedPaths.map(topLevelDirectory));
   if (directories.size >= TOP_LEVEL_DIRECTORIES_TRIPWIRE) {
+    if (raises(risk, 'normal')) raisedBy.push(`top_level_directories>=${TOP_LEVEL_DIRECTORIES_TRIPWIRE}`);
     risk = raise(risk, 'normal');
-    raisedBy.push(`top_level_directories>=${TOP_LEVEL_DIRECTORIES_TRIPWIRE}`);
   }
 
   return { risk, raisedBy };

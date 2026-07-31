@@ -61,3 +61,17 @@ test('detectModelMismatch flags a rejected slug but not ordinary failures', () =
   assert.equal(detectModelMismatch('AssertionError: expected 2 to equal 3'), false);
   assert.equal(detectModelMismatch('npm test failed with exit code 1'), false);
 });
+
+// The marker must open the line, but a reason may follow it there: told to "begin with
+// CONTRACT_CONFLICT followed by the reason", a model writes `CONTRACT_CONFLICT: ...`.
+// Requiring the line to hold nothing else missed that shape, and the cost is asymmetric --
+// an undetected conflict gets committed and verified against a false assumption.
+test('a conflict marker followed by its reason on the same line is still a conflict', () => {
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT: the schema cannot express this'), true);
+  assert.equal(detectContractConflict('CONTRACT_CONFLICT -- the assumption is false\n\nevidence: ...'), true);
+  assert.equal(detectContractConflict('\n\n  CONTRACT_CONFLICT\nwhy: ...'), true);
+  // Still not a conflict: the marker has to START the first non-empty line.
+  assert.equal(detectContractConflict('I considered reporting CONTRACT_CONFLICT but did not.'), false);
+  assert.equal(detectContractConflict('Done.\nCONTRACT_CONFLICT'), false);
+  assert.equal(detectContractConflict('CONTRACT_CONFLICTED the build'), false);
+});

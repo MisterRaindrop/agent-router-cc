@@ -32,14 +32,20 @@ export function countsAsAttempt(exitClass: ExitClass): boolean {
 }
 
 /**
- * The executor reports a contract/code contradiction by putting this protocol marker
- * on the first non-empty line. Later mentions are ordinary prose, not state transitions.
+ * The executor reports a contract/code contradiction by opening its final message with this
+ * protocol marker. The marker must START the first non-empty line -- a later mention is
+ * ordinary prose, not a state transition -- but anything may follow it on that line, because
+ * a model told to "begin with CONTRACT_CONFLICT followed by the reason" routinely writes
+ * `CONTRACT_CONFLICT: the schema cannot express this`. Requiring the line to contain nothing
+ * else missed exactly that shape, and the cost is asymmetric: an undetected conflict gets
+ * committed, verified, and possibly landed on a false assumption, while an over-detection
+ * merely asks a human to look. So this errs toward detecting.
  */
 export function detectContractConflict(finalMessage: string | null | undefined): boolean {
   if (finalMessage == null) return false;
   const first = finalMessage.split(/\r?\n/).find((line) => line.trim() !== '');
   if (first === undefined) return false;
-  return /^CONTRACT_CONFLICT(?:[^\p{L}\p{N}\s]+)?$/u.test(first.trim());
+  return /^CONTRACT_CONFLICT\b/u.test(first.trim());
 }
 
 /**

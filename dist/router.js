@@ -9891,7 +9891,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync6, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync6, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join7 } from "node:path";
 
@@ -9920,6 +9920,12 @@ function classifyExit(o) {
   if (o.signal !== null) return "worker_crash";
   if (o.exitCode === 0) return "ok";
   return "task_failed";
+}
+function detectContractConflict(finalMessage) {
+  if (finalMessage == null) return false;
+  const first = finalMessage.split(/\r?\n/).find((line) => line.trim() !== "");
+  if (first === void 0) return false;
+  return /^CONTRACT_CONFLICT\b/u.test(first.trim());
 }
 function executorDiagnostics(logText) {
   const kept = [];
@@ -9957,6 +9963,88 @@ function reclassifyEnvironmentFailure(exitClass, logText, pattern = DEFAULT_ENV_
 var DEFAULT_MODEL_MISMATCH_PATTERN = "\\b(unknown model|model not found|no such model|model[^\\n]{0,40}?not (found|available|supported)|invalid model|unsupported model|unrecognized model)\\b";
 function detectModelMismatch(logText, pattern = DEFAULT_MODEL_MISMATCH_PATTERN) {
   return new RegExp(pattern, "i").test(executorDiagnostics(logText));
+}
+
+// src/core/glob.ts
+var cache = /* @__PURE__ */ new Map();
+var REGEX_SPECIAL = /* @__PURE__ */ new Set([".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
+function compile(glob) {
+  const cached = cache.get(glob);
+  if (cached !== void 0) return cached;
+  let re = "^";
+  let i = 0;
+  while (i < glob.length) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        if (glob[i + 2] === "/") {
+          re += "(?:[^/]+/)*";
+          i += 3;
+        } else if (i + 2 >= glob.length) {
+          re += ".*";
+          i += 2;
+        } else {
+          re += "[^/]*";
+          i += 2;
+        }
+      } else {
+        re += "[^/]*";
+        i += 1;
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+      i += 1;
+    } else if (REGEX_SPECIAL.has(c)) {
+      re += `\\${c}`;
+      i += 1;
+    } else {
+      re += c;
+      i += 1;
+    }
+  }
+  re += "$";
+  const compiled = new RegExp(re);
+  cache.set(glob, compiled);
+  return compiled;
+}
+function matchAny(path, globs) {
+  return globs.some((g) => compile(g).test(path));
+}
+
+// src/core/risk.ts
+var RANK = { low: 0, normal: 1, high: 2 };
+var CHANGED_LINES_TRIPWIRE = 300;
+var TOP_LEVEL_DIRECTORIES_TRIPWIRE = 4;
+function raise(current, floor) {
+  return RANK[current] >= RANK[floor] ? current : floor;
+}
+function raises(current, floor) {
+  return RANK[floor] > RANK[current];
+}
+function topLevelDirectory(path) {
+  const slash = path.indexOf("/");
+  return slash === -1 ? "." : path.slice(0, slash);
+}
+function effectiveRisk(declared, signals) {
+  let risk = declared ?? "normal";
+  const raisedBy = [];
+  const invariant = signals.invariantGlobs.find(
+    (glob) => signals.changedPaths.some((path) => matchAny(path, [glob]))
+  );
+  if (invariant !== void 0) {
+    if (raises(risk, "high")) raisedBy.push(`invariant:${invariant}`);
+    risk = raise(risk, "high");
+  }
+  if (signals.changedLines > CHANGED_LINES_TRIPWIRE) {
+    if (raises(risk, "normal")) raisedBy.push(`changed_lines>${CHANGED_LINES_TRIPWIRE}`);
+    risk = raise(risk, "normal");
+  }
+  const directories = new Set(signals.changedPaths.map(topLevelDirectory));
+  if (directories.size >= TOP_LEVEL_DIRECTORIES_TRIPWIRE) {
+    if (raises(risk, "normal")) raisedBy.push(`top_level_directories>=${TOP_LEVEL_DIRECTORIES_TRIPWIRE}`);
+    risk = raise(risk, "normal");
+  }
+  return { risk, raisedBy };
 }
 
 // src/io/env.ts
@@ -10238,6 +10326,7 @@ function parseCodexLog(logText) {
   let model = null;
   let sessionId = null;
   let finalMessage;
+  let commandsRun = 0;
   for (const line of logText.split("\n")) {
     const t = line.trim();
     if (!t.startsWith("{")) continue;
@@ -10265,11 +10354,13 @@ function parseCodexLog(logText) {
     if (rec.type === "item.completed" && rec.item?.type === "agent_message" && typeof rec.item.text === "string") {
       finalMessage = rec.item.text;
     }
+    if (rec.type === "item.completed" && rec.item?.type === "command_execution") commandsRun += 1;
   }
   return {
     usage: found ? { input, output, cached } : null,
     model,
     sessionId,
+    commandsRun,
     ...finalMessage !== void 0 ? { finalMessage } : {}
   };
 }
@@ -10733,52 +10824,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join6 } from "node:path";
 
-// src/core/glob.ts
-var cache = /* @__PURE__ */ new Map();
-var REGEX_SPECIAL = /* @__PURE__ */ new Set([".", "+", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
-function compile(glob) {
-  const cached = cache.get(glob);
-  if (cached !== void 0) return cached;
-  let re = "^";
-  let i = 0;
-  while (i < glob.length) {
-    const c = glob[i];
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        if (glob[i + 2] === "/") {
-          re += "(?:[^/]+/)*";
-          i += 3;
-        } else if (i + 2 >= glob.length) {
-          re += ".*";
-          i += 2;
-        } else {
-          re += "[^/]*";
-          i += 2;
-        }
-      } else {
-        re += "[^/]*";
-        i += 1;
-      }
-    } else if (c === "?") {
-      re += "[^/]";
-      i += 1;
-    } else if (REGEX_SPECIAL.has(c)) {
-      re += `\\${c}`;
-      i += 1;
-    } else {
-      re += c;
-      i += 1;
-    }
-  }
-  re += "$";
-  const compiled = new RegExp(re);
-  cache.set(glob, compiled);
-  return compiled;
-}
-function matchAny(path, globs) {
-  return globs.some((g) => compile(g).test(path));
-}
-
 // src/core/scope.ts
 function pathsToCheck(entry) {
   return entry.oldPath !== void 0 ? [entry.oldPath, entry.path] : [entry.path];
@@ -11076,6 +11121,11 @@ async function runPrepared(deps, prep) {
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    const parsedAttempt = (launcher2.parseLog ?? parseCodexLog)(log);
+    if (detectContractConflict(parsedAttempt.finalMessage)) {
+      exitClass = "contract_conflict";
+      break;
+    }
     if ((exitClass === "quota_exhausted" || exitClass === "env_error") && i < order.length - 1) {
       switches += 1;
       resetHard(worktreeDir, baseSha);
@@ -11083,13 +11133,15 @@ async function runPrepared(deps, prep) {
     }
     break;
   }
-  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${RUN}`);
   const launcher = makeLauncher(used);
   const finalLog = safeRead(logPath);
   const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
+  const conflict = detectContractConflict(parsed.finalMessage);
+  if (conflict) exitClass = "contract_conflict";
+  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${RUN}`);
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
-  const modelMismatch = exitClass !== "ok" && detectModelMismatch(finalLog);
+  const modelMismatch = exitClass !== "ok" && exitClass !== "contract_conflict" && detectModelMismatch(finalLog);
   const result2 = {
     run_id: RUN,
     task_id: id,
@@ -11106,12 +11158,15 @@ async function runPrepared(deps, prep) {
     base_sha: baseSha,
     ...switches > 0 ? { executor_switches: switches } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
+    ...conflict ? { conflict: true } : {},
+    ...parsed.commandsRun !== void 0 ? { commands_run: parsed.commandsRun } : {},
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {},
     ...parsed.sessionId ? { session_id: parsed.sessionId } : {}
   };
   const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
   if (delivery !== void 0) result2.delivery = delivery;
+  if (conflict) rmSync2(paths.diffPatch(id, RUN), { force: true });
   if (exitClass !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
   if (exitClass === "ok") {
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
@@ -11128,9 +11183,10 @@ async function runPrepared(deps, prep) {
       verify: task.verify ?? [],
       env: verifyEnv
     });
+    attachEffectiveRisk(result2, task, worktreeDir, baseSha);
   }
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2, task.plan_id);
+  appendMetric2(deps, result2, task.plan_id, task.tier);
   return result2;
 }
 async function dispatchTask(deps, id) {
@@ -11202,16 +11258,17 @@ async function resumeTask(deps, id, feedback) {
   const log = safeRead(logPath);
   const exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
   const parsed = (launcher.parseLog ?? parseCodexLog)(log);
+  const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
   const mismatch = newSession !== null && newSession !== priorSession;
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
-  const modelMismatch = exitClass !== "ok" && detectModelMismatch(log);
+  const modelMismatch = exitClass !== "ok" && !conflict && detectModelMismatch(log);
   const result2 = {
     run_id: RUN,
     task_id: id,
     attempt_number: prev.attempt_number + 1,
-    exit_class: mismatch ? "task_failed" : exitClass,
+    exit_class: conflict ? "contract_conflict" : mismatch ? "task_failed" : exitClass,
     rc: o.rc,
     timed_out: o.timedOut,
     stalled: o.stalled,
@@ -11225,13 +11282,16 @@ async function resumeTask(deps, id, feedback) {
     session_id: newSession ?? priorSession,
     ...mismatch ? { resume_session_mismatch: true } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
+    ...conflict ? { conflict: true } : {},
+    ...parsed.commandsRun !== void 0 ? { commands_run: parsed.commandsRun } : {},
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
   const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
   if (delivery !== void 0) result2.delivery = delivery;
-  if (exitClass !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
-  if (!mismatch && exitClass === "ok") {
+  if (conflict) rmSync2(paths.diffPatch(id, RUN), { force: true });
+  if (result2.exit_class !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
+  if (!conflict && !mismatch && exitClass === "ok") {
     commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
     const patch = rawDiff(worktreeDir, baseSha, "HEAD");
     writeFileSync2(paths.diffPatch(id, RUN), patch);
@@ -11247,9 +11307,10 @@ async function resumeTask(deps, id, feedback) {
       verify: task.verify ?? [],
       env: verifyEnv
     });
+    attachEffectiveRisk(result2, task, worktreeDir, baseSha);
   }
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2, task.plan_id);
+  appendMetric2(deps, result2, task.plan_id, task.tier);
   return result2;
 }
 function safeRead(path) {
@@ -11290,7 +11351,21 @@ function deliveryHeaderMismatches(header, taskId, planId) {
   }
   return errors;
 }
-function appendMetric2(deps, result2, planId) {
+function attachEffectiveRisk(result2, task, worktreeDir, baseSha) {
+  if (result2.verifier?.result !== "PASSED") return;
+  const changes = collectDiff(worktreeDir, baseSha, "HEAD");
+  const changedPaths = changes.flatMap(
+    (change) => change.oldPath === void 0 ? [change.path] : [change.oldPath, change.path]
+  );
+  const assessed = effectiveRisk(task.risk, {
+    changedLines: result2.verifier.changed_lines ?? changes.reduce((total, change) => total + (change.binary ? 0 : change.added + change.deleted), 0),
+    changedPaths,
+    invariantGlobs: task.invariants ?? []
+  });
+  result2.risk = assessed.risk;
+  result2.risk_raised_by = assessed.raisedBy;
+}
+function appendMetric2(deps, result2, planId, tier) {
   const metric = {
     ts: deps.clock.nowIso(),
     task_id: result2.task_id,
@@ -11300,6 +11375,11 @@ function appendMetric2(deps, result2, planId) {
     attempt_number: 1,
     model: result2.worker.model ?? null,
     executor: result2.worker.kind,
+    ...tier !== void 0 ? { tier } : {},
+    ...result2.worker.effort !== void 0 ? { effort: result2.worker.effort } : {},
+    ...result2.risk !== void 0 ? { risk: result2.risk } : {},
+    conflict: result2.conflict ?? false,
+    ...result2.commands_run !== void 0 ? { commands_run: result2.commands_run } : {},
     exit_class: result2.exit_class,
     verifier_result: result2.verifier?.result ?? null,
     first_pass: result2.verifier?.result === "PASSED",
@@ -11479,7 +11559,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync4, rmSync as rmSync2, statSync as statSync6, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync8, mkdirSync as mkdirSync4, readFileSync as readFileSync9, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync6, writeFileSync as writeFileSync3 } from "node:fs";
 import { resolve as resolve3 } from "node:path";
 
 // src/core/symbols.ts
@@ -12351,6 +12431,9 @@ function dispatchOutput(id, result2, includeOk = true) {
     model: result2.worker.model ?? null,
     verifier: v,
     exit_class: result2.exit_class,
+    conflict: result2.conflict ?? false,
+    risk: result2.risk ?? null,
+    commands_run: result2.commands_run ?? null,
     tokens: result2.tokens ?? null,
     cost_usd: result2.cost_usd ?? null,
     executor_switches: result2.executor_switches ?? 0,
@@ -12364,13 +12447,21 @@ function dispatchLine(id, result2) {
   const v = result2.verifier?.result ?? "FAILED";
   const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
   const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
+  if (result2.conflict === true || result2.exit_class === "contract_conflict") {
+    const report2 = result2.delivery?.path ?? `.router/tasks/${id}/runs/${result2.run_id}/DELIVERY.md`;
+    const recoverable2 = result2.uncommitted_changes ? `
+NOTE: the uncommitted worktree remains available at .router/worktrees/${id}/${result2.run_id}` : "";
+    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing committed or verified; the plan needs revising; report: ${report2}${recoverable2}`;
+  }
   const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
   const warn = result2.model_mismatch ? `
 WARNING: ${result2.worker.kind} rejected model '${result2.worker.model ?? "?"}' -- your model config may be stale (provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.` : "";
   const report = result2.delivery ? ` report: ${result2.delivery.path}${result2.delivery.header_error ? ` [delivery_header: ${result2.delivery.header_error}]` : ""}` : "";
   const recoverable = result2.uncommitted_changes ? `
 NOTE: this run did not commit, but its worktree still holds changes -- the work is recoverable: git -C .router/worktrees/${id}/${result2.run_id} status` : "";
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}`;
+  const raisedRisk = result2.risk_raised_by && result2.risk_raised_by.length > 0 ? `
+RISK RAISED to ${result2.risk}: ${result2.risk_raised_by.join(", ")}` : "";
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}${raisedRisk}`;
 }
 var resume = async (ctx) => {
   const deps = depsFor(ctx);
@@ -12408,6 +12499,10 @@ var land = (ctx) => {
     const result2 = readResult(paths, id, RUN2);
     const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(", ")}` : "";
     if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
+    if (result2.conflict === true || result2.exit_class === "contract_conflict") {
+      const report = result2.delivery?.path ?? paths.delivery(id, RUN2);
+      throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
+    }
     if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
     const branch = runBranch(id, RUN2);
     try {
