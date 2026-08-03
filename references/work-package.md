@@ -143,9 +143,19 @@ run" is useful; a claimed pass that never ran is corrosive.
 
 ## Session policy
 
-- **Same task, fixing what the gate reported -> always `resume`.** Same worktree, same base, same
-  scope; the executor keeps its context instead of paying another cold start. Cap it at two
+- **Same task, fixing what the gate reported -> `resume`.** Same worktree, same base, same scope;
+  the executor keeps what it learned instead of re-exploring the repository. Cap it at two
   attempts, then take it over or bring it to the user.
+- **`resume` saves exploration, NOT tokens — its input grows every round.** Measured on one real
+  task, three attempts of the same session: **7.69M -> 9.18M -> 9.35M input tokens**. The third
+  attempt changed **eight lines in 59 seconds** and still cost *more input than writing the
+  original 1181-line implementation from scratch*, because an executor's whole session is re-sent
+  each turn. Two rules follow, and they matter more than the wall clock:
+  - **Send complete feedback in one resume.** Splitting three findings across three resumes pays
+    the whole accumulated prefix three times.
+  - **Do trivial mechanical edits yourself.** A two-comment fix through a resume cost roughly what
+    the entire implementation cost; the orchestrator's own edit would have been a few thousand
+    tokens. Resume is for work that needs the executor's context, not for typing.
 - **A different task -> a fresh session.** `resume` reuses the same worktree and the same
   `base_sha`; the next task starts from a new base, so a reused session's memory and the files on
   disk drift apart silently. Worse, the scope gate diffs against `base_sha`, so a second task in

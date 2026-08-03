@@ -70,6 +70,13 @@ Therefore:
    - `depends_on`: the packages that must land before this one may run. Declaring it is what
      lets the rest run concurrently with confidence.
    - `max_wall_minutes`: fit the package -- a bigger package needs a bigger budget.
+   - `max_changed_lines`: **budget implementation + tests + deletions, then leave headroom.** This
+     cap has rejected correct work twice, both times because it was sized to the implementation
+     alone. Measured: a package whose contract demanded unit, stateless *and* integration coverage
+     came in at 1181 changed lines against a cap of 1000 -- about **40% of the diff was tests**,
+     and 93 of those lines were deletions, which count too. A rejection here is not free: the
+     executor has already done the whole job, and recovering costs a `resume` whose input is
+     larger than the original run's.
    - `verify`: see **the deterministic gate** below.
    - `plan_id`: **the same identifier on every package of this plan**, so `router usage` can
      group it and so its artifacts live together under `.router/plans/<plan_id>/`. Pick
@@ -183,8 +190,13 @@ Therefore:
      it -- do not compress it, and do not let a cheap model decide pass/fail.** Pass -> land.
      Fail -> find the root cause and prefer
      `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" resume <id> --feedback "<what is wrong>"`,
-     which continues that executor's session with its context intact instead of paying
-     another cold start. Send it a **precise error summary, not a log dump**. Cap this at
+     which continues that executor's session so it does not re-explore the repository. Send it a
+     **precise error summary, not a log dump**, and send **everything you found in one resume** --
+     an executor's session is re-sent in full every turn, so each extra round pays the whole
+     accumulated prefix again. Measured across three attempts of one task: **7.69M -> 9.18M ->
+     9.35M input tokens**, where the third changed *eight lines* and still cost more input than
+     the original 1181-line implementation. **For a few mechanical lines, edit them yourself** --
+     a resume for two comment changes cost about what the whole implementation cost. Cap this at
      **two resume attempts**, then take the package over or bring it to the user;
      re-dispatch only when the contract itself was wrong. For correctness-critical paths,
      write or harden the tests yourself rather than trusting the executor's.
@@ -207,6 +219,14 @@ Therefore:
    - **Work out how to build and test this project yourself** by reading `package.json` /
      `Makefile` / CI config / etc. The user does not supply build/test commands and there is no
      manifest -- discover them.
+   - **Cost this step honestly before you promise it, and say so if it is out of reach.** A warm
+     build directory does not mean a cheap verification: measured on ClickHouse, adding **one new
+     source file** re-triggered CMake's `CONFIGURE_DEPENDS` glob, regenerated the build graph and
+     invalidated **9,891 object files** -- the project's own CI budgets four hours for that build.
+     Check what the project itself budgets (a CI job timeout is the honest number), and check
+     whether the change *adds* files rather than only editing them. If the verification you
+     promised cannot run here, say **"this was never compiled"** in exactly those words and let the
+     user decide; never let green mechanical gates and a clean review imply that it builds.
    - Confirm **every changed line is covered by a test** (key paths and all modified code; aim for
      complete coverage, allowing only what genuinely cannot be covered). Fill any gap -- write the
      missing tests yourself, or dispatch a focused test-writing package (which must then pass too).
