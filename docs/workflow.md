@@ -212,10 +212,16 @@ later turn, so raw logs are the largest avoidable cost.
 
 ## 8. Sessions: resume, or start fresh
 
-- **Same task, fixing what the gate reported -> always `router resume <id> --feedback "..."`.**
-  Same worktree, same base, same scope; the executor keeps its context instead of paying another
-  cold start. Send a precise error summary, not a log dump. Cap it at two attempts, then take the
+- **Same task, fixing what the gate reported -> `router resume <id> --feedback "..."`.** Same
+  worktree, same base, same scope; the executor keeps what it learned instead of re-exploring the
+  repository. Send a precise error summary, not a log dump. Cap it at two attempts, then take the
   package over or bring it to the user.
+- **Resume saves exploration, not tokens.** An executor's session is re-sent in full every turn, so
+  each round costs the whole accumulated prefix again. Measured across three attempts of one task:
+  **7.69M → 9.18M → 9.35M input tokens** — the third changed *eight lines in 59 seconds* and still
+  cost more input than the original 1181-line implementation. So: put **all** your findings into
+  one resume rather than three, and **make trivial mechanical edits yourself** — a resume for two
+  comment changes cost roughly what the entire implementation had.
 - **A different task -> a fresh session.** `resume` reuses the same worktree and the same
   `base_sha`, so a reused session's memory and the files on disk drift apart silently -- and the
   scope gate diffs against `base_sha`, so a second task there would carry the first one's changes.
