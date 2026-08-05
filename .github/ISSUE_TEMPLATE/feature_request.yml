@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a change to router's behavior or workflow
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two design rules bound what router will take on (see
+        [ROADMAP.md](../blob/main/ROADMAP.md) non-goals): the CLI owns **mechanism**,
+        never judgment; and nothing in the system modifies its own configuration.
+        Proposals that fit inside those lines land much faster.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What real situation does this come from? A run that went wrong, a cost that was
+        paid, a manual step that should not exist. Measured numbers beat adjectives.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should router do instead? Which command(s) does it touch?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including "do nothing" — what does it cost today to live without this?
+    validations:
+      required: false
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Where does this belong?
+      options:
+        - CLI mechanism (worktrees, gates, supervision, locks)
+        - Command playbook (go / spec / review behavior)
+        - Reporting (usage / result / list)
+        - Docs
+        - Not sure
+      default: 4
+    validations:
+      required: false

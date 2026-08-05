@@ -1,41 +1,63 @@
-# router
+<div align="center">
+  <img src="docs/assets/logo.svg" width="112" alt="router logo"/>
 
-[English](README.md) | **中文**
+  <h1>router</h1>
 
-一个 Claude Code 插件,把编码子任务路由到能胜任的最便宜的模型,从而节省 Opus token。
-你用主会话(Opus)做规划,它把方案拆解、将明确的子任务派发给运行在**隔离 git worktree**
-里的更便宜的执行器(`codex` 或 `claude` CLI),对每个 diff 做把关(范围 + 密钥 + 可执行位),然后复审
-它、并**在你的真实环境里跑 build/测试来验证**;你确认后合并。便宜的模型负责执行,Opus 负责
-规划、复审、验证和合并。
+  <p><b>最强的模型出判断,最便宜的配额烧 token。</b></p>
 
-> **状态:beta(0.x)。** 1.0 之前命令仍可能变动。
+  <p>一个 Claude Code 插件,把编码子任务路由到能胜任的最便宜模型 ——
+  主会话(Opus)负责规划、复审、验证与合并,便宜的执行器负责写代码。</p>
 
-## 用 router 与不用 router
+  <p>
+    <a href="https://github.com/MisterRaindrop/agent-router-cc/actions/workflows/ci.yml"><img src="https://github.com/MisterRaindrop/agent-router-cc/actions/workflows/ci.yml/badge.svg" alt="ci"/></a>
+    <a href="https://github.com/MisterRaindrop/agent-router-cc/releases"><img src="https://img.shields.io/badge/version-0.8.3-e8a33d" alt="version 0.8.3"/></a>
+    <img src="https://img.shields.io/badge/status-beta-d9635f" alt="status beta"/>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-4c7bd9" alt="license Apache-2.0"/></a>
+    <img src="https://img.shields.io/badge/node-%E2%89%A5%2018-2f8f5b" alt="node >= 18"/>
+    <img src="https://img.shields.io/badge/Claude%20Code-plugin-8a63d2" alt="Claude Code plugin"/>
+  </p>
+
+  <p><a href="README.md">English</a> | <b>中文</b></p>
+</div>
+
+---
+
+## ✨ 核心想法
+
+一个编码任务里,绝大多数 token 花在机械劳动上 —— 读仓库、写实现、迭代到绿(实测:一个约
+400 行的功能,执行侧吃掉 **1.88M 输入 token**)。而真正需要最强模型的部分 —— 规划、复审、
+验证、合并 —— 恰恰是**低 token、高判断**的。router 就是沿着这条线把工作切开的:
 
 |                | 直接提示 agent              | 用 router                                                      |
 | -------------- | --------------------------- | -------------------------------------------------------------- |
 | **谁来执行**   | Opus(贵)                  | 配额更多、更便宜的执行器(codex / sonnet)                     |
 | **改动范围**   | 只受提示词约束              | 在 diff 上强制:允许的 glob + 改动行数上限                     |
-| **正确性**     | 你手动检查                  | CLI 对 diff 把关(范围 + 密钥扫描 + 可执行位);Opus 在你真实环境跑 build/测试 |
+| **正确性**     | 你手动检查                  | CLI 对 diff 把关(范围 + 密钥 + 可执行位);Opus 在你真实环境跑 build/测试 |
 | **……以及偷懒** | 只能相信模型的说辞          | ……**再加上**主会话复审 diff,识别偷懒 / 错误的工作            |
 | **改动落在哪** | 立即写进你的工作区          | 隔离 worktree;只有 `land` 时才动你的工作区                    |
 | **配额 / 限流**| 运行卡住                    | 按真实剩余配额在 codex 与 claude 间均衡;429 自动切换          |
 
 router **从不自动合并**。各道关卡决定 PASS/FAIL;是否 land 由你决定。
 
-## 环境要求
+## 💸 省了多少 —— 实测,不是口号
 
-- **Claude Code**
-- **Node.js >= 18** 和 **git**
-- 一个已登录的执行器 CLI:[codex](https://github.com/openai/codex) **或** `claude`。
-  订阅套餐即可 —— **无需 API key**。
+在本仓库自己的开发上实测(20 次真实 dispatch,`router usage --all`):
 
-无需安装步骤、无需配置:`dist/router.js` 是已提交进仓库、无依赖的 bundle,router
-在首次使用时会自动创建一个被 gitignore 的 `.router/`。**无需 `init`、无策略文件、无需提交。**
+| | 实际花费 | 若全程用 Opus(估算) | 估算省下 |
+|---|---|---|---|
+| 20 次 dispatch | **$23.96** | ~$93.34 | **~$69.38(约 74%)** |
 
-## 安装
+这个数字是 **list-price 估算,不是账单** —— 执行器跑在订阅套餐上,真实边际成本往往更低;
+`--explain-savings` 会打印全部前提。质量靠机制保证,不靠相信便宜模型:每个 diff 都要过五道
+机械门禁、主会话的**整份复审**、真实环境验证、以及报"完成"前的强制全链路 CI —— 验收标准和
+Opus 亲自写代码时完全一样。路由档位的实测一次通过率:**89%**(n=9,中位墙钟 3.4 分钟)。
 
-在 Claude Code 中执行:
+## 🚀 快速开始
+
+**环境要求:** Claude Code · Node.js >= 18 · git · 一个已登录的执行器 CLI
+([codex](https://github.com/openai/codex) **或** `claude` —— 订阅套餐即可,**无需 API key**)。
+
+在 Claude Code 中安装:
 
 ```
 /plugin marketplace add MisterRaindrop/agent-router-cc
@@ -43,130 +65,169 @@ router **从不自动合并**。各道关卡决定 PASS/FAIL;是否 land 由你�
 /reload-plugins
 ```
 
-## 更新
+除此之外没有安装步骤、没有配置:`dist/router.js` 是已提交进仓库、无依赖的 bundle,router
+首次使用时自动创建被 gitignore 的 `.router/`。**无需 `init`、无策略文件、无需提交。**
 
-router 以一个已提交进仓库、无依赖的 bundle 发布,所以更新只是从 marketplace 拉取最新
-版本。先(在 Claude Code 中)从 git 仓库刷新目录:
-
-```
-/plugin marketplace update agent-router-cc
-```
-
-然后更新已安装的插件——打开 `/plugin` 菜单,在 **Installed** 标签页里更新 **router**,
-或者在终端里运行:
-
-```
-claude plugin update router@agent-router-cc
-```
-
-最后重新加载,让新版本在当前会话中生效:
-
-```
-/reload-plugins
-```
-
-## 使用
-
-直接和 Opus 对话,一起把改动规划好,然后:
+然后直接和 Opus 对话,一起把改动规划好:
 
 ```
 /router:go
 ```
 
-`/router:go` 是**上层命令**——通常你只需要敲这一个。它执行你俩刚商定的方案,并替你
-驱动下面所有的底层命令。它只在**三个节点**暂停:
+之后更新:`/plugin marketplace update agent-router-cc`,在 `/plugin` 菜单的 **Installed**
+里更新 **router**(或 `claude plugin update router@agent-router-cc`),再 `/reload-plugins`。
 
-1. **确认任务分解。** Opus 把方案拆成最小的、定义清晰的子任务,在任何东西运行之前,
-   先把每个子任务(它的文件范围和目标模型)展示给你。
-2. **处理不清晰的任务。** 任何需要真正判断或设计的部分,Opus 会亲自和你一起做,而不是
-   丢给便宜的模型。
-3. **合并前先经你批准。** 没有你的同意,任何东西都不会 land 进你的分支。
-
-对于中间每个**明确**的任务,工作由两个角色分担:
-
-- **router CLI** 在隔离 worktree 中、用按配额挑选的执行器运行该任务——彼此独立的任务可以
-  同时跑,各自一个 worktree——并对产出的 diff 做**快速、无环境的把关**:能否干净地 apply、
-  是否停留在允许的文件范围内、有没有泄漏密钥、新增脚本在同目录兄弟都可执行时是否也带了
-  可执行位。只有当该任务的契约设置了 `verify` 命令时它才跑 build 或测试,而且答案是机械的:
-  *跑了没有、过了没有*,绝不是*做对了没有*。
-- 随后 **Opus 读取并复审这个 diff**,识别偷懒或做错的地方——写死的值、空壳或跳过的测试、
-  误解的意图(便宜的模型可能一边过了浅层把关、一边做错)。而且**验证归 Opus**:任何有风险的
-  改动,它都在**你的**真实环境里亲自跑 build/测试(它有 docker 和完整工具链,沙箱执行器没有),
-  读完整输出、自己判断过没过。如果复审干净且低风险,该 worktree 就合并回来、Opus 继续下一个;
-  否则用更清晰的契约重新 dispatch,或由 Opus 亲自接手。
-
-到最后,Opus 会做一次**强制验收**——它自己弄清楚这个项目怎么 build 和测试、确认每处改动都被
-测试覆盖、并在你的真实环境里跑一遍全链路 CI(自己读完整输出),通过后才报"完成"——并且只在
-**经你批准**后才 land。便宜的模型负责执行,Opus 负责规划、复审、验证和合并——这就是省下的 token。
-
-### 底层命令
-
-`/router:go` 会替你驱动这些命令,但你也可以直接运行。每个命令都接受一个 **task id**
-——Opus 给子任务起的短名;它的契约位于 `.router/tasks/<id>/task.yaml`。
+## 📐 一次运行的形状
 
 ```
-/router:dispatch <id...> # 用按配额挑选的执行器运行这些任务,各自在隔离的 worktree 分支上
-                         #   产出一个已机械校验的 diff。传多个 id 会**并发**跑
-                         #   (--max-parallel <n> 限制并发数),墙钟取最慢的那个而不是求和
-/router:resume <id>      # 把失败原因送回该任务自己的执行器会话,上下文原样保留,
-                         #   而不是再付一次冷启动
-/router:land <id...>     # 把这些任务已校验的 diff 合并进你的工作分支
-/router:gate <id...>     # 针对真实门禁需要 Docker 或单一构建目录的项目:在你自己的
-                         #   checkout 里逐个验证 commit,始终在集成分支头上验证,
-                         #   保住热构建缓存(--status 显示当前是否有人占着)
-/router:result <id>      # 显示任务 <id> 的逐项校验报告和日志末尾
-/router:plans            # 列出 .router/plans/<plan_id> 下的东西:修订号、评审轮次、
-                         #   决策记录,以及是否有会话持着锁
-/router:usage            # 相对"全部用最强模型"的基线,这次花了多少
-                         #   (--routing 把已记录的运行聚合成路由证据)
+和 Opus 规划  →  /router:spec(可选)  →  /router:go  →  /router:review(可选)
+                 对计划的对抗式复审、       拆包、派发、门禁、    对落地代码的独立、
+                 定下验收的尺              复审、land            严格复审
 ```
 
-任务契约(`.router/tasks/<id>/task.yaml`)自带 `allowed_globs`(文件范围)、`tier`
-(这活需要多强的能力)与 `risk`(它值多少复审 —— 这是两个不同的问题)、可选的
-`verify` 命令(如 `[["npm","test"]]`)、`depends_on`(顺序依赖),以及可选的 `worker`
-(用于指定执行器)。这些由 Opus 从你们的对话中生成;没有全局策略文件。
+`/router:go` 只在**三个节点**暂停 —— 没有你,什么都不会发生:
 
-**[docs/workflow.md](docs/workflow.md)** 是完整的流程说明 —— 工作包、档位与风险、
-两种门禁模式、执行器必须交回什么,以及什么时候该续会话。另见
-**[docs/quickstart.md](docs/quickstart.md)**,以及
-**[examples/minimal/](examples/minimal/)** 中一个可运行的任务。
+1. **确认任务分解。**每个工作包的文件范围和目标模型,在任何东西运行前先展示给你。
+2. **不清晰的任务留给你。**需要真正判断或设计的部分,Opus 和你一起做,不丢给便宜模型。
+3. **合并前先经你批准。**没有你的同意,任何东西都不会 land 进你的分支。
 
-## 工作原理
+中间每个**明确**的工作包,在隔离 worktree 里由按配额挑选的执行器运行 —— 相互独立的包
+**并发**跑,墙钟取最慢的那个而不是求和(实测:26s + 31s 的批次 32s 跑完;234s + 244s 的
+批次 244s 跑完)。最后 Opus 做**强制验收**:在你的真实环境跑全链路 CI、自己读完整输出,
+通过后才报"完成"。
 
-- **任务范围化,无策略文件。** 每个任务自带自己的范围和 `verify` 命令;没有全局的
-  `policy.yaml`,也不从 git 读取任何东西。执行器默认为 codex + claude。
-- **隔离执行。** 执行器在 `.router/` 下一个全新的 `git worktree` 中运行,受墙钟超时和
-  停滞看门狗监督;它的输出永不进入编排器的上下文,并且**不会继承你自己会话里的任何 MCP
-  服务器**。Codex 使用其 `workspace-write` 沙箱。Claude 拿到 `Read`/`Edit`/`Write`,处于
-  普通的 `acceptEdits` 模式(绝不用 `bypassPermissions`);**只有**当任务声明了 `verify`
-  命令时才额外拿到 `Bash`,以便它能自证工作。两次真实运行量出了这到底意味着什么:
-  `acceptEdits` 会**自行放行只读的 Bash**,所以"看"是开放的;而任何**会做事**的命令必须
-  精确匹配授权 —— 授的是那条门禁命令本身,加上它的"程序 + 子命令"前缀,好让执行器能反复
-  跑到绿,而不是白拿一个 shell。"看"的边界来自 worktree 和被剥净的环境。两者之中 codex
-  的沙箱更紧;没有 `verify` 的任务完全拿不到 Bash。在你 `land` 之前,你的工作区不会被改动。
-- **凭据隔离。** 执行器 CLI 只拿到复用套餐认证所需的登录会话 / 网络上下文,外加一个显式
-  配置的 provider key——绝不透传完整父环境(里面可能有无关的 `AWS_*`、代理或 API 凭据)。
-- **验证由你掌控。** CLI 对每个 diff 做快速、**无环境**的把关(能 apply、在 `allowed_globs`
-  内、无密钥)——这是便宜模型伪造不了的确定性保证。真正的 build/测试由主会话(Opus)在**你的**
-  真实环境里跑(含 docker):按风险逐任务触发,并且在报"完成"前**必定**跑一遍全链路。Opus 读完整
-  输出、自己判断——便宜模型永不给自己下"过/挂"的结论,日志也不会被压缩掉。
-- **真实门禁能在哪里跑,是项目的属性,不是任务的属性。** `mode: worktree` 让它在 run worktree
-  里跑,于是实现和验证都能全并行。`mode: queue` 面向"真实环境只有一份"的项目(单一构建目录、
-  绑在固定宿主路径上的容器):执行器并行写代码和测试但**不编译**,由 `/router:gate` 拿着独占锁
-  把它们的 commit 逐个送进**你自己的 checkout** —— 有未提交的被跟踪改动就**直接拒绝**、
-  每个都在**当前集成分支头**上验证(而不是过期的旧 base)、保住构建缓存(**绝不 `git clean`**)、
-  最后把你的分支还原。门禁失败还会在合并前的头上再跑一遍基线,所以本来就红的项目不会被算到
-  这次改动头上。
-- **执行器必须交回什么。** 每次运行都以一份交付报告收尾 —— 人读的散文,加一个
-  `router-delivery` 头(`gate_ran`、`scope_drift`、`escalate_review`)—— 落在
-  `.router/tasks/<id>/runs/<run>/DELIVERY.md`。头缺失会被当作**合约违规**明确报出来,而不是
-  含糊过去。而且执行器**永远不许悄悄改方案**:当代码与它的合约冲突时,它必须报
-  `CONTRACT_CONFLICT` 并给出证据,什么都不提交,决定权回到你手里。
-- **真实配额均衡。** codex 用量从 `~/.codex/sessions` 读取,claude 用量从 statusline
-  快照读取(`statusline/router-usage.mjs`,可选);余量更多的执行器先跑,遇到真实的
-  429 则切换到另一个。
+## 🗂️ 任务契约:tier 和 risk 是两个不同的问题
 
-## 开发
+每个工作包是一份机器契约,位于 `.router/tasks/<id>/task.yaml`,由主会话从你们的对话生成
+—— 没有全局策略文件:
+
+```yaml
+# .router/tasks/q2/task.yaml
+title: usage --json 每次运行只输出一份文档
+plan_id: issue-1234
+allowed_globs: ["src/app/**", "test/usage-*.test.ts"]
+max_changed_lines: 400   # 按真实 diff 的形状定:测试和删除的行数一样计入
+tier: weak               # 需要多强的能力:  weak | strong | critical
+risk: normal             # 值多少复审:      low  | normal | high(单向:只升不降)
+verify: [["npm", "test"]]
+depends_on: []
+```
+
+| 字段 | 问题 | 决定什么 |
+|---|---|---|
+| `tier` | 这活需要多强的**能力**? | 挑选模型与推理强度 |
+| `risk` | 做错了有**多糟**? | 挑选独立复审的深度 |
+
+对认证路径的机械式改动,是 `weak` **且** `high`。CLI 会依据确定性信号(改动行数、碰到
+声明为不变量的路径)把 `risk` 往上调,**绝不调低**;配额永远不会把任务降级到更弱的档位。
+
+## 🤖 模型怎么选
+
+| 档位 | codex | claude |
+|---|---|---|
+| `weak` | gpt-5.6-terra · medium | haiku · medium |
+| `strong` | gpt-5.6-sol · high | sonnet · high |
+| `critical` | gpt-5.6-sol · xhigh | opus · xhigh |
+
+1. 先判断任务需要的**最小能力档位** —— 这是唯一重要的路由决定。
+2. 同一档位下两个执行器都是候选,按**真实剩余配额**挑(codex 用量读自
+   `~/.codex/sessions`,claude 读自可选的 statusline 快照)。余量多的先跑,遇到真实 429
+   切到另一个。配额只在档位**内**重排 —— 从不降档。
+3. 推理强度跟着活儿走,不拉满:机械实现 `medium`,需要真本事 `high`,`critical` 才给 `xhigh`。
+4. 编排器自己的模型**只出现在 `critical` 档** —— 把它当普通执行器用,等于吃掉这套路由
+   本来要保护的那份预算。
+
+任何一格都可以在 `.router/models.yaml` 里覆盖;`router models` 打印解析后的结果表。
+没有任何东西会替你自动改它。
+
+## 🛡️ 两种门禁
+
+**无环境门禁** —— CLI 对每个 diff 都跑,便宜模型伪造不了的确定性保证:
+
+| 检查 | 含义 |
+|---|---|
+| `diff_applies` | 能干净地 apply 到基线 commit |
+| `scope` | 只改了 `allowed_globs`、没超行数上限、没删测试 |
+| `secret_scan` | 新增的行里没有密钥 |
+| `exec_bit` | 同目录兄弟脚本都可执行时,新脚本也带可执行位 |
+| `verify` | 任务自己的 `verify` 命令退出码为 0 |
+
+`verify` 只回答机械问题 —— **跑了没有、过了没有** —— 从不回答"做对了没有"。
+
+**真实门禁**是项目的属性,在 `.router/gate.yaml` 里声明一次:
+
+- **`mode: worktree`** —— build 和测试在各自的 run worktree 里跑;实现与验证都全并行。
+- **`mode: queue`** —— 面向环境**只有一份**的项目(单一构建目录、绑定固定宿主路径的容
+  器):执行器并行写代码但**不编译**;`router gate` 拿独占锁把 commit 逐个送进**你自己的
+  checkout** —— 有未提交的被跟踪改动就直接拒绝、始终在当前集成分支头上验证、保住构建缓存
+  (**绝不 `git clean`**)、最后还原你的分支。门禁失败还会在合并前的头上重跑一次基线,
+  本来就红的项目不会被算到这次改动头上。
+
+## ⚔️ `/router:spec` —— 对抗式计划复审
+
+写代码之前,让一个**独立模型**(优先非 Claude)攻击计划本身 —— 方案对不对、藏着什么
+风险、有没有更简单的路子。它的规则:
+
+- **绝不复审自己的计划** —— 独立性抓的就是自我复审共享的盲区。
+- **批评逐字打印;人是唯一的裁判。**没有自动收敛 —— 审几轮由你定。
+- **后台运行、完整输出落盘、防截断** —— 半份批评绝不当完整呈现。
+- **跨轮 resume 同一个 reviewer**,只发变更 —— 它记得上轮的 objection,能核对你是否
+  真的解决了。
+- **风险只升不降;覆盖不了的失败模式停在 `unverified`** —— 绝不装扮成 pass;新依赖
+  绝不静默安装。
+- **产物是机器契约,不是散文**:风险档位 → `risk:`,Must NOT → `invariants:`,
+  Verification Matrix 每行 → 由哪道门禁证明。
+
+## 🔍 `/router:review` —— 绿灯之后的最后一关
+
+测试绿是**前提,不是证据** —— 测试本身也是被审对象。两个镜头(最好用两个不同的模型跑),
+16 条固定审核维度:
+
+- **架构师镜头(F1–F7):**需求真被解决了吗;该不该存在;复用还是重造;根因还是症状;
+  更简单但仍正确;结构与集成;独立正确性判断 —— 不信作者的测试。
+- **资深开发镜头(D1–D9):**超出测试的健壮性;失败模式(禁静默 fallback);
+  **复杂度/过度设计**("解释比代码还长 = 复杂度伪装成散文");测试设计质量;可读性;
+  与项目风格一致;注释与捷径标注;安全;性能常识。
+
+判决拆成**两条轴,从不折叠**:`code_health`(有没有代码缺陷)和 `assurance`(有没有真的
+被证明)。"没找到缺陷"不等于"被证明了"。阻塞要挣来 —— 干净的 diff 就直说"可以 ship";
+机械项(格式、import 顺序)交给 lint/CI,不浪费 LLM 的判断力。
+
+## 🧰 命令一览
+
+| 命令 | 作用 |
+|---|---|
+| `/router:go` | **上层命令** —— 执行你们刚商定的方案,替你驱动下面的一切 |
+| `/router:spec` | 动手前,对计划的对抗式第二意见 |
+| `/router:review` | 对落地代码的独立、严格的双镜头复审 |
+| `/router:dispatch <id...>` | 用按配额挑选的执行器并发运行任务,产出已把关的 diff |
+| `/router:resume <id>` | 把失败原因送回该任务自己的执行器会话 |
+| `/router:land <id...>` | 把 PASSED 的 diff 合并进你的工作分支 |
+| `/router:gate <id...>` | 在你自己的 checkout 里逐个验证 commit(queue 模式) |
+| `/router:result <id>` | 某次运行的逐项校验报告和日志末尾 |
+| `/router:list` | 各任务的最近状态,以及是否还留有 worktree |
+| `/router:models` | 解析后的模型档位表(内置默认 + 覆盖) |
+| `/router:usage` | 相对"全用最强模型"基线的花费;`--routing` 输出路由证据 |
+| `/router:symbol` | 上下文外的符号索引 —— 不读整个文件也能定位代码 |
+| `/router:setup-statusline` | 把 claude 侧配额读取接入 Claude Code 的 statusLine |
+
+**[docs/workflow.md](docs/workflow.md)** 是完整的端到端协议 —— 工作包、档位与风险、两种
+门禁模式、执行器必须交回什么、什么时候该续会话。另见 **[docs/quickstart.md](docs/quickstart.md)**
+和 **[examples/minimal/](examples/minimal/)** 里一个可运行的任务。
+
+## 🔒 隔离与凭据
+
+- 执行器在 `.router/` 下全新的 `git worktree` 中运行,受墙钟超时和停滞看门狗监督;它的
+  输出永不进入编排器的上下文,也不继承你会话里的任何 MCP 服务器。
+- Codex 使用其 `workspace-write` 沙箱。Claude 运行在普通 `acceptEdits` 模式(绝不用
+  `bypassPermissions`),**只有**任务声明了 `verify` 命令才拿到 `Bash` —— 授权是那条
+  命令本身加它的"程序 + 子命令"前缀,不是一个 shell。
+- 执行器 CLI 只拿到套餐认证所需的登录上下文,外加显式配置的 provider key —— 绝不透传
+  完整父环境。
+- 每次运行以交付报告收尾(`gate_ran` / `scope_drift` / `escalate_review`);头缺失按
+  **合约违规**报出;代码与契约冲突时报 `CONTRACT_CONFLICT`,什么都不提交,决定权回到你手里。
+
+## 🛠️ 开发
 
 ```sh
 npm ci
@@ -175,9 +236,15 @@ npm run build     # 打包 src/ -> dist/router.js(把结果提交进仓库)
 ```
 
 `src/` 按 `domain -> core -> io -> app -> cli` 分层。`core/` 是纯函数(无 fs、
-child_process、process、时钟或随机性 —— 由 `npm run check:deps` 强制),这让关卡逻辑
+child_process、process、时钟或随机性 —— 由 `npm run check:deps` 强制),这让门禁逻辑
 保持确定性、可单元测试。
 
-## 许可证
+## 🤝 参与贡献
+
+欢迎贡献 —— 构建、测试和 PR 流程见 **[CONTRIBUTING.md](CONTRIBUTING.md)**,项目方向见
+**[ROADMAP.md](ROADMAP.md)**,每个版本的变更见 **[CHANGELOG.md](CHANGELOG.md)**。
+安全问题请走 **[SECURITY.md](SECURITY.md)** 的私密渠道,不要发公开 issue。
+
+## 📄 许可证
 
 Apache-2.0。

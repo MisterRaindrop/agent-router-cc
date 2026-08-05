@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="router logo">
+  <!-- tile -->
+  <rect width="256" height="256" rx="56" fill="#12151d"/>
+  <rect x="6" y="6" width="244" height="244" rx="52" fill="none" stroke="#262b38" stroke-width="2"/>
+  <!-- muted branches: the routes not taken -->
+  <path d="M116 128 H182" stroke="#3a4152" stroke-width="14" stroke-linecap="round" fill="none"/>
+  <path d="M116 128 C 150 128, 150 190, 184 190" stroke="#3a4152" stroke-width="14" stroke-linecap="round" fill="none"/>
+  <circle cx="200" cy="128" r="13" fill="#3a4152"/>
+  <circle cx="200" cy="190" r="13" fill="#3a4152"/>
+  <!-- picked route: trunk + cheapest-capable branch -->
+  <path d="M56 128 H116" stroke="#e8a33d" stroke-width="14" stroke-linecap="round"/>
+  <path d="M116 128 C 150 128, 150 66, 184 66" stroke="#e8a33d" stroke-width="14" stroke-linecap="round" fill="none"/>
+  <circle cx="50" cy="128" r="17" fill="#e8a33d"/>
+  <circle cx="200" cy="66" r="17" fill="#e8a33d"/>
+  <!-- gate tick on the picked destination -->
+  <path d="M192 66 l6 6 l11 -12" stroke="#12151d" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
