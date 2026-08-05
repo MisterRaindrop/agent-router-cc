@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/MisterRaindrop/agent-router-cc/security/advisories/new
+    about: Please report security issues privately, never as a public issue.
+  - name: The workflow protocol (docs)
+    url: https://github.com/MisterRaindrop/agent-router-cc/blob/main/docs/workflow.md
+    about: The end-to-end protocol — check here before filing a "how does X work" issue.

@@ -16,7 +16,23 @@ jobs:
       # Reproducible install from the committed lockfile.
       - run: npm ci
       # typecheck + core-purity guard + full test suite.
+      # (Needs node 22+: the suite runs TypeScript directly via node --test.)
       - run: npm run check
       # The committed bundle must build and run on bare Node.
       - run: npm run build
       - run: node dist/router.js --version
+
+  # The shipped bundle declares `engines: node >= 18` — hold that promise on every
+  # supported major, without the dev toolchain (the bundle is dependency-free).
+  bundle-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['18', '20']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node dist/router.js --version
+      - run: node dist/router.js --help

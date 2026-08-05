@@ -1,0 +1,71 @@
+name: Bug report
+description: Something router did wrong — a gate, a dispatch, a merge, a report
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The most useful evidence is router's own run record —
+        please attach it where the template asks.
+
+        **Security issues:** do NOT file them here — see
+        [SECURITY.md](../blob/main/SECURITY.md) for private reporting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did router do, and what did you expect instead?
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The commands you ran, in order, and the task contract if relevant.
+      placeholder: |
+        1. /router:go with a plan that ...
+        2. router dispatch q1 q2 --json
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: run-record
+    attributes:
+      label: Run record
+      description: >
+        Paste `router result <id> --json` for the affected task(s), and the tail of the
+        log files it names (worker.log / gate.log). Redact anything private.
+      render: json
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: router version
+      description: From `.claude-plugin/plugin.json`, or `node dist/router.js --version`.
+      placeholder: 0.8.3
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, executor CLI(s) and how they are authenticated.
+      placeholder: macOS 15 · node 22 · codex (plan) + claude (plan)
+    validations:
+      required: true
+  - type: dropdown
+    id: gate-mode
+    attributes:
+      label: Real-gate mode
+      options:
+        - not configured
+        - "mode: worktree"
+        - "mode: queue"
+      default: 0
+    validations:
+      required: false

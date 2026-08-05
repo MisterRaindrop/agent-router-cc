@@ -38,5 +38,23 @@
     "typescript": "7.0.2"
   },
   "license": "Apache-2.0",
-  "author": "The agent-router-cc Authors"
+  "author": "The agent-router-cc Authors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MisterRaindrop/agent-router-cc.git"
+  },
+  "homepage": "https://github.com/MisterRaindrop/agent-router-cc#readme",
+  "bugs": {
+    "url": "https://github.com/MisterRaindrop/agent-router-cc/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "llm-orchestration",
+    "ai-agents",
+    "code-review",
+    "token-optimization",
+    "codex",
+    "git-worktree"
+  ]
 }
