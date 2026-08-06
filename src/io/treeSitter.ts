@@ -1,7 +1,7 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -53,15 +53,30 @@ interface Runtime {
   cppWasm: string; // path to tree-sitter-cpp.wasm
 }
 
+// web-tree-sitter renamed its runtime files in 0.26 (`tree-sitter.js` / `.wasm` ->
+// `web-tree-sitter.js` / `.wasm`), so probe both names rather than hardcoding one: a
+// hardcoded name turns a routine dependency bump into ERR_MODULE_NOT_FOUND at runtime.
+// The vendored copies keep the canonical `tree-sitter.*` names (scripts/build.mjs
+// normalizes them), so the bundled layout is unaffected by upstream renames.
+const WTS_BASENAMES = ['web-tree-sitter', 'tree-sitter'] as const;
+
+function wtsRuntimeFile(dir: string, suffix: string): string {
+  for (const base of WTS_BASENAMES) {
+    const candidate = join(dir, `${base}${suffix}`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return join(dir, `tree-sitter${suffix}`); // absent either way: fail later with a real path
+}
+
 // dev: resolve from node_modules; prod (bundled dist/router.js): dist/vendor/.
 function locateRuntime(): Runtime {
   try {
     const req = createRequire(import.meta.url);
-    const cjs = req.resolve('web-tree-sitter'); // .../web-tree-sitter/tree-sitter.cjs
+    const cjs = req.resolve('web-tree-sitter'); // .../web-tree-sitter/<name>.cjs
     const dir = dirname(cjs);
     return {
-      moduleHref: pathToFileURL(join(dir, 'tree-sitter.js')).href,
-      tsWasm: join(dir, 'tree-sitter.wasm'),
+      moduleHref: pathToFileURL(wtsRuntimeFile(dir, '.js')).href,
+      tsWasm: wtsRuntimeFile(dir, '.wasm'),
       cppWasm: req.resolve('tree-sitter-wasms/out/tree-sitter-cpp.wasm'),
     };
   } catch {

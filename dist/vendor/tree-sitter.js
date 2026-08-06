@@ -1,11 +1,5 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 
 // src/constants.ts
 var SIZE_OF_SHORT = 2;
@@ -233,17 +227,21 @@ var TreeCursor = class _TreeCursor {
     __name(this, "TreeCursor");
   }
   /** @internal */
+  // @ts-expect-error: never read
   [0] = 0;
-  // Internal handle for WASM
+  // Internal handle for Wasm
   /** @internal */
+  // @ts-expect-error: never read
   [1] = 0;
-  // Internal handle for WASM
+  // Internal handle for Wasm
   /** @internal */
+  // @ts-expect-error: never read
   [2] = 0;
-  // Internal handle for WASM
+  // Internal handle for Wasm
   /** @internal */
+  // @ts-expect-error: never read
   [3] = 0;
-  // Internal handle for WASM
+  // Internal handle for Wasm
   /** @internal */
   tree;
   /** @internal */
@@ -516,8 +514,9 @@ var Node = class {
     __name(this, "Node");
   }
   /** @internal */
+  // @ts-expect-error: never read
   [0] = 0;
-  // Internal handle for WASM
+  // Internal handle for Wasm
   /** @internal */
   _children;
   /** @internal */
@@ -957,7 +956,7 @@ var Node = class {
    */
   childWithDescendant(descendant) {
     marshalNode(this);
-    marshalNode(descendant);
+    marshalNode(descendant, 1);
     C._ts_node_child_with_descendant_wasm(this.tree[0]);
     return unmarshalNode(this.tree);
   }
@@ -1078,8 +1077,8 @@ function unmarshalCaptures(query, tree, address, patternIndex, result) {
   return address;
 }
 __name(unmarshalCaptures, "unmarshalCaptures");
-function marshalNode(node) {
-  let address = TRANSFER_BUFFER;
+function marshalNode(node, index = 0) {
+  let address = TRANSFER_BUFFER + index * SIZE_OF_NODE;
   C.setValue(address, node.id, "i32");
   address += SIZE_OF_INT;
   C.setValue(address, node.startIndex, "i32");
@@ -1178,13 +1177,10 @@ function marshalEdit(edit, address = TRANSFER_BUFFER) {
 }
 __name(marshalEdit, "marshalEdit");
 function unmarshalLanguageMetadata(address) {
-  const result = {};
-  result.major_version = C.getValue(address, "i32");
-  address += SIZE_OF_INT;
-  result.minor_version = C.getValue(address, "i32");
-  address += SIZE_OF_INT;
-  result.field_count = C.getValue(address, "i32");
-  return result;
+  const major_version = C.getValue(address, "i32");
+  const minor_version = C.getValue(address += SIZE_OF_INT, "i32");
+  const patch_version = C.getValue(address += SIZE_OF_INT, "i32");
+  return { major_version, minor_version, patch_version };
 }
 __name(unmarshalLanguageMetadata, "unmarshalLanguageMetadata");
 
@@ -2035,7 +2031,7 @@ var Language = class _Language {
       bytes = Promise.resolve(input);
     } else {
       if (globalThis.process?.versions.node) {
-        const fs2 = __require("fs/promises");
+        const fs2 = await import("fs/promises");
         bytes = fs2.readFile(input);
       } else {
         bytes = fetch(input).then((response) => response.arrayBuffer().then((buffer) => {
@@ -2080,7 +2076,7 @@ var Module2 = (() => {
     var ENVIRONMENT_IS_SHELL = !ENVIRONMENT_IS_WEB && !ENVIRONMENT_IS_NODE && !ENVIRONMENT_IS_WORKER;
     if (ENVIRONMENT_IS_NODE) {
       const { createRequire } = await import("module");
-      var require = createRequire("/");
+      var require = createRequire(import.meta.url);
     }
     Module.currentQueryProgressCallback = null;
     Module.currentProgressCallback = null;
@@ -2137,7 +2133,7 @@ var Module2 = (() => {
       if (scriptDirectory.startsWith("blob:")) {
         scriptDirectory = "";
       } else {
-        scriptDirectory = scriptDirectory.substr(0, scriptDirectory.replace(/[?#].*/, "").lastIndexOf("/") + 1);
+        scriptDirectory = scriptDirectory.slice(0, scriptDirectory.replace(/[?#].*/, "").lastIndexOf("/") + 1);
       }
       {
         if (ENVIRONMENT_IS_WORKER) {
@@ -2200,8 +2196,6 @@ var Module2 = (() => {
     var HEAP, HEAP8, HEAPU8, HEAP16, HEAPU16, HEAP32, HEAPU32, HEAPF32, HEAP64, HEAPU64, HEAPF64;
     var HEAP_DATA_VIEW;
     var runtimeInitialized = false;
-    var dataURIPrefix = "data:application/octet-stream;base64,";
-    var isDataURI = /* @__PURE__ */ __name((filename) => filename.startsWith(dataURIPrefix), "isDataURI");
     var isFileURI = /* @__PURE__ */ __name((filename) => filename.startsWith("file://"), "isFileURI");
     function updateMemoryViews() {
       var b = wasmMemory.buffer;
@@ -2233,11 +2227,6 @@ var Module2 = (() => {
       });
     }
     updateMemoryViews();
-    var __ATPRERUN__ = [];
-    var __ATINIT__ = [];
-    var __ATMAIN__ = [];
-    var __ATEXIT__ = [];
-    var __ATPOSTRUN__ = [];
     var __RELOC_FUNCS__ = [];
     function preRun() {
       if (Module["preRun"]) {
@@ -2246,17 +2235,17 @@ var Module2 = (() => {
           addOnPreRun(Module["preRun"].shift());
         }
       }
-      callRuntimeCallbacks(__ATPRERUN__);
+      callRuntimeCallbacks(onPreRuns);
     }
     __name(preRun, "preRun");
     function initRuntime() {
       runtimeInitialized = true;
       callRuntimeCallbacks(__RELOC_FUNCS__);
-      callRuntimeCallbacks(__ATINIT__);
+      wasmExports["__wasm_call_ctors"]();
+      callRuntimeCallbacks(onPostCtors);
     }
     __name(initRuntime, "initRuntime");
     function preMain() {
-      callRuntimeCallbacks(__ATMAIN__);
     }
     __name(preMain, "preMain");
     function postRun() {
@@ -2266,28 +2255,9 @@ var Module2 = (() => {
           addOnPostRun(Module["postRun"].shift());
         }
       }
-      callRuntimeCallbacks(__ATPOSTRUN__);
+      callRuntimeCallbacks(onPostRuns);
     }
     __name(postRun, "postRun");
-    function addOnPreRun(cb) {
-      __ATPRERUN__.unshift(cb);
-    }
-    __name(addOnPreRun, "addOnPreRun");
-    function addOnInit(cb) {
-      __ATINIT__.unshift(cb);
-    }
-    __name(addOnInit, "addOnInit");
-    function addOnPreMain(cb) {
-      __ATMAIN__.unshift(cb);
-    }
-    __name(addOnPreMain, "addOnPreMain");
-    function addOnExit(cb) {
-    }
-    __name(addOnExit, "addOnExit");
-    function addOnPostRun(cb) {
-      __ATPOSTRUN__.unshift(cb);
-    }
-    __name(addOnPostRun, "addOnPostRun");
     var runDependencies = 0;
     var dependenciesFulfilled = null;
     function getUniqueRunDependency(id) {
@@ -2325,11 +2295,7 @@ var Module2 = (() => {
     var wasmBinaryFile;
     function findWasmBinary() {
       if (Module["locateFile"]) {
-        var f = "tree-sitter.wasm";
-        if (!isDataURI(f)) {
-          return locateFile(f);
-        }
-        return f;
+        return locateFile("tree-sitter.wasm");
       }
       return new URL("tree-sitter.wasm", import.meta.url).href;
     }
@@ -2367,7 +2333,7 @@ var Module2 = (() => {
     }
     __name(instantiateArrayBuffer, "instantiateArrayBuffer");
     async function instantiateAsync(binary2, binaryFile, imports) {
-      if (!binary2 && typeof WebAssembly.instantiateStreaming == "function" && !isDataURI(binaryFile) && !isFileURI(binaryFile) && !ENVIRONMENT_IS_NODE) {
+      if (!binary2 && typeof WebAssembly.instantiateStreaming == "function" && !isFileURI(binaryFile) && !ENVIRONMENT_IS_NODE) {
         try {
           var response = fetch(binaryFile, {
             credentials: "same-origin"
@@ -2402,7 +2368,6 @@ var Module2 = (() => {
         mergeLibSymbols(wasmExports, "main");
         LDSO.init();
         loadDylibs();
-        addOnInit(wasmExports["__wasm_call_ctors"]);
         __RELOC_FUNCS__.push(wasmExports["__wasm_apply_data_relocs"]);
         removeRunDependency("wasm-instantiate");
         return wasmExports;
@@ -2415,12 +2380,12 @@ var Module2 = (() => {
       __name(receiveInstantiationResult, "receiveInstantiationResult");
       var info2 = getWasmImports();
       if (Module["instantiateWasm"]) {
-        try {
-          return Module["instantiateWasm"](info2, receiveInstance);
-        } catch (e) {
-          err(`Module.instantiateWasm callback failed with error: ${e}`);
-          readyPromiseReject(e);
-        }
+        return new Promise((resolve, reject) => {
+          Module["instantiateWasm"](info2, (mod, inst) => {
+            receiveInstance(mod, inst);
+            resolve(mod.exports);
+          });
+        });
       }
       wasmBinaryFile ??= findWasmBinary();
       try {
@@ -2478,6 +2443,10 @@ var Module2 = (() => {
         callbacks.shift()(Module);
       }
     }, "callRuntimeCallbacks");
+    var onPostRuns = [];
+    var addOnPostRun = /* @__PURE__ */ __name((cb) => onPostRuns.unshift(cb), "addOnPostRun");
+    var onPreRuns = [];
+    var addOnPreRun = /* @__PURE__ */ __name((cb) => onPreRuns.unshift(cb), "addOnPreRun");
     var UTF8Decoder = typeof TextDecoder != "undefined" ? new TextDecoder() : void 0;
     var UTF8ArrayToString = /* @__PURE__ */ __name((heapOrArray, idx = 0, maxBytesToRead = NaN) => {
       var endIdx = idx + maxBytesToRead;
@@ -2927,30 +2896,25 @@ var Module2 = (() => {
         name: symName
       };
     }, "resolveGlobalSymbol");
+    var onPostCtors = [];
+    var addOnPostCtor = /* @__PURE__ */ __name((cb) => onPostCtors.unshift(cb), "addOnPostCtor");
     var UTF8ToString = /* @__PURE__ */ __name((ptr, maxBytesToRead) => ptr ? UTF8ArrayToString(HEAPU8, ptr, maxBytesToRead) : "", "UTF8ToString");
     var loadWebAssemblyModule = /* @__PURE__ */ __name((binary, flags, libName, localScope, handle) => {
       var metadata = getDylinkMetadata(binary);
       currentModuleWeakSymbols = metadata.weakImports;
       function loadModule() {
-        var firstLoad = !handle || !HEAP8[handle + 8];
-        if (firstLoad) {
-          var memAlign = Math.pow(2, metadata.memoryAlign);
-          var memoryBase = metadata.memorySize ? alignMemory(getMemory(metadata.memorySize + memAlign), memAlign) : 0;
-          var tableBase = metadata.tableSize ? wasmTable.length : 0;
-          if (handle) {
-            HEAP8[handle + 8] = 1;
-            LE_HEAP_STORE_U32((handle + 12 >> 2) * 4, memoryBase);
-            LE_HEAP_STORE_I32((handle + 16 >> 2) * 4, metadata.memorySize);
-            LE_HEAP_STORE_U32((handle + 20 >> 2) * 4, tableBase);
-            LE_HEAP_STORE_I32((handle + 24 >> 2) * 4, metadata.tableSize);
-          }
-        } else {
-          memoryBase = LE_HEAP_LOAD_U32((handle + 12 >> 2) * 4);
-          tableBase = LE_HEAP_LOAD_U32((handle + 20 >> 2) * 4);
+        var memAlign = Math.pow(2, metadata.memoryAlign);
+        var memoryBase = metadata.memorySize ? alignMemory(getMemory(metadata.memorySize + memAlign), memAlign) : 0;
+        var tableBase = metadata.tableSize ? wasmTable.length : 0;
+        if (handle) {
+          HEAP8[handle + 8] = 1;
+          LE_HEAP_STORE_U32((handle + 12 >> 2) * 4, memoryBase);
+          LE_HEAP_STORE_I32((handle + 16 >> 2) * 4, metadata.memorySize);
+          LE_HEAP_STORE_U32((handle + 20 >> 2) * 4, tableBase);
+          LE_HEAP_STORE_I32((handle + 24 >> 2) * 4, metadata.tableSize);
         }
-        var tableGrowthNeeded = tableBase + metadata.tableSize - wasmTable.length;
-        if (tableGrowthNeeded > 0) {
-          wasmTable.grow(tableGrowthNeeded);
+        if (metadata.tableSize) {
+          wasmTable.grow(metadata.tableSize);
         }
         var moduleExports;
         function resolveSymbol(sym) {
@@ -2973,7 +2937,8 @@ var Module2 = (() => {
                 return tableBase;
             }
             if (prop in wasmImports && !wasmImports[prop].stub) {
-              return wasmImports[prop];
+              var res = wasmImports[prop];
+              return res;
             }
             if (!(prop in stubs)) {
               var resolved;
@@ -3058,7 +3023,7 @@ var Module2 = (() => {
             if (runtimeInitialized) {
               init();
             } else {
-              __ATINIT__.push(init);
+              addOnPostCtor(init);
             }
           }
           return moduleExports;

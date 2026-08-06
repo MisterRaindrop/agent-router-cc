@@ -1,0 +1,1012 @@
+<title>router：设计与三次真实运行的教训</title>
+<style>
+  :root{
+    --bg:#10131a; --bg-raised:#171b24; --bg-inset:#0b0d12; --line:#262b38;
+    --text:#eceef2; --text-dim:#9aa0ae; --text-faint:#6b7180;
+    --accent:#e8a33d; --accent-soft:rgba(232,163,61,.14);
+    --pass:#5cb885; --pass-soft:rgba(92,184,133,.14);
+    --fail:#d9635f; --fail-soft:rgba(217,99,95,.14);
+    --shadow:0 24px 70px -24px rgba(0,0,0,.65);
+    --font-display:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI Semibold","Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --font-body:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f4f5f7; --bg-raised:#ffffff; --bg-inset:#eceef2; --line:#dbdee6;
+      --text:#171a21; --text-dim:#5b6170; --text-faint:#848b99;
+      --accent:#9a5a08; --accent-soft:rgba(154,90,8,.09);
+      --pass:#2f8f5b; --pass-soft:rgba(47,143,91,.10);
+      --fail:#b23a36; --fail-soft:rgba(178,58,54,.10);
+      --shadow:0 20px 60px -22px rgba(20,20,30,.16);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10131a; --bg-raised:#171b24; --bg-inset:#0b0d12; --line:#262b38;
+    --text:#eceef2; --text-dim:#9aa0ae; --text-faint:#6b7180;
+    --accent:#e8a33d; --accent-soft:rgba(232,163,61,.14);
+    --pass:#5cb885; --pass-soft:rgba(92,184,133,.14);
+    --fail:#d9635f; --fail-soft:rgba(217,99,95,.14);
+    --shadow:0 24px 70px -24px rgba(0,0,0,.65);
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f5f7; --bg-raised:#ffffff; --bg-inset:#eceef2; --line:#dbdee6;
+    --text:#171a21; --text-dim:#5b6170; --text-faint:#848b99;
+    --accent:#9a5a08; --accent-soft:rgba(154,90,8,.09);
+    --pass:#2f8f5b; --pass-soft:rgba(47,143,91,.10);
+    --fail:#b23a36; --fail-soft:rgba(178,58,54,.10);
+    --shadow:0 20px 60px -22px rgba(20,20,30,.16);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(circle at 1.5px 1.5px, var(--line) 1px, transparent 1px) 0 0/28px 28px,
+      var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  h1,h2,h3{font-family:var(--font-display); text-wrap:balance; margin:0;}
+  p{margin:0;}
+  ::selection{background:var(--accent-soft);}
+
+  .deck{position:relative; width:100vw; height:100dvh; height:100vh; overflow:hidden;}
+
+  .progress{position:fixed; top:0; left:0; width:100%; height:3px; background:var(--line); z-index:40;}
+  .progress-fill{height:100%; width:0%; background:var(--accent); transition:width .35s ease;}
+
+  .slide{
+    display:none;
+    position:absolute; inset:0;
+    flex-direction:column; justify-content:center;
+    padding:clamp(1.75rem,5.5vw,5rem) clamp(1.5rem,7vw,7.5rem);
+    padding-bottom:clamp(3.5rem,7vw,5rem);
+  }
+  .slide.active{display:flex;}
+  .slide.active .slide-inner{animation:rise .5s cubic-bezier(.2,.7,.2,1) both;}
+  @media (prefers-reduced-motion:reduce){ .slide.active .slide-inner{animation:none;} }
+  @keyframes rise{ from{opacity:0; transform:translateY(14px);} to{opacity:1; transform:translateY(0);} }
+
+  .slide-inner{width:100%; max-width:1220px; margin:0 auto;}
+  .slide.wide .slide-inner{max-width:1400px;}
+
+  .eyebrow{
+    font-family:var(--font-mono); font-size:.78rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:.9rem; display:flex; align-items:center; gap:.6em;
+  }
+  .eyebrow::before{content:""; width:22px; height:1px; background:var(--accent); display:inline-block;}
+
+  h1.headline{font-size:clamp(1.9rem,3.6vw,3.05rem); font-weight:800; letter-spacing:-.01em; line-height:1.12;}
+  h1.headline em{font-style:normal; color:var(--accent);}
+  .sub{font-size:clamp(1rem,1.35vw,1.22rem); color:var(--text-dim); margin-top:1rem; max-width:60ch; line-height:1.6;}
+
+  .lede{font-size:clamp(1.05rem,1.6vw,1.35rem); color:var(--text-dim); line-height:1.65; max-width:64ch; margin-top:1.4rem;}
+
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:clamp(1rem,2.4vw,2.4rem); margin-top:clamp(1.4rem,2.6vw,2.2rem);}
+  @media (max-width:820px){ .grid2{grid-template-columns:1fr;} }
+
+  .card{background:var(--bg-raised); border:1px solid var(--line); border-radius:14px; padding:clamp(1.1rem,2vw,1.6rem);}
+  .card h3{font-size:1.05rem; font-weight:700; margin-bottom:.5rem;}
+  .card p{color:var(--text-dim); font-size:.96rem; line-height:1.6;}
+
+  .tag{display:inline-block; font-family:var(--font-mono); font-size:.72rem; letter-spacing:.02em;
+       padding:.18em .55em; border-radius:5px; background:var(--accent-soft); color:var(--accent); margin-bottom:.6rem;}
+  .tag.fail{background:var(--fail-soft); color:var(--fail);}
+  .tag.pass{background:var(--pass-soft); color:var(--pass);}
+
+  .table-wrap{overflow-x:auto; margin-top:clamp(1.2rem,2.4vw,2rem); border:1px solid var(--line); border-radius:14px;}
+  table{border-collapse:collapse; width:100%; min-width:560px; background:var(--bg-raised);}
+  th,td{text-align:left; padding:.85rem 1.15rem; font-size:.95rem; border-bottom:1px solid var(--line); vertical-align:top;}
+  thead th{font-family:var(--font-mono); font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--text-faint); font-weight:600;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.mono, th.mono{font-family:var(--font-mono);}
+  td.dim{color:var(--text-dim);}
+  .cmp-left{color:var(--text-dim);}
+  .cmp-right{color:var(--text); font-weight:600;}
+
+  .figure{margin-top:clamp(1.3rem,2.6vw,2.1rem);}
+  .figure svg{width:100%; height:auto; display:block; color:var(--text);}
+  figcaption{margin-top:.9rem; font-size:.92rem; color:var(--text-dim); line-height:1.6; max-width:80ch;}
+
+  .stat-row{display:flex; flex-wrap:wrap; gap:clamp(1rem,3vw,2.6rem); margin-top:clamp(1.3rem,2.6vw,2rem);}
+  .stat{min-width:150px;}
+  .stat .num{font-family:var(--font-mono); font-variant-numeric:tabular-nums; font-weight:700;
+             font-size:clamp(1.7rem,3.2vw,2.5rem); color:var(--accent); line-height:1;}
+  .stat .label{margin-top:.4rem; font-size:.86rem; color:var(--text-dim);}
+
+  .terminal{background:var(--bg-inset); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:1.4rem;}
+  .terminal .bar{padding:.55rem 1rem; font-family:var(--font-mono); font-size:.72rem; color:var(--text-faint);
+                  border-bottom:1px solid var(--line); letter-spacing:.03em;}
+  .terminal pre{margin:0; padding:1.1rem 1.3rem; font-family:var(--font-mono); font-size:.92rem; line-height:1.75;
+                color:var(--text); overflow-x:auto;}
+  .terminal .p{color:var(--text-faint);}
+  .terminal .c{color:var(--accent);}
+  .cursor{display:inline-block; width:.55em; height:1.05em; background:var(--accent); vertical-align:text-bottom; margin-left:.15em;
+          animation:blink 1.1s steps(1) infinite;}
+  @media (prefers-reduced-motion:reduce){ .cursor{animation:none; opacity:.7;} }
+  @keyframes blink{ 50%{opacity:0;} }
+
+  ul.plain{list-style:none; margin:1.3rem 0 0; padding:0; display:flex; flex-direction:column; gap:.95rem;}
+  ul.plain li{padding-left:1.35rem; position:relative; color:var(--text-dim); font-size:1rem; line-height:1.65;}
+  ul.plain li::before{content:"—"; position:absolute; left:0; color:var(--accent);}
+  ul.plain b{color:var(--text); font-weight:700;}
+
+  ul.dims{list-style:none; margin:.9rem 0 0; padding:0; display:flex; flex-direction:column; gap:.42rem;}
+  ul.dims li{font-size:.85rem; line-height:1.5; color:var(--text-dim); padding-left:2.3rem; position:relative;}
+  ul.dims li .k{position:absolute; left:0; top:.12em; font-family:var(--font-mono); font-size:.72rem; color:var(--accent); font-weight:700;}
+  ul.dims b{color:var(--text); font-weight:700;}
+
+  ol.steps{list-style:none; counter-reset:step; margin:1.3rem 0 0; padding:0; display:flex; flex-direction:column; gap:.85rem;}
+  ol.steps li{position:relative; padding-left:2.3rem; color:var(--text-dim); font-size:.96rem; line-height:1.6;}
+  ol.steps li::before{counter-increment:step; content:counter(step,decimal-leading-zero); position:absolute; left:0; top:.05em;
+                       font-family:var(--font-mono); color:var(--accent); font-size:.82rem; font-weight:700;}
+  ol.steps b{color:var(--text); font-weight:700;}
+
+  .principle{border-left:3px solid var(--accent); padding:.2rem 0 .2rem 1.1rem; margin-top:1.4rem;}
+  .principle + .principle{margin-top:1.1rem;}
+  .principle h3{font-size:1.08rem; margin-bottom:.35rem;}
+  .principle p{color:var(--text-dim); font-size:.95rem; line-height:1.65;}
+
+  .divider .slide-inner{text-align:left;}
+  .divider h1.headline{font-size:clamp(2.2rem,4.6vw,3.7rem);}
+  .divider .meta{margin-top:1.6rem; display:flex; gap:1.6rem; flex-wrap:wrap; font-family:var(--font-mono); font-size:.85rem; color:var(--text-faint);}
+
+  .wordmark{font-family:var(--font-mono); font-weight:700; font-size:clamp(3.4rem,10vw,6.6rem);
+            letter-spacing:-.02em; line-height:1; color:var(--text);}
+  .wordmark span{color:var(--accent);}
+
+  footer.meta-row{margin-top:clamp(1.8rem,3vw,2.6rem); display:flex; gap:clamp(1.2rem,3vw,2.4rem); flex-wrap:wrap;
+                  font-family:var(--font-mono); font-size:.82rem; color:var(--text-faint);}
+  .hint{position:absolute; bottom:1.3rem; left:50%; transform:translateX(-50%); font-family:var(--font-mono);
+        font-size:.78rem; color:var(--text-faint); letter-spacing:.03em;}
+
+  .chip-row{display:flex; gap:.5rem; flex-wrap:wrap; margin-top:1.1rem;}
+  .chip{font-family:var(--font-mono); font-size:.76rem; padding:.32rem .7rem; border:1px solid var(--line);
+        border-radius:999px; color:var(--text-dim);}
+
+  .navbar{position:fixed; bottom:1.1rem; right:1.3rem; display:flex; align-items:center; gap:.7rem; z-index:50;
+          font-family:var(--font-mono); font-size:.82rem; color:var(--text-faint);}
+  .navbtn{width:38px; height:38px; border-radius:50%; border:1px solid var(--line); background:var(--bg-raised);
+          color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer;
+          font-size:1rem; transition:border-color .15s, color .15s;}
+  .navbtn:hover{border-color:var(--accent); color:var(--accent);}
+  .navbtn:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  .navbtn:disabled{opacity:.3; cursor:default;}
+  .counter{font-variant-numeric:tabular-nums; min-width:3.6em; text-align:center;}
+
+  .brandbar{position:fixed; bottom:1.25rem; left:1.4rem; z-index:50; font-family:var(--font-mono); font-size:.78rem; color:var(--text-faint);}
+  .fsbtn{position:fixed; top:1.1rem; right:1.3rem; z-index:50; width:36px; height:36px; border-radius:9px;
+         border:1px solid var(--line); background:var(--bg-raised); color:var(--text-dim); cursor:pointer; font-size:.95rem;}
+  .fsbtn:hover{color:var(--accent); border-color:var(--accent);}
+  .fsbtn:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+  @media (max-width:640px){
+    .navbar,.brandbar{display:none;}
+  }
+
+  @media print{
+    .navbar,.brandbar,.fsbtn,.progress,.hint{display:none;}
+    .deck{height:auto; overflow:visible;}
+    .slide{display:flex !important; position:static; page-break-after:always; min-height:100vh;}
+  }
+</style>
+
+<div class="deck">
+  <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+  <button class="fsbtn" id="fsBtn" title="全屏 (F)" aria-label="切换全屏">⤢</button>
+
+  <div class="slides">
+
+    <!-- 1 — TITLE -->
+    <section class="slide active">
+      <div class="slide-inner">
+        <div class="eyebrow">CLAUDE CODE 插件 · v0.8.3 · BETA</div>
+        <div class="wordmark">router<span>.</span></div>
+        <p class="lede">把编码子任务路由到刚好够用的最便宜模型 —— <b style="color:var(--text)">Opus 只做规划、复审、验证与合并</b>,便宜的执行器负责写代码。</p>
+        <div class="terminal" style="max-width:560px">
+          <div class="bar">zsh</div>
+          <pre><span class="p">$</span> <span class="c">/router:go</span><span class="cursor"></span></pre>
+        </div>
+        <footer class="meta-row">
+          <span>204 次提交</span><span>6,647 行核心代码</span><span>44 个测试文件</span><span>2026-07-09 起</span>
+        </footer>
+      </div>
+      <div class="hint">← → 或空格键翻页 · F 全屏</div>
+    </section>
+
+    <!-- 2 — PROBLEM -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">01 · 问题</div>
+        <h1 class="headline">直接对话 vs 用 <em>router</em></h1>
+        <p class="sub">让 Opus 亲自写每一行代码,贵,而且正确性只能靠你肉眼查。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>问题</th><th>直接提示 agent</th><th>用 router</th></tr></thead>
+            <tbody>
+              <tr><td class="dim">谁来执行</td><td class="cmp-left">Opus(贵)</td><td class="cmp-right">配额更多、更便宜的执行器(codex / sonnet)</td></tr>
+              <tr><td class="dim">改动范围</td><td class="cmp-left">只受提示词约束</td><td class="cmp-right">diff 上强制:允许的 glob + 改动行数上限</td></tr>
+              <tr><td class="dim">正确性</td><td class="cmp-left">你手动检查</td><td class="cmp-right">CLI 把关(范围+密钥+可执行位),Opus 在真实环境跑 build/测试</td></tr>
+              <tr><td class="dim">偷懒怎么办</td><td class="cmp-left">只能信模型的说辞</td><td class="cmp-right">主会话复审 diff,识别偷懒 / 错误的工作</td></tr>
+              <tr><td class="dim">改动落在哪</td><td class="cmp-left">立即写进工作区</td><td class="cmp-right">隔离 worktree;只有 <span class="mono" style="font-family:var(--font-mono)">land</span> 才动你的分支</td></tr>
+              <tr><td class="dim">配额 / 限流</td><td class="cmp-left">运行卡住</td><td class="cmp-right">按真实剩余配额均衡;429 自动切换</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sub" style="margin-top:1.3rem">router <b style="color:var(--text)">从不自动合并</b> —— 门禁只决定 PASS / FAIL,是否 land 由你决定。</p>
+      </div>
+    </section>
+
+    <!-- 3 — CORE IDEA -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">02 · 核心理念</div>
+        <h1 class="headline">最强的模型出<em>判断</em>,最便宜的配额烧 <em>token</em></h1>
+        <p class="lede" style="margin-top:1rem">一个编码任务里,<b style="color:var(--text)">绝大多数 token 花在机械劳动上</b>——读仓库、写实现、迭代到绿(实测:一个约 400 行的功能,执行侧就吃掉 1.88M 输入 token)。而真正需要顶级模型的——规划、复审、验证、合并——恰恰是<b style="color:var(--text)">低 token、高判断</b>的部分。router 就是沿着这条线把工作切开的。</p>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 920 300" role="img" aria-label="Opus 负责规划、复审、验证、合并四件事；执行器在隔离 worktree 中负责执行，产出已经过机械门禁的 diff 交回。">
+              <defs>
+                <marker id="ar1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
+                </marker>
+              </defs>
+              <rect x="40" y="30" width="300" height="240" rx="12" fill="none" stroke="currentColor" opacity=".55"/>
+              <text x="190" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="14" font-weight="700" fill="currentColor">Opus · 主会话</text>
+              <g font-family="ui-monospace,monospace" font-size="13">
+                <rect x="70" y="82" width="240" height="34" rx="8" fill="var(--accent-soft)"/>
+                <text x="190" y="104" text-anchor="middle" fill="var(--accent)">规划</text>
+                <rect x="70" y="126" width="240" height="34" rx="8" fill="var(--accent-soft)"/>
+                <text x="190" y="148" text-anchor="middle" fill="var(--accent)">复审</text>
+                <rect x="70" y="170" width="240" height="34" rx="8" fill="var(--accent-soft)"/>
+                <text x="190" y="192" text-anchor="middle" fill="var(--accent)">验证(你的真实环境)</text>
+                <rect x="70" y="214" width="240" height="34" rx="8" fill="var(--accent-soft)"/>
+                <text x="190" y="236" text-anchor="middle" fill="var(--accent)">合并</text>
+              </g>
+
+              <rect x="600" y="95" width="280" height="110" rx="12" fill="none" stroke="currentColor" opacity=".55"/>
+              <text x="740" y="122" text-anchor="middle" font-family="ui-monospace,monospace" font-size="14" font-weight="700" fill="currentColor">执行器 · 隔离 worktree</text>
+              <rect x="650" y="140" width="180" height="34" rx="8" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".3"/>
+              <text x="740" y="162" text-anchor="middle" font-family="ui-monospace,monospace" font-size="13" fill="currentColor">执行(codex / claude)</text>
+              <text x="740" y="188" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" fill="currentColor" opacity=".55">读代码 → 写实现/测试 → 修到绿</text>
+
+              <line x1="340" y1="112" x2="600" y2="130" stroke="currentColor" stroke-opacity=".7" marker-end="url(#ar1)"/>
+              <text x="470" y="102" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="currentColor" opacity=".75">dispatch task.yaml →</text>
+
+              <line x1="600" y1="175" x2="340" y2="195" stroke="currentColor" stroke-opacity=".7" marker-end="url(#ar1)"/>
+              <circle cx="470" cy="205" r="15" fill="var(--pass-soft)" stroke="var(--pass)"/>
+              <text x="470" y="210" text-anchor="middle" font-size="14" fill="var(--pass)">✓</text>
+              <text x="470" y="240" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="currentColor" opacity=".75">← 已过机械门禁的 diff + 交付报告</text>
+            </svg>
+            <figcaption>规划、复审、验证、合并留给 Opus；执行——读代码、写实现、写测试、修到绿——交给便宜执行器,在隔离 worktree 里进行,产出的 diff 已经先过了一遍机械门禁。</figcaption>
+          </figure>
+        </div>
+        <p class="sub" style="margin-top:1rem">省下的 token 来自<b style="color:var(--text)">这个分工本身</b>——不是找一个更便宜的模型替 Opus 做全部事情(那是拿质量换钱),而是让每一侧只花它真正值钱的那种资源。</p>
+      </div>
+    </section>
+
+    <!-- HOW QUOTA IS ACTUALLY SAVED -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">03 · 额度怎么省</div>
+        <h1 class="headline">额度具体是怎么省下来的:四个机制</h1>
+        <ol class="steps" style="margin-top:1.6rem">
+          <li><b>海量 token 落在便宜的池子里。</b>执行器 CLI(codex / claude)用各自的订阅套餐登录,不需要 API key——跟主会话 Opus 的额度是<b>不同的池子</b>。实测执行侧总输入 19.16M token,一个都不从 Opus 的额度里走。</li>
+          <li><b>执行器的输出永不进入 Opus 的上下文。</b>Opus 只读 diff 和交付报告,构建日志按<b>路径</b>引用而不粘贴——因为读进上下文的每一行,后面每一轮都要重付一遍,这是最大的一笔可避免成本。</li>
+          <li><b>一批任务只花一轮对话。</b>独立任务一次 dispatch 并发跑完,墙钟取最慢者;编排器的对话轮次才是真正贵的东西,机械门禁能判掉的事,绝不多花一轮 Opus。</li>
+          <li><b>两个便宜池子之间再做均衡。</b>codex 与 claude 按真实剩余配额轮流用,谁余量多谁先上,撞上真实 429 自动切换——省下的不只是额度,还有"额度用光只能干等"的墙钟。</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- SAVINGS: REAL MEASURED COST -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">04 · 实测成本</div>
+        <h1 class="headline">这个项目自己的 20 次 dispatch,花了多少、省了多少</h1>
+        <div class="stat-row">
+          <div class="stat"><div class="num">$23.96</div><div class="label">20 次 dispatch,实际花费</div></div>
+          <div class="stat"><div class="num" style="color:var(--text-faint)">~$93.34</div><div class="label">若全程用 Opus(list price 估算)</div></div>
+          <div class="stat"><div class="num" style="color:var(--pass)">~$69.38</div><div class="label">估算省下</div></div>
+          <div class="stat"><div class="num" style="color:var(--accent)">~74%</div><div class="label">成本降幅(估算)</div></div>
+        </div>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 660 150" role="img" aria-label="20 次真实 dispatch，实际花费 23.96 美元；把同样的 token 按 Opus 基线价格重新计算，估算需要 93.34 美元，即估算省下约 74%。">
+              <g font-family="ui-monospace,monospace" font-variant-numeric="tabular-nums" font-size="14">
+                <text x="160" y="38" text-anchor="end" fill="currentColor" opacity=".8">实际花费</text>
+                <rect x="170" y="18" width="107.8" height="30" rx="6" fill="var(--accent)"/>
+                <text x="288" y="38" fill="currentColor" font-weight="700">$23.96</text>
+
+                <text x="160" y="100" text-anchor="end" fill="currentColor" opacity=".6">若全程 Opus</text>
+                <rect x="170" y="80" width="420" height="30" rx="6" fill="var(--text-faint)" opacity=".35"/>
+                <text x="600" y="100" fill="currentColor" opacity=".7">~$93.34</text>
+
+                <line x1="277.8" y1="6" x2="277.8" y2="120" stroke="var(--pass)" stroke-dasharray="4 4"/>
+                <text x="277.8" y="0" text-anchor="middle" fill="var(--pass)" font-size="12" font-weight="700" dy="8">↓ 约 74%</text>
+              </g>
+            </svg>
+            <figcaption>同样的 token 数,分别按实际执行的模型和按 Opus 基线重新计价 —— 这是 <b style="color:var(--text)">list price 的估算,不是账单</b>:没扣除你自己复审/验证的成本;真实账单常因套餐认证更低;更便宜但更差的产出,这个数字看不见。</figcaption>
+          </figure>
+        </div>
+        <div class="grid2" style="margin-top:1.2rem">
+          <div class="card">
+            <h3>质量呢?—— 不靠便宜模型自觉,靠不降档的验收</h3>
+            <p>每个 diff 都要过:五道机械门禁 + Opus <b style="color:var(--text)">整份复审</b> + 真实环境验证 + 合并前强制全链路 CI —— 验收标准和 Opus 亲自写时<b style="color:var(--text)">完全一样,省的是执行,不是复审</b>。实测里唯一一次 FAILED 被门禁当场拦下、resume 修复后才过 —— 失败是可见的、可修的,不是混进你分支的。</p>
+          </div>
+          <div class="card">
+            <h3>一次通过率,实测</h3>
+            <p>来自 <span class="mono" style="color:var(--accent)">router usage --routing</span>:codex 9 次运行一次通过 <b style="color:var(--text)">89%</b>(中位墙钟 3.4 分钟);strong·high 档 6 次运行一次通过 67%。claude 与 weak 档样本还太少 —— 证据不够,工具会明说 insufficient data,不会拿三次运行去猜。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 — SHAPE OF A RUN -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">05 · 工作流</div>
+        <h1 class="headline">一次运行的形状</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 1440 250" role="img" aria-label="规划、可选的对抗式复审、router go 拆包与执行、机械门禁、Opus 复审与真实验证、land 合并、可选的独立复审，中间在三处暂停等待人确认。">
+              <defs>
+                <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
+                </marker>
+              </defs>
+              <g font-family="ui-monospace,monospace" font-size="12.5">
+                <!-- boxes -->
+                <g id="boxes">
+                  <rect x="20" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="95" y="130" text-anchor="middle" fill="currentColor">规划</text>
+                  <text x="95" y="150" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">你 + Opus</text>
+
+                  <rect x="194" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="269" y="126" text-anchor="middle" fill="currentColor">/router:spec</text>
+                  <text x="269" y="144" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">可选</text>
+                  <text x="269" y="160" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">对抗式复审</text>
+
+                  <rect x="368" y="90" width="150" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                  <text x="443" y="130" text-anchor="middle" fill="var(--accent)" font-weight="700">/router:go</text>
+                  <text x="443" y="150" text-anchor="middle" fill="var(--accent)" font-size="11">拆包</text>
+
+                  <rect x="542" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="617" y="126" text-anchor="middle" fill="currentColor">dispatch</text>
+                  <text x="617" y="144" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">执行器</text>
+                  <text x="617" y="160" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">隔离 worktree</text>
+
+                  <rect x="716" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="791" y="130" text-anchor="middle" fill="currentColor">机械门禁</text>
+                  <text x="791" y="150" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">环境无关</text>
+
+                  <rect x="890" y="90" width="150" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                  <text x="965" y="122" text-anchor="middle" fill="var(--accent)" font-weight="700">Opus</text>
+                  <text x="965" y="140" text-anchor="middle" fill="var(--accent)" font-size="11">复审 + 真实验证</text>
+
+                  <rect x="1064" y="90" width="150" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                  <text x="1139" y="130" text-anchor="middle" fill="var(--accent)" font-weight="700">land</text>
+                  <text x="1139" y="150" text-anchor="middle" fill="var(--accent)" font-size="11">合并进你的分支</text>
+
+                  <rect x="1238" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="1313" y="126" text-anchor="middle" fill="currentColor">/router:review</text>
+                  <text x="1313" y="144" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">可选</text>
+                  <text x="1313" y="160" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">独立复审</text>
+                </g>
+                <!-- arrows -->
+                <g stroke="currentColor" stroke-opacity=".6">
+                  <line x1="170" y1="137" x2="194" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="344" y1="137" x2="368" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="518" y1="137" x2="542" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="692" y1="137" x2="716" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="866" y1="137" x2="890" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="1040" y1="137" x2="1064" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="1214" y1="137" x2="1238" y2="137" marker-end="url(#ar2)"/>
+                </g>
+              </g>
+              <!-- pause flags -->
+              <g font-family="ui-monospace,monospace" font-size="12" fill="var(--fail)">
+                <text x="443" y="60" text-anchor="middle" font-weight="700">① 确认清单</text>
+                <line x1="443" y1="68" x2="443" y2="88" stroke="var(--fail)"/>
+                <text x="617" y="40" text-anchor="middle" font-weight="700">② 不清晰的任务,Opus 亲自做</text>
+                <line x1="617" y1="48" x2="617" y2="88" stroke="var(--fail)"/>
+                <text x="1102" y="60" text-anchor="middle" font-weight="700">③ 批准合并</text>
+                <line x1="1102" y1="68" x2="1102" y2="88" stroke="var(--fail)"/>
+              </g>
+            </svg>
+            <figcaption><b style="color:var(--text)">/router:go</b> 只在三处暂停:① 确认任务分解 ② 需要真判断的任务,Opus 亲自和你一起做,不丢给便宜模型 ③ 合并前请你批准。中间每个明确任务,全流程自动跑完。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- SPEC — ADVERSARIAL PLAN REVIEW -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">06 · Spec · 约束规则</div>
+        <h1 class="headline">Spec:对抗式计划复审,十条硬规则立住它</h1>
+        <p class="sub">动手写代码之前,让一个独立模型攻击<b style="color:var(--text)">方案本身</b>——对不对、藏着什么风险、有没有更简单的路子。审的不是"任务怎么拆"(那是 go 的事)。reviewer 被要求默认怀疑、逐条给出 <span class="mono" style="color:var(--accent)">{severity, argument, suggestion}</span>,方案真没问题就明说,不许硬凑意见。</p>
+        <div class="grid2">
+          <div class="card">
+            <h3>机制约束</h3>
+            <ul class="dims">
+              <li><span class="k">01</span><b>不审自己的计划</b> —— 换一个独立模型(优先非 Claude,如 codex);独立性抓的就是自我复审共享的盲区</li>
+              <li><span class="k">02</span><b>批评逐字打印,人是唯一裁判</b> —— 不替你判哪条成立,不因 reviewer 一句话偷偷改计划;没有自动收敛,审几轮由你定</li>
+              <li><span class="k">03</span><b>后台运行 + 完整落盘 + 防截断</b> —— 复审要几分钟,绝不阻塞会话;输出截断就续跑,半份批评绝不当完整呈现</li>
+              <li><span class="k">04</span><b>plan_id 命名空间 + spec.lock</b> —— reviewer 读到的 plan_id 不符必须拒审,防"对错的计划做一次无声复审";两个会话不许交错审同一份计划</li>
+              <li><span class="k">05</span><b>跨轮 resume 同一个 reviewer</b> —— 下一轮只发变更;它记得上轮的 objection,能追问"第 2 条解决没"</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>判断与产物约束</h3>
+            <ul class="dims">
+              <li><span class="k">06</span><b>风险只升不降</b> —— 拿不准就升档;绝不为了少跑检查而降档</li>
+              <li><span class="k">07</span><b>覆盖不了的失败模式,标 unverified</b> —— 不许造一个假单测把缺口装扮成 pass;Known Limits 摆在明面上</li>
+              <li><span class="k">08</span><b>新依赖绝不静默安装</b> —— 你不批,依赖它的检查就停在 unverified</li>
+              <li><span class="k">09</span><b>会推翻方案的假设,先 probe</b> —— 派只读探针验证(空 diff 才算过),结论以文字进实现契约</li>
+              <li><span class="k">10</span><b>产物是机器契约,不是散文</b> —— 风险档位 → <span class="mono" style="color:var(--accent)">risk:</span>,Must NOT → <span class="mono" style="color:var(--accent)">invariants:</span>,Verification Matrix 每行 → 由哪道门禁证明;plan_revision 就此冻结,写不进契约的决定留给人</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SPEC — WORKED EXAMPLE -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">07 · Spec · 一轮对抗实录</div>
+        <h1 class="headline">计划里"不明确的"和"有问题的",就是这样被逼出来的</h1>
+        <div class="terminal" style="margin-top:1.2rem">
+          <div class="bar">plan v1:一条正则,替换全仓 137 处 logger.log(...)</div>
+          <pre><span class="p">Round 1 · reviewer(codex)→</span> verdict: <span style="color:var(--fail)">revise</span>
+<span style="color:var(--fail)">hidden-risk</span>    12 处日志级别取决于业务语义,正则会误判
+               <span class="p">→ 机械可判的批量替换,和需要判断的少数,拆成两步</span>
+<span style="color:var(--fail)">unverifiable</span>   验收只写"测试通过"——漏改、错级别照样全绿,证明不了迁移完整
+               <span class="p">→ 加"grep 无 logger.log( 残留"作为完成判据</span>
+
+<span class="p">(你裁决:两条都成立 → Claude 改出 v2)</span>
+
+<span class="p">Round 2 · resume 同一 reviewer,只发 v2 的变更 →</span> verdict: <span style="color:var(--pass)">approve</span>
+<span style="color:var(--accent)">warn</span>           一次性删旧 API 会弄断外部调用方——考虑留一版 deprecated 垫片</pre>
+        </div>
+        <p class="lede" style="margin-top:1.2rem">plan 里<b style="color:var(--text)">不明确的</b>(验收判据根本写不出来)和<b style="color:var(--text)">有问题的</b>(藏着语义风险)都被逼到台面上。你裁决哪条成立、Claude 修订,满意才冻结 —— <b style="color:var(--text)">没有自动收敛</b>,因为 reviewer 也会错,一致不等于正确。</p>
+        <p class="sub" style="margin-top:.8rem">对抗的产物不留在散文里:风险档位 → <span class="mono" style="color:var(--accent)">risk:</span>,Must NOT → <span class="mono" style="color:var(--accent)">invariants:</span>,Verification Matrix 的每一行 → 由哪道门禁来证明 —— 全部写进机器契约,后面照着验收。</p>
+      </div>
+    </section>
+
+    <!-- REVIEW — TWO LENSES + TWO-AXIS VERDICT -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">08 · Review · 审核维度</div>
+        <h1 class="headline">绿灯之后的最后一关:两个镜头,16 条固定审核维度</h1>
+        <div class="card" style="margin-top:1.1rem">
+          <span class="tag fail">真实案例</span>
+          <p>一次修复清过了 held-out oracle 测试、全部回归测试、以及 go 的及格线复审 —— 它的 guard 条件却写得比问题本身更宽,悄悄关掉了一个<b style="color:var(--text)">没有任何测试能看到</b>的优化。<span class="mono" style="color:var(--accent)">/router:review</span> 就是抓这种"全绿但判断差一格"的最后一道关:测试绿是前提,不是证据 —— 测试本身也是被审对象。</p>
+        </div>
+        <div class="grid2">
+          <div class="card">
+            <h3>架构师镜头 · F1–F7 —— 功能与整体</h3>
+            <ul class="dims">
+              <li><span class="k">F1</span><b>需求真被解决了吗</b> —— 追完真实数据流再下结论;警惕"小而自信但改错地方"的 diff</li>
+              <li><span class="k">F2</span><b>该不该存在</b> —— YAGNI 到需求层:正确答案可能是"更小的需求 / 根本不用改"</li>
+              <li><span class="k">F3</span><b>复用还是重造</b> —— 重造已有 helper / 标准库 / 平台能力,是最常见的 slop</li>
+              <li><span class="k">F4</span><b>根因还是症状</b> —— 修在共享根上了吗?grep 每个调用者,兄弟调用点一起修</li>
+              <li><span class="k">F5</span><b>更简单但仍正确</b> —— 同等大小,选边界正确的那个</li>
+              <li><span class="k">F6</span><b>结构与集成</b> —— 实现有没有偏离方案、或暴露方案没想到的问题</li>
+              <li><span class="k">F7</span><b>独立正确性判断</b> —— 不信作者的测试;指出绿测试掩盖的正确性缺口</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>资深开发镜头 · D1–D9 —— diff 级手艺</h3>
+            <ul class="dims">
+              <li><span class="k">D1</span><b>健壮性 / 边界</b> —— 绿测试没覆盖的输入、顺序、并发、资源耗尽</li>
+              <li><span class="k">D2</span><b>失败模式</b> —— 错误是传播还是被静默吞掉?禁藏 bug 的 fallback</li>
+              <li><span class="k">D3</span><b>复杂度 / 过度设计</b> —— 比需要的更复杂更通用?"解释比代码还长 = 复杂度伪装成散文"</li>
+              <li><span class="k">D4</span><b>测试设计质量</b> —— 重新引入目标 bug 会挂吗?断言有意义还是同义反复?</li>
+              <li><span class="k">D5</span><b>可读性 / 命名</b> —— 不解释也能让下一个人看懂意图</li>
+              <li><span class="k">D6</span><b>与项目风格一致</b> —— 以周围代码为准,不是 reviewer 的口味</li>
+              <li><span class="k">D7</span><b>注释与捷径</b> —— 注释讲为什么;故意的捷径必须标"上限 + 升级触发条件"</li>
+              <li><span class="k">D8</span><b>安全</b> —— 注入、不可信输入、权限、资源生命周期</li>
+              <li><span class="k">D9</span><b>性能常识</b> —— 热路径上测试抓不到的 O(n²) / 逐行分配</li>
+            </ul>
+          </div>
+        </div>
+        <p class="sub" style="margin-top:1rem">两个镜头可以用<b style="color:var(--text)">不同的模型</b>跑以增强独立性;各自出 findings,你对<b style="color:var(--text)">并集</b>裁决。机械项(格式、import 顺序、编译过没过)不进 LLM 审 —— 交给 lint/CI,把判断力省给"测试是否有意义"这类问题。</p>
+      </div>
+    </section>
+
+    <!-- REVIEW — VERDICT & BEHAVIOR RULES -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">09 · Review · 约束规则</div>
+        <h1 class="headline">Review:十条约束,把最后一关钉死</h1>
+        <p class="sub" style="margin-top:.8rem">每条 finding 都是结构化的:<span class="mono" style="color:var(--accent)">{level, dimension, severity, location, what, why, suggestion, confidence}</span> —— 逐字打印,你裁决。</p>
+        <div class="grid2">
+          <div class="card">
+            <h3>复审怎么进行</h3>
+            <ul class="dims">
+              <li><span class="k">01</span><b>前置检查先行</b> —— scope 漂移或 spec 未批准:停,回 spec;绝不对着已经不匹配代码的 spec 审</li>
+              <li><span class="k">02</span><b>绿灯是前提,不是证据</b> —— 测试本身也是被审对象,可能压根没测对东西</li>
+              <li><span class="k">03</span><b>从 router 的记录出发</b> —— delivery header 缺失 = 合约违规,先查它;复审深度绝不低于有效风险(它只升不降)</li>
+              <li><span class="k">04</span><b>引用日志路径,不粘贴日志</b> —— 贴进上下文的每一行,后面每一轮都要重付</li>
+              <li><span class="k">05</span><b>决断 + 可执行,不 hedging</b> —— location + 确切问题 + 具体后果 + 具体替换;说不出后果就降 confidence 或删掉这条</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>判决怎么下</h3>
+            <ul class="dims">
+              <li><span class="k">06</span><b>阻塞要挣来</b> —— 只有功能错、健壮性、安全、或"测试抓不住它要防的 bug"才 blocking;没有就直说"可以 ship",不凑数</li>
+              <li><span class="k">07</span><b>任何代码改动作废全部旧证据</b> —— 报告必须是对最终 head_sha 的一轮全新运行</li>
+              <li><span class="k">08</span><b>反作弊契约</b> —— 不删不弱化测试;bug 修复先见 RED;不 mock 被测逻辑;没跑过的检查绝不标 pass,收了 0 个测试的运行不算通过</li>
+              <li><span class="k">09</span><b>跨轮 resume,不橡皮图章</b> —— 核实每条 blocking 真解决:查新代码,不凭作者一句"改好了"</li>
+              <li><span class="k">10</span><b>spec 错了回 spec</b> —— 验收标准绝不在 review 里被悄悄放宽来放行一个改动</li>
+            </ul>
+          </div>
+        </div>
+        <div class="table-wrap" style="margin-top:1.2rem">
+          <table>
+            <thead><tr><th>轴</th><th>取值</th><th>回答什么</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="color:var(--accent)">code_health</td><td class="dim">yes / needs-changes / no</td><td class="dim">有没有代码缺陷</td></tr>
+              <tr><td class="mono" style="color:var(--accent)">assurance</td><td class="dim">verified / partial / unverified</td><td class="dim">有没有真的被证明</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sub" style="margin-top:.9rem">两条轴<b style="color:var(--text)">从不折叠成一个结论</b>——"没找到缺陷"不等于"被证明了":一项必须验证的东西停在 unverified,assurance 最多只能是 partial。</p>
+      </div>
+    </section>
+
+    <!-- 5 — TASK CONTRACT: TIER VS RISK -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">10 · 任务契约</div>
+        <h1 class="headline">档位(tier)与风险(risk),是两个不同的问题</h1>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>问题</th><th>决定什么</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="color:var(--accent)">tier</td><td>这活需要多强的能力?</td><td class="dim">挑选模型与推理强度</td></tr>
+              <tr><td class="mono" style="color:var(--accent)">risk</td><td>做错了有多糟?</td><td class="dim">挑选独立复审的深度</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lede">对认证路径的机械式改动,是 <b style="color:var(--text)">weak 且 high</b>。router 按真实剩余配额在档位<em style="color:var(--accent);font-style:normal">内</em>挑执行器 —— 配额从不会把任务降级到更弱的模型;风险只会被证据升级,从不会被调低。</p>
+        <p class="sub" style="margin-top:.8rem">风险档位、Must NOT、Verification Matrix —— 这些都在 <span class="mono" style="color:var(--accent)">/router:spec</span> 阶段就定好,写进这里的 <span class="mono">task.yaml</span>,不是 dispatch 时现拍的。</p>
+        <div class="card" style="margin-top:1.3rem; max-width:760px">
+          <span class="tag">为什么是少而大的工作包,而不是碎任务</span>
+          <p>实测一个真实计划:拆成五个微任务,意味着五次执行器冷启动重新读一遍同一个仓库(一个约 400 行的功能,吃掉 1.88M 执行器输入 token),外加五轮复审往返。执行器从来不是瓶颈 —— 12.8 分钟的执行器时间,对着约三小时、~317 轮编排器对话。<b style="color:var(--text)">墙钟和成本,由编排器的对话轮次主导</b>,机械门禁能判的事,不该多花一轮。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ORCHESTRATION: CONCURRENT VS DEPENDENT -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">11 · 任务编排</div>
+        <h1 class="headline">独立的任务并发跑,有依赖的排队等</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 720 230" role="img" aria-label="任务 A 与任务 B 互不依赖、范围不重叠，一起并发派发；任务 C 声明依赖 A 和 B，必须等两者都完成才能开始。">
+              <defs>
+                <marker id="ar5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
+                </marker>
+              </defs>
+              <g font-family="ui-monospace,monospace" font-size="13">
+                <rect x="40" y="30" width="180" height="64" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
+                <text x="130" y="58" text-anchor="middle" fill="var(--pass)" font-weight="700">任务 A</text>
+                <text x="130" y="78" text-anchor="middle" fill="var(--pass)" font-size="11">allowed_globs 不重叠</text>
+
+                <rect x="40" y="130" width="180" height="64" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
+                <text x="130" y="158" text-anchor="middle" fill="var(--pass)" font-weight="700">任务 B</text>
+                <text x="130" y="178" text-anchor="middle" fill="var(--pass)" font-size="11">与 A 互不需要</text>
+
+                <text x="130" y="16" text-anchor="middle" fill="var(--pass)" font-size="11" font-weight="700">✓ 一起并发 dispatch</text>
+
+                <rect x="480" y="80" width="200" height="70" rx="10" fill="var(--fail-soft)" stroke="var(--fail)"/>
+                <text x="580" y="108" text-anchor="middle" fill="var(--fail)" font-weight="700">任务 C</text>
+                <text x="580" y="128" text-anchor="middle" fill="var(--fail)" font-size="11">depends_on: [A, B]</text>
+                <text x="580" y="62" text-anchor="middle" fill="var(--fail)" font-size="11" font-weight="700">等两者都完成才开始</text>
+
+                <line x1="220" y1="62" x2="480" y2="100" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar5)"/>
+                <line x1="220" y1="162" x2="480" y2="130" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar5)"/>
+              </g>
+            </svg>
+            <figcaption>两个任务能同时跑,当且仅当谁都不需要对方的产出、且各自的 <span class="mono" style="color:var(--accent)">allowed_globs</span> 互不相交;其余的必须声明 <span class="mono" style="color:var(--accent)">depends_on</span> 排队等待。这个判断是你 / Opus 做的,但 <span class="mono">land</span> 是 fail-close 的——判断错了,合并直接中止、把树还原,而不是留一堆烂摊子。</figcaption>
+          </figure>
+        </div>
+        <p class="lede" style="margin-top:1rem">实测:一个批次里 26s+31s 的两个独立任务,一起 dispatch 后墙钟是 32s;234s+244s 的一起跑是 244s —— <b style="color:var(--text)">墙钟取最慢的那个,不是求和</b>,而且只花一轮编排器对话,不是每个任务一轮。永远不要 fan out 到后台 shell 再自己去轮询——每一次轮询,都是一整轮编排器对话,那才是真正贵的东西。</p>
+      </div>
+    </section>
+
+    <!-- MODEL SELECTION -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">12 · 模型怎么选</div>
+        <h1 class="headline">先定档位,再让真实配额在档位内挑执行器</h1>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>档位</th><th>codex</th><th>claude</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="color:var(--accent)">weak</td><td class="mono dim">gpt-5.6-terra · medium</td><td class="mono dim">haiku · medium</td></tr>
+              <tr><td class="mono" style="color:var(--accent)">strong</td><td class="mono dim">gpt-5.6-sol · high</td><td class="mono dim">sonnet · high</td></tr>
+              <tr><td class="mono" style="color:var(--accent)">critical</td><td class="mono dim">gpt-5.6-sol · xhigh</td><td class="mono dim">opus · xhigh</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ol class="steps">
+          <li>先判断任务需要的<b>最小能力档位</b>——这是唯一重要的路由决定;判断错了也只会被证据往上修正,从不会被调低。</li>
+          <li>同一档位下,两个执行器都是候选,按<b>真实剩余配额</b>挑:余量多的先跑,打平看谁的窗口先重置;配额只在档位<b>内部</b>重排,从不降档,真撞上 429 才切到另一个。</li>
+          <li>推理强度跟着活儿走,不拉满:机械实现 <span class="mono" style="color:var(--accent)">medium</span>,需要真本事 <span class="mono" style="color:var(--accent)">high</span>,critical 才给 <span class="mono" style="color:var(--accent)">xhigh</span>。实测:五个任务的一次计划在 xhigh/max 上花了 766 秒执行器墙钟,而契约早就把该做什么写清楚了。</li>
+          <li>编排器自己的模型(Opus)<b>只出现在 critical 档位</b>——当成普通执行器用,等于吃掉这整套路由机制本来要保护的那份预算。</li>
+        </ol>
+        <div class="card" style="margin-top:1.4rem; max-width:820px">
+          <h3>spec / review 的独立复审链</h3>
+          <p>优先非 Claude(codex)保证独立;codex 不可用或超配额,才降到<b style="color:var(--text)">同强度</b>的 claude/opus —— 绝不为了复审这件事把强度降下来。<span class="mono" style="color:var(--accent)">.router/models.yaml</span> 可以覆盖任意一格,<span class="mono" style="color:var(--accent)">router models</span> 显示解析后的结果表;没人会替你自动改它。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6 — ISOLATION -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">13 · 隔离与沙箱</div>
+        <h1 class="headline">在 <span class="mono" style="font-family:var(--font-mono);color:var(--accent)">land</span> 之前,你的分支不会变</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 1100 340" role="img" aria-label="主分支保持不变，两个隔离 worktree 分别在各自沙箱内执行，产出经过机械门禁后，只有 land 一步会把改动合并回主分支。">
+              <defs>
+                <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
+                </marker>
+              </defs>
+              <g font-family="ui-monospace,monospace" font-size="12.5">
+                <rect x="30" y="130" width="210" height="90" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                <text x="135" y="168" text-anchor="middle" fill="var(--accent)" font-weight="700">你的分支</text>
+                <text x="135" y="188" text-anchor="middle" fill="var(--accent)" font-size="11">land 前不变</text>
+
+                <rect x="430" y="30" width="320" height="110" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                <text x="450" y="55" fill="currentColor" font-weight="700">worktree A</text>
+                <text x="450" y="76" fill="currentColor" opacity=".6" font-size="11">codex · workspace-write 沙箱</text>
+                <text x="450" y="112" fill="currentColor" opacity=".6" font-size="11">读代码 → 写实现/测试 → 跑 verify</text>
+
+                <rect x="430" y="200" width="320" height="110" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                <text x="450" y="225" fill="currentColor" font-weight="700">worktree B</text>
+                <text x="450" y="246" fill="currentColor" opacity=".6" font-size="11">claude · acceptEdits</text>
+                <text x="450" y="264" fill="currentColor" opacity=".6" font-size="11">Bash 仅当任务声明 verify</text>
+                <text x="450" y="282" fill="currentColor" opacity=".6" font-size="11">精确匹配那条门禁命令</text>
+
+                <line x1="240" y1="160" x2="430" y2="85" stroke="currentColor" stroke-dasharray="4 4" stroke-opacity=".6"/>
+                <line x1="240" y1="190" x2="430" y2="255" stroke="currentColor" stroke-dasharray="4 4" stroke-opacity=".6"/>
+
+                <rect x="830" y="130" width="220" height="90" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
+                <text x="940" y="168" text-anchor="middle" fill="var(--pass)" font-weight="700">机械门禁 → land</text>
+                <text x="940" y="188" text-anchor="middle" fill="var(--pass)" font-size="11">经你批准才合并</text>
+
+                <line x1="750" y1="85" x2="830" y2="150" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar3)"/>
+                <line x1="750" y1="255" x2="830" y2="195" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar3)"/>
+                <path d="M 940 220 C 940 300, 135 300, 135 220" fill="none" stroke="var(--pass)" stroke-dasharray="4 4" marker-end="url(#ar3)"/>
+                <text x="540" y="320" text-anchor="middle" fill="var(--pass)" font-size="11">唯一会碰你分支的一步</text>
+              </g>
+            </svg>
+            <figcaption>执行器在各自隔离的 worktree 里工作,读边界受该 worktree 与被剥净的环境限制;两者都不继承你会话里的 MCP 服务器。凭据只给登录态 + 显式配置的 provider key,绝不透传完整父环境。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7 — ENV-FREE GATES -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">14 · 门禁(一)</div>
+        <h1 class="headline">便宜模型伪造不了的五道机械关卡</h1>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th class="mono">check</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="color:var(--pass)">✓ diff_applies</td><td class="dim">能否干净地 apply 到基线 commit</td></tr>
+              <tr><td class="mono" style="color:var(--pass)">✓ scope</td><td class="dim">只改了 allowed_globs、没超行数上限、没删测试</td></tr>
+              <tr><td class="mono" style="color:var(--pass)">✓ secret_scan</td><td class="dim">新增的行里没有密钥</td></tr>
+              <tr><td class="mono" style="color:var(--pass)">✓ exec_bit</td><td class="dim">同目录同后缀的脚本都可执行时,新脚本也带可执行位</td></tr>
+              <tr><td class="mono" style="color:var(--pass)">✓ verify</td><td class="dim">任务自己的 verify 命令退出码是 0(声明 verify:[] 则跳过)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lede">verify 只回答机械问题:<b style="color:var(--text)">跑了没有、过了没有</b> —— 从不回答"做对了没有"。</p>
+      </div>
+    </section>
+
+    <!-- 8 — TWO GATE MODES + QUOTA -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">15 · 门禁(二)</div>
+        <h1 class="headline">真实门禁是项目的属性,不是任务的属性</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 1200 340" role="img" aria-label="worktree 模式下每个执行器在自己的 worktree 内并行构建和测试；queue 模式下多个执行器只写代码，commit 通过独占锁一个一个送进唯一的共享构建环境。">
+              <g font-family="ui-monospace,monospace" font-size="12.5">
+                <text x="300" y="34" text-anchor="middle" fill="var(--accent)" font-weight="700">mode: worktree</text>
+                <text x="900" y="34" text-anchor="middle" fill="var(--accent)" font-weight="700">mode: queue</text>
+                <line x1="600" y1="20" x2="600" y2="320" stroke="currentColor" stroke-opacity=".25"/>
+
+                <g stroke="currentColor" stroke-opacity=".45" fill="var(--bg-inset)">
+                  <rect x="80" y="55" width="440" height="62" rx="8"/>
+                  <rect x="80" y="132" width="440" height="62" rx="8"/>
+                  <rect x="80" y="209" width="440" height="62" rx="8"/>
+                </g>
+                <g fill="currentColor">
+                  <text x="105" y="90" font-size="12">worktree 1 —— 自己 build + test</text>
+                  <text x="105" y="167" font-size="12">worktree 2 —— 自己 build + test</text>
+                  <text x="105" y="244" font-size="12">worktree 3 —— 自己 build + test</text>
+                </g>
+                <text x="300" y="300" text-anchor="middle" fill="var(--pass)">✓ 实现与验证都全并行</text>
+
+                <g stroke="currentColor" stroke-opacity=".45" fill="var(--bg-inset)">
+                  <rect x="660" y="55" width="220" height="52" rx="8"/>
+                  <rect x="660" y="127" width="220" height="52" rx="8"/>
+                  <rect x="660" y="199" width="220" height="52" rx="8"/>
+                </g>
+                <g fill="currentColor" font-size="11.5">
+                  <text x="680" y="86" >worktree 1 —— 只写代码/测试</text>
+                  <text x="680" y="158">worktree 2 —— 只写代码/测试</text>
+                  <text x="680" y="230">worktree 3 —— 只写代码/测试</text>
+                </g>
+                <g stroke="currentColor" stroke-opacity=".55">
+                  <line x1="880" y1="81" x2="985" y2="150"/>
+                  <line x1="880" y1="153" x2="985" y2="153"/>
+                  <line x1="880" y1="225" x2="985" y2="156"/>
+                </g>
+                <rect x="985" y="110" width="180" height="90" rx="8" fill="var(--fail-soft)" stroke="var(--fail)"/>
+                <text x="1075" y="140" text-anchor="middle" fill="var(--fail)" font-weight="700">共享环境</text>
+                <text x="1075" y="158" text-anchor="middle" fill="var(--fail)" font-size="10.5">单一构建目录 / Docker</text>
+                <text x="1075" y="174" text-anchor="middle" fill="var(--fail)" font-size="10.5">固定宿主路径 · 独占锁</text>
+                <text x="900" y="300" text-anchor="middle" fill="var(--fail)">同一时刻只验证 1 个</text>
+              </g>
+            </svg>
+            <figcaption>worktree 模式:依赖能从祖先目录或全局缓存解出,实现与验证都并行(实测:174 个测试跑完只要 4.7s)。queue 模式:环境只有一份,router gate 用独占锁把 commit 逐个送进<b style="color:var(--text)">你自己的 checkout</b>,始终验证当前集成分支头,只重置被跟踪的文件,绝不清缓存。</figcaption>
+          </figure>
+        </div>
+        <div class="grid2" style="margin-top:1.4rem">
+          <div class="card">
+            <h3>真实门禁,量出来的边界</h3>
+            <p>真实 ClickHouse checkout 上,<span class="mono" style="color:var(--accent)">git status</span> 显示 110 条:107 条构建残留、2 个未跟踪文件、<b style="color:var(--text)">真正未提交的改动只有 1 条</b>。全拒绝,这个模式就没法用在它本该服务的项目上。热缓存 43GB。</p>
+          </div>
+          <div class="card">
+            <h3>真实配额均衡</h3>
+            <p>codex 用量读自 <span class="mono">~/.codex/sessions</span>,claude 用量读自 statusline 快照;余量更多的先跑,遇到真实 429 才切到另一个。queue 的吞吐上限是 <span class="mono" style="color:var(--accent)">1/T</span>,与并发执行器数量无关。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9 — DIVIDER: WAR STORIES -->
+    <section class="slide divider">
+      <div class="slide-inner">
+        <div class="eyebrow">16 · 实战</div>
+        <h1 class="headline">两次真实端到端运行,教会我们的事</h1>
+        <p class="lede">每一条,都是文档写错、或压根没写的指导。每一条,都真的花了钱,或者错杀了一个正确的 diff。</p>
+        <div class="meta">
+          <span>项目:ClickHouse</span>
+          <span>第一次端到端运行 → 0.8.2</span>
+          <span>第二次端到端运行 → 0.8.3</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 — LESSON 0.8.2 -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">17 · 教训 0.8.2</div>
+        <h1 class="headline">读代码看不出来的,只有跑起来才现形</h1>
+        <div class="grid2">
+          <div class="card">
+            <span class="tag fail">缺陷一</span>
+            <h3>usage 建议给"主模型"降档</h3>
+            <p><span class="mono" style="color:var(--accent)">router usage</span> 曾建议把 ORCHESTRATOR 这一行路由到更便宜的档位 —— 但这一行的定义就是主模型本身,是<b style="color:var(--text)">唯一不可能被路由</b>的一行,印在其它正确的提示旁边,毁掉的是整份报告的可信度。<br>修复:建议只看 dispatch 行。</p>
+          </div>
+          <div class="card">
+            <span class="tag fail">缺陷二</span>
+            <h3>land 留下空壳目录</h3>
+            <p><span class="mono" style="color:var(--accent)">land</span> 删了运行的 worktree,却留下 <span class="mono">.router/worktrees/&lt;id&gt;/</span>。跑过的任务越多,空目录越多,读起来像一份"存活运行"清单。<br>修复:用 <span class="mono">rmdir</span> 收尾,非空目录自动跳过,第二次运行不受影响。</p>
+          </div>
+        </div>
+        <p class="sub" style="margin-top:1.4rem">两处都不是读代码能看出来的问题 —— 是跑一次真实的端到端任务才现形的。版本号在同一次改动里一起提交:不提版本号,这两个修复永远到不了已安装的插件。</p>
+      </div>
+    </section>
+
+    <!-- 11 — LESSON: RESUME COST -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">18 · 教训 0.8.3 (1/3)</div>
+        <h1 class="headline">"resume 省的是探索,不是 token"</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 540 250" role="img" aria-label="同一个任务连续三次 resume，输入 token 从 7.69M 涨到 9.18M 再到 9.35M，第三次只改了八行代码却是三次里最贵的一次。">
+              <line x1="40" y1="190" x2="500" y2="190" stroke="currentColor" stroke-opacity=".35"/>
+              <g font-family="ui-monospace,monospace" font-variant-numeric="tabular-nums">
+                <rect x="60" y="75" width="90" height="115" rx="6" fill="var(--text-faint)" opacity=".35"/>
+                <text x="105" y="65" text-anchor="middle" font-size="15" fill="currentColor" font-weight="700">7.69M</text>
+                <text x="105" y="208" text-anchor="middle" font-size="12" fill="currentColor" opacity=".6">第 1 次</text>
+
+                <rect x="220" y="53" width="90" height="137" rx="6" fill="var(--text-faint)" opacity=".5"/>
+                <text x="265" y="43" text-anchor="middle" font-size="15" fill="currentColor" font-weight="700">9.18M</text>
+                <text x="265" y="208" text-anchor="middle" font-size="12" fill="currentColor" opacity=".6">第 2 次</text>
+
+                <rect x="380" y="50" width="90" height="140" rx="6" fill="var(--fail)"/>
+                <text x="425" y="40" text-anchor="middle" font-size="15" fill="var(--fail)" font-weight="700">9.35M</text>
+                <text x="425" y="208" text-anchor="middle" font-size="12" fill="currentColor" opacity=".6">第 3 次</text>
+              </g>
+              <text x="270" y="234" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12.5" fill="var(--fail)">第三次只改了 8 行、耗时 59 秒,输入 token 却比原始 1181 行实现还贵</text>
+            </svg>
+            <figcaption>输入 token 单位:百万(M)。执行器的会话每一轮都要把完整前文重发一遍,"resume 更省钱"这个说法本身就是错的。</figcaption>
+          </figure>
+        </div>
+        <p class="lede" style="margin-top:1rem">现在的指导:把所有发现打包进<b style="color:var(--text)">同一次</b> resume;几行机械性的小改动,<b style="color:var(--text)">自己动手改</b>,不要为一次往返多付一整轮的钱。</p>
+      </div>
+    </section>
+
+    <!-- 12 — LESSON: MAX CHANGED LINES -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">19 · 教训 0.8.3 (2/3)</div>
+        <h1 class="headline">改动行数上限,曾两次挡下正确的工作</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 720 130" role="img" aria-label="一次1181行的正确改动中，实现新增616行，测试472行，删除93行，全部计入行数上限，导致这次改动被机械门禁误判为超范围。">
+              <g font-family="ui-monospace,monospace" font-size="12" font-variant-numeric="tabular-nums">
+                <rect x="40" y="45" width="330" height="42" rx="4" fill="var(--text-faint)" opacity=".4"/>
+                <rect x="374" y="45" width="254" height="42" rx="4" fill="var(--accent)"/>
+                <rect x="632" y="45" width="48" height="42" rx="4" fill="var(--fail)"/>
+                <text x="205" y="70" text-anchor="middle" fill="currentColor">实现 616 行</text>
+                <text x="501" y="70" text-anchor="middle" fill="var(--bg)">测试 472 行</text>
+                <line x1="656" y1="45" x2="656" y2="25" stroke="currentColor" stroke-opacity=".5"/>
+                <text x="656" y="18" text-anchor="middle" fill="var(--fail)">删除 93 行</text>
+                <text x="360" y="112" text-anchor="middle" fill="currentColor" opacity=".65">共 1181 行 —— 全部计入 max_changed_lines</text>
+              </g>
+            </svg>
+            <figcaption>quickstart 里除了一条注释,没有任何关于怎么定这个上限的指导;而任务契约本身要求三档测试,测试和删除的行数一样计入上限。</figcaption>
+          </figure>
+        </div>
+        <p class="lede" style="margin-top:1.2rem">现在的指导:按<b style="color:var(--text)">真实 diff 的形状</b>(包含测试和删除)来定这个上限,而不是只按实现代码的行数拍脑袋。</p>
+      </div>
+    </section>
+
+    <!-- 13 — LESSON: BUILD COST BLINDNESS -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">20 · 教训 0.8.3 (3/3)</div>
+        <h1 class="headline">热构建目录,不等于验证是免费的</h1>
+        <div class="stat-row">
+          <div class="stat"><div class="num">+1</div><div class="label">新增源文件</div></div>
+          <div class="stat"><div class="num" style="color:var(--fail)">9,891</div><div class="label">失效的目标文件</div></div>
+          <div class="stat"><div class="num">4h</div><div class="label">CI 预算</div></div>
+        </div>
+        <p class="lede" style="margin-top:1.4rem">新增一个源文件,重新触发了 CMake 的 <span class="mono" style="color:var(--accent)">CONFIGURE_DEPENDS</span> glob,让 9,891 个目标文件失效 —— 阶段门禁只让编排器弄清楚"怎么 build",却从没让它把这一步计入成本。</p>
+        <div class="card" style="margin-top:1.4rem; max-width:820px">
+          <h3>现在的指导</h3>
+          <p>检查项目自己的构建预算;留意"新增文件"与"编辑文件"的差别 —— 前者更容易让增量构建失效;验证真的跑不了时,明说<b style="color:var(--text)">"这段代码从未被编译过"</b>,而不是让绿色门禁暗示一次它没做到的通过。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 14 — DISTILLED PRINCIPLES -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">21 · 原则</div>
+        <h1 class="headline">从真实运行里蒸馏出来的几条硬规矩</h1>
+        <div class="principle">
+          <h3>绝不仅凭绿灯合并</h3>
+          <p>一份既是绿色、又经过机械验证的 diff,主会话自己复审时仍挖出 3 个真实缺陷:一个并发数字跟实际跑的池对不上;一个批量 <span class="mono" style="color:var(--accent)">--json</span> 路径把几份文档粘在了一起;一个测试 fake 读的环境变量根本不在执行器白名单里 —— 悄悄地什么都没证明。</p>
+        </div>
+        <div class="principle">
+          <h3>读 diff,不读日志</h3>
+          <p>diff 是判断的输入,要整份读完;原始构建日志只是证据,引用路径就够 —— 读进上下文的每一行,都会在后面每一轮被重新读一遍,是最容易避免、却最容易被忽视的成本。</p>
+        </div>
+        <div class="principle">
+          <h3>机械门禁替代不了判断</h3>
+          <p>便宜模型能在做错事的同时,轻松通过一个浅层门禁 —— 写死的值、空壳测试、误解的意图,这些从来不是"跑了没有"能回答的问题。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 15 — STATUS + OPEN QUESTIONS -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">22 · 现状</div>
+        <h1 class="headline">四周,204 次提交,还在被真实使用教育</h1>
+        <div class="chip-row">
+          <span class="chip">首个提交 2026-07-09</span>
+          <span class="chip">204 次提交</span>
+          <span class="chip">~6,647 行核心代码</span>
+          <span class="chip">44 个测试文件</span>
+          <span class="chip">当前 v0.8.3 · beta</span>
+        </div>
+        <ul class="plain" style="margin-top:1.8rem">
+          <li><b>TASK_CONTEXT.md 的成本还没定论</b> —— 一个两文件的小任务上,写它让执行器输入涨了 21%(474.7k vs 392.6k),质量没变化;在需要先找到入口的大仓库上是否划算,靠每次 dispatch 记录的数据来回答,不是靠猜。</li>
+          <li><b><span class="mono" style="color:var(--accent)">router usage --routing</span> 证据不够就明说</b> —— 不会拿三次运行去猜一个路由结论。</li>
+          <li><b>1.0 之前,命令仍可能变</b> —— 状态是 beta,不是承诺。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 16 — CLOSING -->
+    <section class="slide">
+      <div class="slide-inner">
+        <div class="eyebrow">23 · 开始使用</div>
+        <h1 class="headline">现在就能装上试试</h1>
+        <div class="terminal">
+          <div class="bar">Claude Code</div>
+          <pre><span class="p">/</span><span class="c">plugin marketplace add</span> MisterRaindrop/agent-router-cc
+<span class="p">/</span><span class="c">plugin install</span> router@agent-router-cc
+<span class="p">/</span><span class="c">reload-plugins</span></pre>
+        </div>
+        <p class="sub">要求:Claude Code · Node.js ≥ 18 + git · 一个已登录的执行器 CLI(codex 或 claude,订阅套餐即可,<b style="color:var(--text)">不需要 API key</b>)。</p>
+        <p class="lede" style="margin-top:1.6rem; max-width:70ch">便宜的模型负责执行,Opus 负责规划、复审、验证和合并 —— <b style="color:var(--text)">这就是省下的 token。</b></p>
+        <footer class="meta-row">
+          <span>Apache-2.0</span><span>MisterRaindrop/agent-router-cc</span><span>谢谢 · Q&amp;A</span>
+        </footer>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="brandbar">router · v0.8.3</div>
+  <div class="navbar">
+    <button class="navbtn" id="prevBtn" aria-label="上一页">‹</button>
+    <span class="counter" id="counter">1 / 16</span>
+    <button class="navbtn" id="nextBtn" aria-label="下一页">›</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var slides = document.querySelectorAll('.slide');
+  var total = slides.length;
+  var current = 0;
+  var fill = document.getElementById('progressFill');
+  var counter = document.getElementById('counter');
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var fsBtn = document.getElementById('fsBtn');
+
+  function show(i){
+    if(i < 0) i = 0;
+    if(i > total-1) i = total-1;
+    slides.forEach(function(s, idx){ s.classList.toggle('active', idx===i); });
+    current = i;
+    counter.textContent = (i+1) + ' / ' + total;
+    fill.style.width = ((i+1)/total*100) + '%';
+    prevBtn.disabled = i===0;
+    nextBtn.disabled = i===total-1;
+  }
+
+  function next(){ show(current+1); }
+  function prev(){ show(current-1); }
+
+  document.addEventListener('keydown', function(e){
+    if(e.key==='ArrowRight' || e.key==='ArrowDown' || e.key==='PageDown'){ e.preventDefault(); next(); }
+    else if(e.key==='ArrowLeft' || e.key==='ArrowUp' || e.key==='PageUp'){ e.preventDefault(); prev(); }
+    else if(e.key===' '){ e.preventDefault(); if(e.shiftKey) prev(); else next(); }
+    else if(e.key==='Home'){ e.preventDefault(); show(0); }
+    else if(e.key==='End'){ e.preventDefault(); show(total-1); }
+    else if(e.key==='f' || e.key==='F'){ toggleFullscreen(); }
+  });
+
+  prevBtn.addEventListener('click', prev);
+  nextBtn.addEventListener('click', next);
+
+  function toggleFullscreen(){
+    if(!document.fullscreenElement){
+      document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(function(){});
+    } else {
+      document.exitFullscreen && document.exitFullscreen();
+    }
+  }
+  fsBtn.addEventListener('click', toggleFullscreen);
+
+  show(0);
+})();
+</script>
