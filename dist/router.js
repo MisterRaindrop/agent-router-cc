@@ -6638,7 +6638,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, rmdirSync, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, rmdirSync, writeFileSync as writeFileSync5 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
@@ -7065,6 +7065,11 @@ var binaryTag = defineScalarTag("tag:yaml.org,2002:binary", {
 });
 var YAML_DATE_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])$");
 var YAML_TIMESTAMP_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9]?)-([0-9][0-9]?)(?:[Tt]|[ \\t]+)([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])(?:\\.([0-9]*))?(?:[ \\t]*(Z|([-+])([0-9][0-9]?)(?::([0-9][0-9]))?))?$");
+function makeUtcDate(year, month, day, hour = 0, minute = 0, second = 0, fraction = 0) {
+  const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
+  date.setUTCFullYear(year, month, day);
+  return date;
+}
 function resolveYamlTimestamp(source) {
   let match = YAML_DATE_REGEXP.exec(source);
   if (match === null) match = YAML_TIMESTAMP_REGEXP.exec(source);
@@ -7073,7 +7078,7 @@ function resolveYamlTimestamp(source) {
   const month = +match[2] - 1;
   const day = +match[3];
   if (!match[4]) {
-    const date2 = new Date(Date.UTC(year, month, day));
+    const date2 = makeUtcDate(year, month, day);
     if (date2.getUTCFullYear() !== year || date2.getUTCMonth() !== month || date2.getUTCDate() !== day) return NOT_RESOLVED;
     return date2;
   }
@@ -7087,7 +7092,7 @@ function resolveYamlTimestamp(source) {
     while (value.length < 3) value += "0";
     fraction = +value;
   }
-  const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
+  const date = makeUtcDate(year, month, day, hour, minute, second, fraction);
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return NOT_RESOLVED;
   if (match[9]) {
     const offsetHour = +match[10];
@@ -7185,7 +7190,11 @@ var mapTag = defineMappingTag("tag:yaml.org,2002:map", {
     return Object.prototype.hasOwnProperty.call(container, String(key));
   },
   keys: (container) => Object.keys(container),
-  get: (container, key) => container[String(key)]
+  get: (container, key) => {
+    const normalizedKey = String(key);
+    if (!Object.prototype.hasOwnProperty.call(container, normalizedKey)) return null;
+    return container[normalizedKey];
+  }
 });
 var setTag = defineMappingTag("tag:yaml.org,2002:set", {
   create: () => /* @__PURE__ */ new Set(),
@@ -7206,9 +7215,9 @@ var setTag = defineMappingTag("tag:yaml.org,2002:set", {
 });
 function createTagDefinitionMap() {
   return {
-    scalar: {},
-    sequence: {},
-    mapping: {}
+    scalar: /* @__PURE__ */ Object.create(null),
+    sequence: /* @__PURE__ */ Object.create(null),
+    mapping: /* @__PURE__ */ Object.create(null)
   };
 }
 function createTagDefinitionListMap() {
@@ -7378,7 +7387,11 @@ var legacyMapTag = defineMappingTag("tag:yaml.org,2002:map", {
     return normalizedKey !== null && Object.prototype.hasOwnProperty.call(container, normalizedKey);
   },
   keys: (container) => Object.keys(container),
-  get: (container, key) => container[String(key)]
+  get: (container, key) => {
+    const normalizedKey = String(key);
+    if (!Object.prototype.hasOwnProperty.call(container, normalizedKey)) return null;
+    return container[normalizedKey];
+  }
 });
 var DEFAULT_SNIPPET_OPTIONS = {
   maxLength: 79,
@@ -7714,10 +7727,10 @@ function getScalarValue(input, scalar) {
       return getPlainValue(input, valueStart, valueEnd);
   }
 }
-var DEFAULT_TAG_HANDLERS = {
+var DEFAULT_TAG_HANDLERS = Object.assign(/* @__PURE__ */ Object.create(null), {
   "!": "!",
   "!!": "tag:yaml.org,2002:"
-};
+});
 function tagPercentEncode(source) {
   return encodeURI(source).replace(/!/g, "%21");
 }
@@ -7970,6 +7983,10 @@ function constructFromEvents(events, options) {
       }
       case 6: {
         const frame = state.frames.pop();
+        if (frame.kind === "mapping" && frame.hasKey) {
+          state.position = frame.keyPosition;
+          throwError$1(state, "incomplete mapping pair in event stream");
+        }
         if (frame.kind === "document") state.documents.push(frame.value);
         else {
           const value = frame.tag.carrierIsResult ? frame.value : finalizeCollection(state, frame.position, frame.tag, frame.value);
@@ -8031,6 +8048,17 @@ function addMappingEvent(state, start, anchorStart, anchorEnd, tagStart, tagEnd,
     tagStart,
     tagEnd,
     style
+  });
+}
+function insertFlowPairMappingEvent(state, snapshot) {
+  state.events.splice(snapshot.eventsLength, 0, {
+    type: 3,
+    start: snapshot.position,
+    anchorStart: NO_RANGE$1,
+    anchorEnd: NO_RANGE$1,
+    tagStart: NO_RANGE$1,
+    tagEnd: NO_RANGE$1,
+    style: 2
   });
 }
 function addScalarEvent(state, valueStart, valueEnd, anchorStart, anchorEnd, tagStart, tagEnd, style, chomping = 1, indent = -1, fast = false) {
@@ -8476,12 +8504,8 @@ function readFlowCollection(state, nodeIndent, props) {
       state.position++;
       skipFlowSeparationSpace(state, nodeIndent);
       if (!isMapping) {
-        restoreState(state, entryStart);
-        addMappingEvent(state, entryStart.position, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 2);
-        if (!parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)) addEmptyScalarEvent(state);
-        skipFlowSeparationSpace(state, nodeIndent);
-        state.position++;
-        skipFlowSeparationSpace(state, nodeIndent);
+        insertFlowPairMappingEvent(state, entryStart);
+        if (!keyWasRead) addEmptyScalarEvent(state);
       } else if (!keyWasRead) addEmptyScalarEvent(state);
       if (!parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true)) addEmptyScalarEvent(state);
       skipFlowSeparationSpace(state, nodeIndent);
@@ -8491,9 +8515,8 @@ function readFlowCollection(state, nodeIndent, props) {
       addEmptyScalarEvent(state);
     } else if (isMapping) addEmptyScalarEvent(state);
     else if (isPair) {
-      restoreState(state, entryStart);
-      addMappingEvent(state, entryStart.position, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, NO_RANGE$1, 2);
-      parseNode(state, nodeIndent, CONTEXT_FLOW_IN, false, true);
+      insertFlowPairMappingEvent(state, entryStart);
+      if (!keyWasRead) addEmptyScalarEvent(state);
       addEmptyScalarEvent(state);
       addPopEvent(state);
     }
@@ -8633,10 +8656,6 @@ function parseNode(state, parentIndent, nodeContext, allowToSeek, allowCompact, 
     if (state.lineIndent > parentIndent) indentStatus = 1;
     else if (state.lineIndent === parentIndent) indentStatus = 0;
     else indentStatus = -1;
-  }
-  if (state.position === state.lineStart && testDocumentSeparator(state)) {
-    state.depth--;
-    return false;
   }
   if (indentStatus === 1) while (true) {
     const ch = state.input.charCodeAt(state.position);
@@ -9130,7 +9149,7 @@ function isNsCharOrWhitespace(c) {
 function isPlainSafe(c, prev, inblock) {
   const cIsNsCharOrWhitespace = isNsCharOrWhitespace(c);
   const cIsNsChar = cIsNsCharOrWhitespace && !isWhitespace(c);
-  return (inblock ? cIsNsCharOrWhitespace : cIsNsCharOrWhitespace && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET) && c !== CHAR_SHARP && !(prev === CHAR_COLON && !cIsNsChar) || isNsCharOrWhitespace(prev) && !isWhitespace(prev) && c === CHAR_SHARP || prev === CHAR_COLON && cIsNsChar;
+  return (inblock ? cIsNsCharOrWhitespace : cIsNsCharOrWhitespace && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET) && c !== CHAR_SHARP && !(prev === CHAR_COLON && !cIsNsChar) || isNsCharOrWhitespace(prev) && !isWhitespace(prev) && c === CHAR_SHARP || prev === CHAR_COLON && cIsNsChar && (inblock || c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET);
 }
 function isPlainSafeFirst(c) {
   return isPrintable(c) && c !== CHAR_BOM && !isWhitespace(c) && c !== CHAR_MINUS && c !== CHAR_QUESTION && c !== CHAR_COLON && c !== CHAR_COMMA && c !== CHAR_LEFT_SQUARE_BRACKET && c !== CHAR_RIGHT_SQUARE_BRACKET && c !== CHAR_LEFT_CURLY_BRACKET && c !== CHAR_RIGHT_CURLY_BRACKET && c !== CHAR_SHARP && c !== CHAR_AMPERSAND && c !== CHAR_ASTERISK && c !== CHAR_EXCLAMATION && c !== CHAR_VERTICAL_LINE && c !== CHAR_EQUALS && c !== CHAR_GREATER_THAN && c !== CHAR_SINGLE_QUOTE && c !== CHAR_DOUBLE_QUOTE && c !== CHAR_PERCENT && c !== CHAR_COMMERCIAL_AT && c !== CHAR_GRAVE_ACCENT;
@@ -9186,14 +9205,14 @@ function chooseScalarStyle(state, string, layout, singleLineOnly, forceQuote, in
       if (char === CHAR_LINE_FEED) {
         hasLineBreak = true;
         if (shouldTrackWidth) {
-          hasFoldableLine = hasFoldableLine || i - previousLineBreak - 1 > lineWidth && string[previousLineBreak + 1] !== " ";
+          hasFoldableLine = hasFoldableLine || i - previousLineBreak - 1 > lineWidth && !isMoreIndented(string[previousLineBreak + 1]);
           previousLineBreak = i;
         }
       } else if (!isPrintable(char)) return STYLE_DOUBLE;
       plain = plain && isPlainSafe(char, prevChar, inblock);
       prevChar = char;
     }
-    hasFoldableLine = hasFoldableLine || shouldTrackWidth && i - previousLineBreak - 1 > lineWidth && string[previousLineBreak + 1] !== " ";
+    hasFoldableLine = hasFoldableLine || shouldTrackWidth && i - previousLineBreak - 1 > lineWidth && !isMoreIndented(string[previousLineBreak + 1]);
   }
   if (!hasLineBreak && !hasFoldableLine) {
     if (plain && !forceQuote) return STYLE_PLAIN;
@@ -9258,27 +9277,30 @@ function encodeFlowBreaks(string, indent) {
 function dropEndingNewline(string) {
   return string[string.length - 1] === "\n" ? string.slice(0, -1) : string;
 }
+function isMoreIndented(char) {
+  return char === " " || char === "	";
+}
 function foldBlockScalar(string, width) {
   const lineRe = /(\n+)([^\n]*)/g;
   let nextLF = string.indexOf("\n");
   if (nextLF === -1) nextLF = string.length;
   lineRe.lastIndex = nextLF;
   let result2 = foldLine(string.slice(0, nextLF), width);
-  let prevMoreIndented = string[0] === "\n" || string[0] === " ";
+  let prevMoreIndented = string[0] === "\n" || isMoreIndented(string[0]);
   let moreIndented;
   let match;
   while (match = lineRe.exec(string)) {
     const prefix = match[1];
     const line = match[2];
-    moreIndented = line[0] === " ";
+    moreIndented = line !== "" && isMoreIndented(line[0]);
     result2 += prefix + (!prevMoreIndented && !moreIndented && line !== "" ? "\n" : "") + foldLine(line, width);
     prevMoreIndented = moreIndented;
   }
   return result2;
 }
 function foldLine(line, width) {
-  if (line === "" || line[0] === " ") return line;
-  const breakRe = / [^ ]/g;
+  if (line === "" || isMoreIndented(line[0])) return line;
+  const breakRe = / [^ \t]/g;
   let match;
   let start = 0;
   let end;
@@ -9556,7 +9578,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.8.3" : "0.0.0-dev";
+var VERSION = true ? "0.8.4" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -12367,7 +12389,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync12, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync12, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
 import { resolve as resolve3 } from "node:path";
 
 // src/core/symbols.ts
@@ -12481,22 +12503,30 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync8, readdirSync as readdirSync3, readFileSync as readFileSync11, statSync as statSync6 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync3, readFileSync as readFileSync11, statSync as statSync6 } from "node:fs";
 import { relative, resolve as resolve2 } from "node:path";
 
 // src/io/treeSitter.ts
-import { readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync10 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join10 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+var WTS_BASENAMES = ["web-tree-sitter", "tree-sitter"];
+function wtsRuntimeFile(dir, suffix) {
+  for (const base of WTS_BASENAMES) {
+    const candidate = join10(dir, `${base}${suffix}`);
+    if (existsSync8(candidate)) return candidate;
+  }
+  return join10(dir, `tree-sitter${suffix}`);
+}
 function locateRuntime() {
   try {
     const req = createRequire(import.meta.url);
     const cjs = req.resolve("web-tree-sitter");
     const dir = dirname5(cjs);
     return {
-      moduleHref: pathToFileURL(join10(dir, "tree-sitter.js")).href,
-      tsWasm: join10(dir, "tree-sitter.wasm"),
+      moduleHref: pathToFileURL(wtsRuntimeFile(dir, ".js")).href,
+      tsWasm: wtsRuntimeFile(dir, ".wasm"),
       cppWasm: req.resolve("tree-sitter-wasms/out/tree-sitter-cpp.wasm")
     };
   } catch {
@@ -12690,7 +12720,7 @@ async function refreshIndex(cachePath, repoRoot) {
     changed = true;
   }
   const refreshed = { grammar, files: out2 };
-  if (changed && existsSync8(cachePath)) writeJsonAtomic(cachePath, refreshed);
+  if (changed && existsSync9(cachePath)) writeJsonAtomic(cachePath, refreshed);
   return { index: refreshed, reparsed };
 }
 
@@ -12754,12 +12784,12 @@ async function runQuery(paths, cfg, sub, args) {
   let cache2;
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
-  } else if (existsSync9(paths.symbolLatest)) {
+  } else if (existsSync10(paths.symbolLatest)) {
     cache2 = paths.symbolCache(readFileSync12(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
-  if (!existsSync9(cache2)) {
+  if (!existsSync10(cache2)) {
     return { degraded: true, reason: "no symbol index yet; run `router symbol index [dirs]` first; using rg" };
   }
   let index;
@@ -13210,10 +13240,10 @@ function depsFor(ctx) {
   const rd = found ?? join11(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
   for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync10(d)) mkdirSync5(d, { recursive: true });
+    if (!existsSync11(d)) mkdirSync5(d, { recursive: true });
   }
   const gi = join11(paths.root, ".gitignore");
-  if (!existsSync10(gi)) writeFileSync5(gi, "*\n");
+  if (!existsSync11(gi)) writeFileSync5(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -13304,8 +13334,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync5(paths.taskDir(id), { recursive: true });
-  if (!existsSync10(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync10(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync11(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync11(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -13511,7 +13541,7 @@ ${tail}`;
 };
 var list = (ctx) => {
   const { paths } = depsFor(ctx);
-  const ids = existsSync10(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync11(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
@@ -13520,7 +13550,7 @@ var list = (ctx) => {
     }
     const res = readResult(paths, id, RUN3);
     const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
-    const worktree = existsSync10(paths.worktree(id, RUN3));
+    const worktree = existsSync11(paths.worktree(id, RUN3));
     const risk = res?.risk ?? "-";
     const report = res?.delivery ? "yes" : "-";
     return { id, title, status, worktree, risk, report };
@@ -13570,7 +13600,7 @@ function highestCritiqueRound(entries) {
 var plans = (ctx) => {
   const { paths } = depsFor(ctx);
   const plansRoot = join11(paths.root, "plans");
-  const ids = existsSync10(plansRoot) ? readdirSync5(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync11(plansRoot) ? readdirSync5(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let revision = null;
     try {
@@ -13586,7 +13616,7 @@ var plans = (ctx) => {
       id,
       plan_revision: revision,
       critique_round: critiqueRound,
-      decisions: existsSync10(paths.specDecisions(id)),
+      decisions: existsSync11(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null
     };
   });
@@ -13680,7 +13710,7 @@ var setupStatusline = (ctx) => {
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync10(settingsPath)) {
+  if (existsSync11(settingsPath)) {
     try {
       settings = JSON.parse(readFileSync13(settingsPath, "utf8"));
     } catch (e) {
@@ -13695,7 +13725,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync10(statuslinePath);
+  const missing = !existsSync11(statuslinePath);
   emit(
     ctx.json,
     {
@@ -13728,7 +13758,7 @@ var models = (ctx) => {
   emit(ctx.json, { ok: true, models: cfg }, () => {
     const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
     const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
-    const src = existsSync10(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    const src = existsSync11(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
     return `model tiers (${src}):
 ${tier("codex")}
 ${tier("claude")}
@@ -13790,7 +13820,7 @@ var doctor = async (ctx) => {
   } catch (e) {
     wasmDetail = e.message;
   }
-  const cacheWritable = existsSync10(paths.root);
+  const cacheWritable = existsSync11(paths.root);
   emit(
     ctx.json,
     {
