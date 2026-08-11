@@ -72,10 +72,13 @@ test('usage --routing is separate from the unchanged default usage view', () => 
   dirs.add(dir);
   const routerDir = join(dir, '.router');
   mkdirSync(routerDir);
+  // The CLI filters metrics to a rolling window from the real clock, so this row's
+  // timestamp must be relative -- a fixed date ages out of the window and the test rots.
+  const recentTs = new Date(Date.now() - 3_600_000).toISOString();
   writeFileSync(
     join(routerDir, 'metrics.jsonl'),
     Array.from({ length: 5 }, (_, index) => JSON.stringify({
-      ts: '2026-07-31T12:00:00.000Z', task_id: `task-${index}`, run_id: 'run-001', attempt_number: 1,
+      ts: recentTs, task_id: `task-${index}`, run_id: 'run-001', attempt_number: 1,
       model: 'gpt-5', executor: 'codex', tier: 'strong', effort: 'high', conflict: false, commands_run: 1,
       exit_class: 'ok', verifier_result: 'PASSED', first_pass: true, tokens_input: 100, tokens_output: 10,
       cost_usd: null, wall_seconds: 10, escalated: false, env_error: false,
