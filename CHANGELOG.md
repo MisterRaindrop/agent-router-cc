@@ -10,9 +10,33 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ### Added
 
+- **The design flow for large features** (opt-in, always the user's call): `/router:design`
+  clarifies one question at a time interleaved with code research, then drafts a
+  `DESIGN.md` (why/what/non-goals/approach/alternatives-rejected/risks/acceptance) confirmed
+  **section by section**; `/router:design-review` gets an independent-model adversarial pass
+  on the Design where **every objection is adjudicated by the user** (accept/reject/discuss,
+  recorded in `DECISIONS.md`, output in the user's conversation language, nothing ever
+  auto-applied); `/router:plan` turns the approved Design into a `PLAN.md` carrying the task
+  breakdown, verification matrix and rollout, approved as a summary. Stage state lives in
+  the two documents' frontmatter; a Design revision drops the Plan back to draft.
 - Project logo (`docs/assets/logo.svg`) and a restructured bilingual README with
   badges, a measured-savings section, model-selection and gate tables, and condensed
-  `/router:spec` / `/router:review` rule summaries.
+  review rule summaries.
+
+### Changed
+
+- `/router:go` gains a second entry mode: with an approved `PLAN.md` it executes the
+  breakdown **verbatim** (numeric caps filled at dispatch) and skips the package-list
+  confirmation -- that list was approved at `/router:plan`. Without one, behaviour is
+  unchanged.
+- `/router:review` and the assurance references now name the Design (risk tier, Must NOT,
+  acceptance criteria) and the Plan (verification matrix, scope) as the bar they check
+  against; `level: spec` findings return to `/router:design` / `/router:plan`.
+
+### Deprecated
+
+- `/router:spec` -- replaced by the design flow above. The command now only prints the
+  migration pointer; existing frozen `PLAN.md` files remain valid inputs to `/router:go`.
 - Community standards: `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`,
   `CODE_OF_CONDUCT.md`, `ROADMAP.md`, issue/PR templates, and Dependabot config.
 - CI: node 18/20 smoke jobs on the committed bundle, alongside the full node 22 check.

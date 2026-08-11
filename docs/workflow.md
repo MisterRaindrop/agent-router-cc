@@ -13,13 +13,22 @@ being lazy or wrong, so "is this right" is never delegated, and never compressed
 ## The shape of a run
 
 ```
-plan with Opus  ->  /router:spec (optional)  ->  /router:go  ->  /router:review (optional)
-                    adversarial review of         packages, dispatch,   independent, strict
-                    the plan; fixes the bar       gate, review, land    review of landed code
+everyday task:   plan with Opus in conversation  ->  /router:go  ->  /router:review (optional)
+                                                     packages, dispatch,    independent, strict
+                                                     gate, review, land     review of landed code
+
+large feature (opt-in -- the user's call, never router's):
+  /router:design  ->  /router:design-review (opt.)  ->  /router:plan  ->  /router:go  ->  /router:review (opt.)
+  clarify + code      independent adversarial pass;     the how: task     executes the
+  research; DESIGN.md  every objection adjudicated      breakdown, deps,  approved plan
+  approved section     by the user, none auto-applied   verification;     verbatim
+  by section                                            approved as summary
 ```
 
 `/router:go` pauses at exactly three points: confirm the package list, handle whatever needs
-real judgment, and approve before anything merges. Nothing lands without you.
+real judgment, and approve before anything merges. Nothing lands without you. (When `go`
+executes a Plan approved via the design flow, the package-list pause is skipped -- that list
+was approved at `/router:plan`; the other two pauses remain.)
 
 ## 1. One plan, one `plan_id`
 
@@ -258,7 +267,7 @@ pattern the project already uses.
   gate.yaml                     # the real gate: mode + commands (you confirm it once)
   models.yaml                   # optional tier overrides; `router models` shows the result
   metrics.jsonl                 # append-only: one row per run, plus orchestrator rows
-  plans/<plan_id>/              # PLAN.md, critique-<round>.md, DECISIONS.md, spec.lock
+  plans/<plan_id>/              # DESIGN.md, PLAN.md, critique-<round>.md, DECISIONS.md, spec.lock
   tasks/<id>/
     task.yaml                   # the machine contract (scope, tier, risk, verify, depends_on)
     TASK_CONTRACT.md            # the seven faces, for the executor to read

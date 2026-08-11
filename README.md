@@ -87,12 +87,21 @@ To update later: `/plugin marketplace update agent-router-cc`, update **router**
 ## 📐 The shape of a run
 
 ```
-plan with Opus  →  /router:spec (optional)  →  /router:go  →  /router:review (optional)
-                   adversarial review of        packages, dispatch,   independent, strict
-                   the plan; fixes the bar      gate, review, land    review of landed code
+everyday task:   plan with Opus in conversation  →  /router:go  →  /router:review (optional)
+                                                    packages, dispatch,    independent, strict
+                                                    gate, review, land     review of landed code
+
+large feature (opt-in, YOUR call — router never judges task size):
+  /router:design        →  /router:design-review (opt.)  →  /router:plan       →  /router:go
+  clarify + research;      independent adversarial pass;     the how: steps,      executes the
+  a DESIGN.md you           every objection adjudicated       task breakdown,      approved plan
+  approve section           by you, nothing auto-applied      verification;        verbatim
+  by section                                                  you approve
 ```
 
-`/router:go` pauses at exactly **three points** — nothing happens without you:
+`/router:go` pauses at exactly **three points** — nothing happens without you (when it
+executes a Plan approved via the design flow, the breakdown confirmation is skipped: you
+already approved that list at `/router:plan`):
 
 1. **Confirm the task breakdown.** Every package is shown with its file scope and target
    model before anything runs.
@@ -181,22 +190,28 @@ cheap model cannot fake:
   branch. A gate that fails is re-run on the pre-merge head, so a project that was already
   red doesn't get blamed on the change.
 
-## ⚔️ `/router:spec` — adversarial plan review
+## ⚔️ The design flow — two documents, approved in order
 
-Before code is written, an **independent model** (non-Claude preferred) attacks the plan
-itself — is the approach right, what risks are hidden, is there a simpler path. Its rules:
+For a large feature — cross-module work, real approach trade-offs — the user opts in with
+`/router:design`. Exactly **two documents**, each yours to approve:
 
-- **You never review your own plan** — independence catches the blind spots a self-review shares.
-- **The critique is printed verbatim; the human is the only judge.** No auto-convergence —
-  you decide how many rounds.
-- **Runs in the background, full output to a file, truncation guarded** — a half critique
-  is never presented as complete.
-- **Across rounds the reviewer session is resumed**, sent only what changed — it remembers
-  its prior objections and checks whether you actually addressed them.
-- **Risk only escalates; unverifiable failure modes stay `unverified`** — never dressed up
-  as a pass; new dependencies are never silently installed.
-- **The product is a machine contract, not prose**: risk tier → `risk:`, Must NOT →
-  `invariants:`, each Verification Matrix row → the gate that proves it.
+- **`/router:design` → `DESIGN.md`** (why / what / what NOT / chosen approach / risks /
+  acceptance criteria). One clarifying question at a time, interleaved with **code
+  research** (symbol index, `file:line` evidence); 2–3 approaches with trade-offs and the
+  rejected ones recorded; then the document is drafted **section by section**, each section
+  confirmed by you before the next is written. No document is generated while the
+  conversation is still open — that is where models start guessing.
+- **`/router:design-review`** (optional, any rounds) — an **independent model** attacks the
+  Design: critique printed verbatim, written in your conversation language, every objection
+  carrying a `confidence`, uncertainty phrased as questions rather than assertions, and the
+  reviewer must read *Alternatives considered* so it never re-proposes a road you already
+  closed. **Each objection is adjudicated by you** — accept / reject / discuss, recorded in
+  `DECISIONS.md`; nothing touches the document before your verdict. Runs in the background,
+  truncation-guarded, session resumed across rounds.
+- **`/router:plan` → `PLAN.md`** (how: steps, task breakdown, dependencies, verification
+  matrix, rollout) — derived only from an approved Design and bound to its revision: a
+  Design revision drops the Plan back to draft. You approve a summary; `/router:go` then
+  executes it verbatim. Everyday tasks skip all of this and use `/router:go` directly.
 
 ## 🔍 `/router:review` — the last gate after green
 
@@ -220,8 +235,10 @@ go to lint/CI, not to the LLM.
 
 | command | what it does |
 |---|---|
-| `/router:go` | **top-level** — execute the plan you just agreed on; drives everything below |
-| `/router:spec` | adversarial second opinion on the plan, before any code |
+| `/router:go` | **top-level** — execute the plan you just agreed on (or an approved `PLAN.md`, verbatim); drives everything below |
+| `/router:design` | opt-in for large features — clarify, research, draft a `DESIGN.md` you approve section by section |
+| `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied |
+| `/router:plan` | turn the approved Design into `PLAN.md` — steps, task breakdown, verification; you approve |
 | `/router:review` | strict, independent two-lens review of the landed code |
 | `/router:dispatch <id...>` | run tasks on quota-picked executors, concurrently, to gated diffs |
 | `/router:resume <id>` | send a failure back to that task's own executor session |

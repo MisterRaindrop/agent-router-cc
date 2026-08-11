@@ -59,10 +59,12 @@ is a separate, shorter call, so it is less likely to hit the cap than one giant 
 
 Before reviewing, establish what you are reviewing (see the Preflight section of
 `${CLAUDE_PLUGIN_ROOT}/references/report-template.md`): the `base_sha`/`head_sha` of the
-landed diff; whether the diff is within the spec's declared scope; whether the spec was
-approved; and whether the code changed again after the last verification run (if so, prior
-evidence is stale). **If scope drifted or the spec was never approved, stop and return to
-`/router:spec`** -- do not review against a spec that no longer matches the code.
+landed diff; whether the diff is within the declared scope; whether the bar this change is
+judged against was approved by the user (the Design/Plan for work that went through the
+design flow, the plan agreed at `/router:go` otherwise); and whether the code changed again
+after the last verification run (if so, prior evidence is stale). **If scope drifted or the
+bar was never approved, stop and return to `/router:design` / `/router:plan`** -- do not
+review against a bar that no longer matches the code.
 
 **Start from router's own record rather than from scratch.** For each package `/router:go`
 landed, `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" result <id> --json` returns the run
@@ -76,7 +78,7 @@ where this review must start:
   header (`delivery_header: missing`, `delivery.header_error`) is a **contract violation** --
   investigate that before the code, and never read it as "probably fine".
 - **`risk` and `risk_raised_by`** -- the *effective* risk after the CLI's one-way escalation.
-  Review at that level or higher and **never below it**; the tier in the spec is a floor, not a
+  Review at that level or higher and **never below it**; the tier the plan declared is a floor, not a
   ceiling. `risk_raised_by` names the deterministic signal that lifted it (changed-line count, a
   diff touching a path the contract declared invariant, a change spread across several top-level
   directories). Treat a named signal as a **lead to check**, never as a finding on its own.
@@ -137,12 +139,13 @@ extra independence):
 - Readability/naming; consistency with THIS project's conventions (not your taste);
   comments explain *why*; security and resource lifetime; obvious performance regressions.
 
-## Phase 3 -- Assurance (run the spec's Verification Matrix)
+## Phase 3 -- Assurance (run the Plan's Verification Matrix)
 
-Judge not just the code but whether it was actually PROVEN. Work through the spec's
-Verification Matrix (see `${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`), running the
-items you genuinely can here: the full test suite; the spec->test mapping (does a test
-exist for each required scenario?); test validity (would each fail if its bug returned --
+Judge not just the code but whether it was actually PROVEN. Work through the Verification
+Matrix the Plan declared -- or the contract's own, for work that never had a Plan (see
+`${CLAUDE_PLUGIN_ROOT}/references/assurance-core.md`) -- running the
+items you genuinely can here: the full test suite; the criteria->test mapping (does a test
+exist for each required scenario from the acceptance criteria?); test validity (would each fail if its bug returned --
 not hollow/tautological); Must NOT not violated; and, for a bug fix, the RED baseline (the
 regression test fails against the OLD code). **Honesty rules from assurance-core apply:** a
 tool that will not run here (e.g. C++ coverage/mutation needing a Docker-only compile db) is
@@ -190,7 +193,9 @@ Verification Matrix against the final code** (prior evidence is now stale), then
 the same reviewer session** to confirm each blocking finding is genuinely resolved --
 verify against the new code, never on a "fixed it" claim. Repeat until the user is satisfied.
 
-If a finding is `level: spec` (the spec itself is wrong -- e.g. an acceptance criterion is
-incorrect), **do not quietly change the bar in review**: stop, return to `/router:spec`,
-record a Spec Revision (visible), have the user re-approve, then re-implement and re-review.
-The acceptance criteria are never weakened inside review to make a change pass.
+If a finding is `level: spec` (the bar itself is wrong -- e.g. a Design acceptance
+criterion is incorrect, or a Plan verification row proves the wrong thing), **do not
+quietly change the bar in review**: stop, return to `/router:design` (or `/router:plan`
+when only the how is wrong), record the revision in the document's Revision Log -- a bumped
+Design revision drops the Plan back to draft -- have the user re-approve, then re-implement
+and re-review. The acceptance criteria are never weakened inside review to make a change pass.

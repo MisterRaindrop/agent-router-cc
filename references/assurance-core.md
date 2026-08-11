@@ -1,6 +1,8 @@
-# Assurance core (shared by /router:spec and /router:review)
+# Assurance core (shared by the design flow and /router:review)
 
-Shared vocabulary and rules. `spec` uses these to define *what must be proven*; `review`
+Shared vocabulary and rules. The design flow uses these to define *what must be proven* --
+risk tier and Must NOT at `/router:design`, the Verification Matrix at `/router:plan`
+(`/router:go` sets the same bar in the contract for work that skips the flow); `review`
 uses them to judge *whether it was proven*. Load only the parts a given task needs.
 
 ## Risk tiers
@@ -38,10 +40,10 @@ These are prohibited, in both authoring tests (go) and judging them (review):
 - Do not mark a check `pass` that you did not actually run.
 - A tool that failed to start, or a run that collected zero tests, is `unverified` or a
   tooling `fail` — it is NEVER a passing test run, and never a mutation "kill".
-- If the spec is wrong, stop and revise the spec (with a visible Revision Log entry) — do
-  not edit tests to match a wrong implementation.
+- If the bar is wrong, stop and revise the Design/Plan (with a visible Revision Log entry)
+  — do not edit tests to match a wrong implementation.
 
-## Failure Model (spec fills, review verifies)
+## Failure Model (the design flow fills, review verifies)
 
 | failure mode | consequence | detection | status |
 |---|---|---|---|
@@ -51,7 +53,7 @@ Every High-risk failure mode needs a check that can actually surface it. If no a
 check can, mark it `unverified` — do not substitute an ordinary unit test that cannot see
 the failure.
 
-## Verification Matrix (spec fills, review executes/checks)
+## Verification Matrix (the Plan fills, review executes/checks)
 
 | scenario / risk | verification layer | necessity |
 |---|---|---|
