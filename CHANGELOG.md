@@ -8,6 +8,14 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-11
+
+Version bump note: `0.8.4` was bumped in-manifest during dependency updates but its
+content was never released as a distinct set of commands; everything since `0.8.3`
+ships here. The bump to `0.8.5` exists so version-comparing plugin updaters actually
+reinstall -- the design-flow change below altered command content under an unchanged
+version, which left already-updated installs stuck on the old command set.
+
 ### Added
 
 - **The design flow for large features** (opt-in, always the user's call): `/router:design`
@@ -111,7 +119,8 @@ plugin sees an update at all.
   exclusive-lock verification queue, environment-free gates on the diff); the main
   session owns every judgment, including the pass/fail verdict.
 
-[Unreleased]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.3...v0.8.5
 [0.8.3]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.0...v0.8.1
