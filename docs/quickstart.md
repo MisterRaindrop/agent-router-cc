@@ -21,6 +21,13 @@ Plan the change with Opus in normal conversation, then:
 /router:go
 ```
 
+(For a **large feature** — cross-module work, real approach trade-offs — you can opt into
+the design flow first: `/router:design` clarifies and researches, producing a `DESIGN.md`
+you approve section by section; `/router:design-review` optionally gets an independent
+adversarial second opinion where you adjudicate every objection; `/router:plan` turns the
+approved Design into a `PLAN.md` with the task breakdown, which `/router:go` then executes
+verbatim. Whether a change deserves that is your call — router never judges task size.)
+
 Opus decomposes the plan you agreed on into tasks and drives them, pausing at three
 points:
 

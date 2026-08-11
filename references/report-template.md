@@ -7,8 +7,8 @@ Fixed output shape for the final review report. Print findings verbatim; the use
 State up front:
 - `base_sha` / `head_sha` under review (the diff `/router:go` landed), and each package's
   `merge_commit` when there was more than one.
-- Is the diff within the spec's declared scope? (note any drift)
-- Was the spec approved by the user?
+- Is the diff within the declared scope? (note any drift)
+- Was the bar approved by the user (the Design/Plan, or the plan agreed at `/router:go`)?
 - Did the code change again after the last verification run? (if yes, prior evidence is stale)
 
 Then, per landed package, from `router result <id> --json` — what is already established
@@ -22,12 +22,12 @@ gates:          <which verifier checks ran, and their results>
 real gate:      pass | fail | pre-existing failure | never ran   -> <log path>
 ```
 
-`escalate_review: true` or an effective risk above the spec's tier **raises** the depth of this
+`escalate_review: true` or an effective risk above the declared tier **raises** the depth of this
 review; nothing lowers it. A missing delivery header, `scope_drift: true`, or a package the gate
 never ran on is a Phase 1 finding in its own right.
 
-If scope drifted or the spec was never approved, stop and return to `/router:spec` rather
-than reviewing against a spec that no longer matches the code.
+If scope drifted or the bar was never approved, stop and return to `/router:design` /
+`/router:plan` rather than reviewing against a bar that no longer matches the code.
 
 ## Finding shape
 
@@ -45,8 +45,9 @@ Emit each finding as:
   confidence: high | medium | low }
 ```
 
-`level: spec` means the spec itself is wrong — that returns to `/router:spec`, it is not
-fixed silently in review.
+`level: spec` means the bar itself is wrong (a Design acceptance criterion, or a Plan
+verification row that proves the wrong thing) — that returns to `/router:design` /
+`/router:plan`, it is not fixed silently in review.
 
 ## Evidence block
 

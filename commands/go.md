@@ -6,6 +6,25 @@ The user has finished planning WITH YOU in this conversation and now wants route
 execute. Do NOT re-plan from scratch or shell a separate planner -- YOU decompose the
 plan you both just agreed on, using the full context you already have.
 
+**Two entry modes -- check for an approved Plan FIRST.** If this feature went through the
+design flow (`/router:design` -> `/router:plan`), `.router/plans/<plan_id>/PLAN.md` exists.
+Read its frontmatter before anything else:
+- **`status: plan_approved` -> execute it verbatim.** The task breakdown was already
+  reviewed and approved at `/router:plan`, so author the packages exactly as PLAN.md lists
+  them -- fill in only the numeric caps it marked "set at dispatch" (recording them in
+  `task.yaml`), carry the plan's revision binding onto every package, and **skip
+  Touchpoint 1**: the package list was approved there, and asking again is a wasted pause.
+  Set the PLAN.md frontmatter to `status: executing`. If mid-run the code contradicts the
+  Design itself (a `CONTRACT_CONFLICT` whose evidence reaches past the contract into the
+  approach), stop and take it back to `/router:design` -- a bumped design revision drops
+  the Plan to draft, and packages bound to the old revision are refused by the existing
+  `plan_revision` machinery.
+- **Any other status** (`plan_draft`, or a `design_revision` older than the Design's
+  current revision) -> refuse, and point to the stage that must finish first.
+- **No PLAN.md** -> proceed below unchanged: YOU decompose. This stays the normal path for
+  everyday tasks that never needed a Design -- whether a change deserves the design flow is
+  the user's call, never router's.
+
 **Division of labor.** The **router CLI** owns only the mechanism it alone can provide:
 isolated `git worktree`s, process supervision (one executor or several at once), and fast
 *environment-free* gates on the diff (it applies cleanly, stays within `allowed_globs`,
@@ -143,7 +162,9 @@ Therefore:
    its risk, whether it carries a deterministic `verify`, which packages you intend to run
    concurrently, and the note that each carries its own tests -- plus any unclear work. Then
    wait for their go-ahead. (In plan mode this gate is the `ExitPlanMode` approval above --
-   one approval exits plan mode AND authorizes execution; do not double-ask.)
+   one approval exits plan mode AND authorizes execution; do not double-ask. When executing
+   an approved `PLAN.md`, skip this touchpoint entirely -- see the Approved-Plan gate at the
+   top.)
 
 2. **Dispatch. Run independent packages CONCURRENTLY, in ONE call.**
    `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" dispatch <id> [<id> ...] [--max-parallel <n>] --json`
@@ -271,4 +292,8 @@ broad, silently disabling an optimization the tests could not see. The floor cat
 broken"; the strict review catches "is it right". Keep them as two stages so the user gets to
 confirm direction between them.
 
-Optional first bookend: run `/router:spec` **before** `go` to adversarially review the plan.
+Optional first bookend: for a large feature, the design flow -- `/router:design` (clarify,
+research, draft the Design section by section), `/router:design-review` (independent
+adversarial pass, every objection adjudicated by the user), then `/router:plan` (the
+implementation plan and task breakdown) -- fixes the approach AND the package list before
+`go` ever runs.
