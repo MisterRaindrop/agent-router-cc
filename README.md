@@ -10,7 +10,7 @@
 
   <p>
     <a href="https://github.com/MisterRaindrop/agent-router-cc/actions/workflows/ci.yml"><img src="https://github.com/MisterRaindrop/agent-router-cc/actions/workflows/ci.yml/badge.svg" alt="ci"/></a>
-    <a href="https://github.com/MisterRaindrop/agent-router-cc/releases"><img src="https://img.shields.io/badge/version-0.8.3-e8a33d" alt="version 0.8.3"/></a>
+    <a href="https://github.com/MisterRaindrop/agent-router-cc/releases"><img src="https://img.shields.io/github/package-json/v/MisterRaindrop/agent-router-cc?label=version&color=e8a33d" alt="version"/></a>
     <img src="https://img.shields.io/badge/status-beta-d9635f" alt="status beta"/>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-4c7bd9" alt="license Apache-2.0"/></a>
     <img src="https://img.shields.io/badge/node-%E2%89%A5%2018-2f8f5b" alt="node >= 18"/>
