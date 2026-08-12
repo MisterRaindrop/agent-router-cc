@@ -28,6 +28,12 @@ adversarial second opinion where you adjudicate every objection; `/router:plan` 
 approved Design into a `PLAN.md` with the task breakdown, which `/router:go` then executes
 verbatim. Whether a change deserves that is your call — router never judges task size.)
 
+(**`/router:go single`** hands the whole feature to one strong executor — Opus by default,
+explicitly overridable — while your session stays free: dispatch runs detached in the
+background, the statusline shows live phase/activity/stall-countdown for every run, and
+the session is woken only at terminal states. The plan, review, and merge verdict stay
+with the main session exactly as above.)
+
 Opus decomposes the plan you agreed on into tasks and drives them, pausing at three
 points:
 

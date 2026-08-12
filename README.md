@@ -236,6 +236,7 @@ go to lint/CI, not to the LLM.
 | command | what it does |
 |---|---|
 | `/router:go` | **top-level** — execute the plan you just agreed on (or an approved `PLAN.md`, verbatim); drives everything below |
+| `/router:go single` | one strong executor (Opus by default, never silently downgraded) takes the whole feature; runs detached in the background — statusline shows live phase/activity, the session is woken at terminal states |
 | `/router:design` | opt-in for large features — clarify, research, draft a `DESIGN.md` you approve section by section |
 | `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied |
 | `/router:plan` | turn the approved Design into `PLAN.md` — steps, task breakdown, verification; you approve |

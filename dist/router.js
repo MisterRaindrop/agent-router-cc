@@ -2982,7 +2982,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve5.call(this, root, ref);
+      let _sch = resolve6.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3009,7 +3009,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve5(root, ref) {
+    function resolve6(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3640,55 +3640,55 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve5(baseURI, relativeURI, options) {
+    function resolve6(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative2, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse(serialize(base, options), options);
-        relative2 = parse(serialize(relative2, options), options);
+        relative3 = parse(serialize(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative2.scheme) {
-        target.scheme = relative2.scheme;
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-          target.userinfo = relative2.userinfo;
-          target.host = relative2.host;
-          target.port = relative2.port;
-          target.path = removeDotSegments(relative2.path || "");
-          target.query = relative2.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative2.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative2.query !== void 0) {
-              target.query = relative2.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative2.path[0] === "/") {
-              target.path = removeDotSegments(relative2.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative2.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative2.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative2.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3696,7 +3696,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative2.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -3898,7 +3898,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve5,
+      resolve: resolve6,
       resolveComponent,
       equal,
       serialize,
@@ -6638,10 +6638,10 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, rmdirSync, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync14, rmdirSync, writeFileSync as writeFileSync5 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, join as join11, resolve as resolve5 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -9378,8 +9378,8 @@ function writeFlowMapping(state, level, node) {
     if (explicitPair) pairBuffer += "? ";
     else if (state.quoteFlowKeys) pairBuffer += '"';
     const valueText = writeNode(state, level, value, {});
-    const sep = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep}${valueText}`;
+    const sep2 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep2}${valueText}`;
     result2 += pairBuffer;
   }
   const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
@@ -9476,8 +9476,8 @@ function writeNode(state, level, node, ctx) {
       if (anchor !== null) props.push(anchor);
       if (tag !== null) props.push(tag);
     }
-    const sep = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    body = `${props.join(" ")}${sep}${body}`;
+    const sep2 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    body = `${props.join(" ")}${sep2}${body}`;
   }
   return body;
 }
@@ -9522,8 +9522,8 @@ function present(documents, options) {
         block: true,
         compact: true
       });
-      const sep = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result2 += `---${sep}${body}
+      const sep2 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result2 += `---${sep2}${body}
 `;
     } else result2 += writeNode(state, 0, doc.contents, {
       block: true,
@@ -9578,7 +9578,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.8.4" : "0.0.0-dev";
+var VERSION = true ? "0.9.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9880,6 +9880,7 @@ function routerPaths(routerDir) {
     taskContext: (id) => join2(taskDir(id), "TASK_CONTEXT.md"),
     runsDir: (id) => join2(taskDir(id), "runs"),
     heartbeat: (id, run) => join2(runDir(id, run), "heartbeat"),
+    runStatus: (id, run) => join2(runDir(id, run), "status.json"),
     resultJson: (id, run) => join2(runDir(id, run), "result.json"),
     diffPatch: (id, run) => join2(runDir(id, run), "diff.patch"),
     delivery: (id, run) => join2(runDir(id, run), "DELIVERY.md"),
@@ -9946,7 +9947,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync7, readFileSync as readFileSync7, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync8, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join7 } from "node:path";
 
@@ -10278,7 +10279,7 @@ function superviseWorker(spec) {
   const heartbeatIntervalMs = spec.heartbeatIntervalMs ?? 2e4;
   const pollIntervalMs = spec.pollIntervalMs ?? 1e3;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 1e4;
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     mkdirSync3(dirname4(spec.logPath), { recursive: true });
     mkdirSync3(dirname4(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
@@ -10316,7 +10317,7 @@ function superviseWorker(spec) {
         exitCode: o.rc,
         signal: o.signal
       });
-      resolve5({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
+      resolve6({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
     };
     child.on("error", (err2) => {
       finish({ rc: null, signal: null, timedOut: false, stalled: false, spawnError: err2.message });
@@ -10970,9 +10971,281 @@ function loadTask(paths, id) {
   return { task: r.value, taskYamlText, contractMdText };
 }
 
+// src/app/runStatus.ts
+import { readFileSync as readFileSync6 } from "node:fs";
+import { basename, isAbsolute, relative, resolve as resolve2, sep } from "node:path";
+var ACTIVITY_THROTTLE_MS = 2e3;
+var LOG_POLL_MS = 250;
+var SUBCOMMAND_PROGRAMS = /* @__PURE__ */ new Set([
+  "cargo",
+  "docker",
+  "git",
+  "gh",
+  "glab",
+  "go",
+  "npm",
+  "npx",
+  "pnpm",
+  "router",
+  "rustup",
+  "swift",
+  "yarn"
+]);
+var TIMING_KEY = {
+  worktree: "t_worktree",
+  executor_starting: "t_launch",
+  executor_working: "t_exec",
+  gating: "t_gate",
+  verify: "t_verify"
+};
+var RunStatusWriter = class {
+  path;
+  worktreeDir;
+  clock;
+  activityThrottleMs;
+  logPollMs;
+  onWrite;
+  durationsMs = {
+    t_worktree: 0,
+    t_launch: 0,
+    t_exec: 0,
+    t_gate: 0,
+    t_verify: 0
+  };
+  status;
+  phaseStartedMonoMs;
+  lastActivityWriteMonoMs = null;
+  pendingActivity = false;
+  stallMs = null;
+  logPath = null;
+  logKind = null;
+  logCharsRead = 0;
+  logTimer = null;
+  terminalWritten = false;
+  constructor(opts) {
+    this.path = opts.path;
+    this.worktreeDir = resolve2(opts.worktreeDir);
+    this.clock = opts.clock;
+    this.activityThrottleMs = opts.activityThrottleMs ?? ACTIVITY_THROTTLE_MS;
+    this.logPollMs = opts.logPollMs ?? LOG_POLL_MS;
+    this.onWrite = opts.onWrite;
+    const now = this.clock.nowIso();
+    this.phaseStartedMonoMs = this.clock.monotonicMs();
+    this.status = {
+      phase: "queued",
+      started_at: now,
+      phase_started_at: now,
+      budget_minutes: opts.budgetMinutes,
+      last_output_at: null,
+      stall_deadline: null
+    };
+    this.write();
+  }
+  transition(phase, stallMs) {
+    if (this.terminalWritten) return;
+    this.accountCurrentPhase();
+    const now = this.clock.nowIso();
+    this.status = {
+      phase,
+      started_at: this.status.started_at,
+      phase_started_at: now,
+      budget_minutes: this.status.budget_minutes,
+      last_output_at: null,
+      stall_deadline: phase === "executor_starting" || phase === "executor_working" ? deadline(now, stallMs ?? this.stallMs) : null,
+      ...this.status.recent_action !== void 0 ? { recent_action: this.status.recent_action } : {}
+    };
+    this.phaseStartedMonoMs = this.clock.monotonicMs();
+    this.pendingActivity = false;
+    this.stallMs = stallMs ?? this.stallMs;
+    this.write();
+  }
+  executorStarting(stallMs) {
+    this.stopLogTail();
+    this.stallMs = stallMs;
+    this.transition("executor_starting", stallMs);
+  }
+  executorWorking(logPath, kind, initialLogChars = 0) {
+    this.transition("executor_working", this.stallMs ?? void 0);
+    this.logPath = logPath;
+    this.logKind = kind;
+    this.logCharsRead = initialLogChars;
+    this.pollLog();
+    this.logTimer = setInterval(() => this.pollLog(), this.logPollMs);
+    this.logTimer.unref();
+  }
+  finishExecutor() {
+    this.pollLog();
+    this.stopLogTail();
+  }
+  /** Record a complete executor stream line. Exposed so redaction/throttling are unit-testable. */
+  noteOutput(line, kind) {
+    if (this.terminalWritten || this.status.phase !== "executor_working") return;
+    const now = this.clock.nowIso();
+    this.status.last_output_at = now;
+    this.status.stall_deadline = deadline(now, this.stallMs);
+    if (kind === "claude") {
+      const action = recentClaudeAction(line, this.worktreeDir);
+      if (action !== void 0) this.status.recent_action = action;
+    }
+    this.pendingActivity = true;
+    const monoNow = this.clock.monotonicMs();
+    if (this.lastActivityWriteMonoMs === null || monoNow - this.lastActivityWriteMonoMs >= this.activityThrottleMs) {
+      this.writeActivity(monoNow);
+    }
+  }
+  terminal(terminalState) {
+    if (!this.terminalWritten) {
+      this.finishExecutor();
+      this.accountCurrentPhase();
+      this.status.stall_deadline = null;
+      this.status.terminal_state = terminalState;
+      this.terminalWritten = true;
+      this.pendingActivity = false;
+      this.write();
+    } else if (this.status.terminal_state !== terminalState) {
+      this.status.terminal_state = terminalState;
+      this.write();
+    }
+    return this.timings();
+  }
+  timings() {
+    return {
+      t_worktree: seconds(this.durationsMs.t_worktree),
+      t_launch: seconds(this.durationsMs.t_launch),
+      t_exec: seconds(this.durationsMs.t_exec),
+      t_gate: seconds(this.durationsMs.t_gate),
+      t_verify: seconds(this.durationsMs.t_verify)
+    };
+  }
+  accountCurrentPhase() {
+    const key = TIMING_KEY[this.status.phase];
+    const now = this.clock.monotonicMs();
+    if (key !== void 0) this.durationsMs[key] += Math.max(0, now - this.phaseStartedMonoMs);
+    this.phaseStartedMonoMs = now;
+  }
+  writeActivity(monoNow) {
+    if (!this.pendingActivity) return;
+    this.write();
+    this.pendingActivity = false;
+    this.lastActivityWriteMonoMs = monoNow;
+  }
+  pollLog() {
+    this.flushActivityIfDue();
+    if (this.logPath === null || this.logKind === null) return;
+    let text2;
+    try {
+      text2 = readFileSync6(this.logPath, "utf8");
+    } catch {
+      return;
+    }
+    if (text2.length < this.logCharsRead) this.logCharsRead = 0;
+    const appended = text2.slice(this.logCharsRead);
+    const lastNewline = appended.lastIndexOf("\n");
+    if (lastNewline < 0) return;
+    this.logCharsRead += lastNewline + 1;
+    for (const line of appended.slice(0, lastNewline).split("\n")) {
+      if (line.trim() !== "") this.noteOutput(line, this.logKind);
+    }
+  }
+  flushActivityIfDue() {
+    if (!this.pendingActivity || this.lastActivityWriteMonoMs === null) return;
+    const monoNow = this.clock.monotonicMs();
+    if (monoNow - this.lastActivityWriteMonoMs >= this.activityThrottleMs) {
+      this.writeActivity(monoNow);
+    }
+  }
+  stopLogTail() {
+    if (this.logTimer !== null) clearInterval(this.logTimer);
+    this.logTimer = null;
+    this.logPath = null;
+    this.logKind = null;
+    this.logCharsRead = 0;
+  }
+  write() {
+    writeJsonAtomic(this.path, this.status);
+    this.onWrite?.({ ...this.status });
+  }
+};
+function terminalStateFor(exitClass, verifierPassed) {
+  if (exitClass === "stalled") return "stalled";
+  if (exitClass === "timeout") return "timed_out";
+  if (exitClass === "killed") return "cancelled";
+  return exitClass === "ok" && verifierPassed ? "succeeded" : "failed";
+}
+function recentClaudeAction(line, worktreeDir) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return void 0;
+  }
+  const tools = [];
+  collectToolUses(event, tools);
+  let recent;
+  for (const tool of tools) {
+    const name = tool.name;
+    const input = isRecord(tool.input) ? tool.input : {};
+    if (name === "Read" || name === "Edit" || name === "Write") {
+      const rawPath = typeof input.file_path === "string" ? input.file_path : input.path;
+      if (typeof rawPath !== "string") continue;
+      const repoPath = repoRelativePath(rawPath, worktreeDir);
+      if (repoPath !== void 0) recent = `${name}: ${repoPath}`;
+    } else if (name === "Bash" && typeof input.command === "string") {
+      const tokens = bashTokens(input.command);
+      recent = tokens.length === 0 ? "Bash:" : `Bash: ${tokens.join(" ")}`;
+    }
+  }
+  return recent;
+}
+function collectToolUses(value, found) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectToolUses(item, found);
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (value.type === "tool_use" && typeof value.name === "string") found.push(value);
+  for (const child of Object.values(value)) collectToolUses(child, found);
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function repoRelativePath(rawPath, worktreeDir) {
+  const root = resolve2(worktreeDir);
+  const absolute = isAbsolute(rawPath) ? resolve2(rawPath) : resolve2(root, rawPath);
+  const rel = relative(root, absolute);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return void 0;
+  return rel.split(sep).join("/");
+}
+function bashTokens(command) {
+  const raw = command.trim().split(/\s+/u).filter(Boolean);
+  const programAt = raw.findIndex((token) => !token.includes("=") && !isShellOperator(token));
+  if (programAt < 0) return [];
+  const program = raw[programAt];
+  if (!safeToken(program)) return [];
+  const tokens = [program];
+  const subcommand = raw[programAt + 1];
+  if (subcommand !== void 0 && SUBCOMMAND_PROGRAMS.has(basename(program)) && !subcommand.startsWith("-") && safeToken(subcommand) && !isShellOperator(subcommand)) {
+    tokens.push(subcommand);
+  }
+  return tokens;
+}
+function safeToken(token) {
+  return /^[A-Za-z0-9_./:@%+,-]+$/u.test(token) && !token.includes("=");
+}
+function isShellOperator(token) {
+  return token === "&&" || token === "||" || token === ";" || token === "|" || token === ">" || token === "<";
+}
+function deadline(nowIso, durationMs) {
+  if (durationMs == null) return null;
+  return new Date(Date.parse(nowIso) + durationMs).toISOString();
+}
+function seconds(ms) {
+  return Math.round(ms) / 1e3;
+}
+
 // src/app/taskContext.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync7 } from "node:fs";
 var TASK_CONTEXT_SOFT_LIMIT = 8e3;
 function contextError(taskId, message) {
   return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
@@ -10980,7 +11253,7 @@ function contextError(taskId, message) {
 function loadTaskContext(paths, task) {
   const path = paths.taskContext(task.id);
   if (!existsSync6(path)) return null;
-  const text2 = readFileSync6(path, "utf8");
+  const text2 = readFileSync7(path, "utf8");
   const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
   if (frontmatter === null) {
     throw contextError(task.id, "missing YAML frontmatter (expected a leading --- fenced block)");
@@ -11295,33 +11568,46 @@ function workerRecord(used, model) {
 }
 function prepareRun(deps, id) {
   const { paths } = deps;
-  const baseSha = resolveCommit(paths.repoRoot, "HEAD");
   const { task, contractMdText } = loadTask(paths, id);
-  const context = loadTaskContext(paths, task);
-  if (context !== null && context.base_sha !== baseSha) {
-    throw new Error(
-      `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", but dispatch base is "${baseSha}"; regenerate the task context for this revision`
-    );
-  }
-  const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
   const worktreeDir = paths.worktree(id, RUN);
-  const branch = runBranch(id, RUN);
-  worktreeRemove(paths.repoRoot, worktreeDir);
-  deleteBranch(paths.repoRoot, branch);
-  worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
-  return {
-    id,
-    task,
-    contractMdText,
+  const status = new RunStatusWriter({
+    path: paths.runStatus(id, RUN),
     worktreeDir,
-    branch,
-    baseSha,
-    context,
-    workers,
-    logPath: paths.workerLog(id, RUN)
-  };
+    budgetMinutes: task.max_wall_minutes,
+    clock: deps.clock
+  });
+  try {
+    status.transition("worktree");
+    const baseSha = resolveCommit(paths.repoRoot, "HEAD");
+    const context = loadTaskContext(paths, task);
+    if (context !== null && context.base_sha !== baseSha) {
+      throw new Error(
+        `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", but dispatch base is "${baseSha}"; regenerate the task context for this revision`
+      );
+    }
+    const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
+    const branch = runBranch(id, RUN);
+    worktreeRemove(paths.repoRoot, worktreeDir);
+    deleteBranch(paths.repoRoot, branch);
+    worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
+    return {
+      id,
+      task,
+      contractMdText,
+      worktreeDir,
+      branch,
+      baseSha,
+      context,
+      workers,
+      logPath: paths.workerLog(id, RUN),
+      status
+    };
+  } catch (error) {
+    status.terminal("failed");
+    throw error;
+  }
 }
-async function runPrepared(deps, prep) {
+async function runPreparedObserved(deps, prep) {
   const { paths } = deps;
   const { id, task, contractMdText, worktreeDir, baseSha, context, workers, logPath } = prep;
   if (task.mode === "probe") rmSync2(paths.diffPatch(id, RUN), { force: true });
@@ -11336,6 +11622,9 @@ async function runPrepared(deps, prep) {
     if (i > 0) writeFileSync2(logPath, "");
     const launcher2 = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+    const stallMs = (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4;
+    const initialLogChars = safeRead(logPath).length;
+    prep.status.executorStarting(stallMs);
     const o = await superviseWorker({
       argv: launcher2.buildArgv({
         task,
@@ -11350,8 +11639,10 @@ async function runPrepared(deps, prep) {
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
       maxWallMs: task.max_wall_minutes * 6e4,
-      stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4
+      stallMs,
+      onPgid: () => prep.status.executorWorking(logPath, used.kind, initialLogChars)
     });
+    prep.status.finishExecutor();
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -11372,7 +11663,10 @@ async function runPrepared(deps, prep) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const conflict = detectContractConflict(parsed.finalMessage);
   if (conflict) exitClass = "contract_conflict";
-  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${RUN}`);
+  if (exitClass === "ok") {
+    prep.status.transition("gating");
+    commitAll(worktreeDir, `router: ${id} ${RUN}`);
+  }
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== "ok" && exitClass !== "contract_conflict" && detectModelMismatch(finalLog);
@@ -11409,6 +11703,7 @@ async function runPrepared(deps, prep) {
       writeFileSync2(paths.diffPatch(id, RUN), patch);
       result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     }
+    prep.status.transition("verify");
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
@@ -11423,9 +11718,20 @@ async function runPrepared(deps, prep) {
     });
     attachEffectiveRisk(result2, task, worktreeDir, baseSha);
   }
+  const phaseTimings = prep.status.terminal(
+    terminalStateFor(result2.exit_class, result2.verifier?.result === "PASSED")
+  );
   writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2, task, context);
+  appendMetric2(deps, result2, task, context, phaseTimings);
   return result2;
+}
+async function runPrepared(deps, prep) {
+  try {
+    return await runPreparedObserved(deps, prep);
+  } catch (error) {
+    prep.status.terminal("failed");
+    throw error;
+  }
 }
 async function dispatchTask(deps, id) {
   return runPrepared(deps, prepareRun(deps, id));
@@ -11441,7 +11747,13 @@ async function dispatchTasks(deps, ids, maxParallel) {
     if (seen.has(id)) throw new Error(`duplicate task id: ${id}`);
     seen.add(id);
   }
-  const prepared = ids.map((id) => prepareRun(deps, id));
+  const prepared = [];
+  try {
+    for (const id of ids) prepared.push(prepareRun(deps, id));
+  } catch (error) {
+    for (const prep of prepared) prep.status.terminal("cancelled");
+    throw error;
+  }
   const results = new Array(ids.length);
   const faults = [];
   const poolSize = resolvePoolSize(ids.length, maxParallel);
@@ -11553,7 +11865,7 @@ async function resumeTask(deps, id, feedback) {
 }
 function safeRead(path) {
   try {
-    return readFileSync7(path, "utf8");
+    return readFileSync8(path, "utf8");
   } catch {
     return "";
   }
@@ -11603,7 +11915,7 @@ function attachEffectiveRisk(result2, task, worktreeDir, baseSha) {
   result2.risk = assessed.risk;
   result2.risk_raised_by = assessed.raisedBy;
 }
-function appendMetric2(deps, result2, task, context) {
+function appendMetric2(deps, result2, task, context, phaseTimings) {
   const metric = {
     ts: deps.clock.nowIso(),
     task_id: result2.task_id,
@@ -11632,6 +11944,7 @@ function appendMetric2(deps, result2, task, context) {
     tokens_output: result2.tokens?.output ?? null,
     cost_usd: result2.cost_usd ?? null,
     wall_seconds: result2.wall_seconds,
+    ...phaseTimings ?? {},
     escalated: false,
     env_error: result2.env_error
   };
@@ -11639,7 +11952,7 @@ function appendMetric2(deps, result2, task, context) {
 }
 
 // src/app/gateConfig.ts
-import { lstatSync, readFileSync as readFileSync8 } from "node:fs";
+import { lstatSync, readFileSync as readFileSync9 } from "node:fs";
 import { join as join8 } from "node:path";
 var KEYS = /* @__PURE__ */ new Set([
   "mode",
@@ -11688,7 +12001,7 @@ function loadGateConfig(paths) {
   const path = gateYamlPath(paths);
   let text2;
   try {
-    text2 = readFileSync8(path, "utf8");
+    text2 = readFileSync9(path, "utf8");
   } catch (err2) {
     if (err2.code === "ENOENT") {
       try {
@@ -11767,7 +12080,7 @@ import {
   fsyncSync as fsyncSync2,
   ftruncateSync,
   openSync as openSync3,
-  readFileSync as readFileSync9,
+  readFileSync as readFileSync10,
   statSync as statSync4,
   unlinkSync as unlinkSync2,
   writeSync as writeSync2
@@ -11806,7 +12119,7 @@ function parseStored(text2) {
 function readForAcquire(path) {
   let text2;
   try {
-    text2 = readFileSync9(path, "utf8");
+    text2 = readFileSync10(path, "utf8");
   } catch (err2) {
     if (errorCode(err2) === "ENOENT") return { kind: "missing" };
     throw new Error(`cannot read lock ${path}: ${err2.message}`);
@@ -11817,7 +12130,7 @@ function readForAcquire(path) {
 }
 function readLock(path) {
   try {
-    const parsed = parseStored(readFileSync9(path, "utf8"));
+    const parsed = parseStored(readFileSync10(path, "utf8"));
     return parsed?.info ?? null;
   } catch {
     return null;
@@ -11987,7 +12300,7 @@ function acquireLock(path, opts) {
           if (!sameIdentity(identity(heartbeatFd), acquiredIdentity)) {
             throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
           }
-          const parsed = parseStored(readFileSync9(heartbeatFd, "utf8"));
+          const parsed = parseStored(readFileSync10(heartbeatFd, "utf8"));
           if (parsed === null || parsed.stored.ownerToken !== token) {
             throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
           }
@@ -12001,7 +12314,7 @@ function acquireLock(path, opts) {
         if (released) return;
         let contents;
         try {
-          contents = readFileSync9(path, "utf8");
+          contents = readFileSync10(path, "utf8");
         } catch (err2) {
           if (errorCode(err2) === "ENOENT") {
             released = true;
@@ -12389,8 +12702,8 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync12, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
-import { resolve as resolve3 } from "node:path";
+import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync13, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { resolve as resolve4 } from "node:path";
 
 // src/core/symbols.ts
 var MEMBER_NOISE = /^(TSA_GUARDED_BY|TSA_PT_GUARDED_BY|DECLARE_|__)/;
@@ -12503,11 +12816,11 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync3, readFileSync as readFileSync11, statSync as statSync6 } from "node:fs";
-import { relative, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync9, readdirSync as readdirSync3, readFileSync as readFileSync12, statSync as statSync6 } from "node:fs";
+import { relative as relative2, resolve as resolve3 } from "node:path";
 
 // src/io/treeSitter.ts
-import { existsSync as existsSync8, readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync11 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join10 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12544,9 +12857,9 @@ async function getParser() {
     ready = (async () => {
       const rt = locateRuntime();
       const mod = await import(rt.moduleHref);
-      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync10(rt.tsWasm)) });
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync11(rt.tsWasm)) });
       const parser = new mod.Parser();
-      const cpp = await mod.Language.load(new Uint8Array(readFileSync10(rt.cppWasm)));
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync11(rt.cppWasm)));
       parser.setLanguage(cpp);
       return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
     })();
@@ -12626,7 +12939,7 @@ async function parseSymbols(src) {
 var SRC_RE = /\.(cpp|h|hpp|cc|cxx|hh)$/;
 var SKIP_DIR = /* @__PURE__ */ new Set([".git", "node_modules", ".router", "dist"]);
 function hashRoots(roots) {
-  const norm = roots.map((r) => resolve2(r)).sort();
+  const norm = roots.map((r) => resolve3(r)).sort();
   return createHash3("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
 }
 function walkFiles(root, acc) {
@@ -12643,19 +12956,19 @@ function walkFiles(root, acc) {
   if (!st.isDirectory()) return;
   for (const name of readdirSync3(root)) {
     if (SKIP_DIR.has(name)) continue;
-    walkFiles(resolve2(root, name), acc);
+    walkFiles(resolve3(root, name), acc);
   }
 }
 function loadRaw(cachePath) {
   try {
-    return JSON.parse(readFileSync11(cachePath, "utf8"));
+    return JSON.parse(readFileSync12(cachePath, "utf8"));
   } catch {
     return null;
   }
 }
 async function buildIndex(roots, cachePath, repoRoot, limits) {
   const files = [];
-  for (const r of roots) walkFiles(resolve2(r), files);
+  for (const r of roots) walkFiles(resolve3(r), files);
   if (files.length > limits.maxFiles) {
     return { files: files.length, symbols: 0, reparsed: 0, degraded: { reason: `scope too large: ${files.length} files > maxFiles ${limits.maxFiles}` } };
   }
@@ -12668,7 +12981,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
   let reparsed = 0;
   let bytes = 0;
   for (const abs of files) {
-    const rel = relative(repoRoot, abs);
+    const rel = relative2(repoRoot, abs);
     const st = statSync6(abs);
     const cached = prevByFile.get(rel);
     if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
@@ -12676,7 +12989,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
       symbols += cached.symbols.length;
       continue;
     }
-    const src = readFileSync11(abs, "utf8");
+    const src = readFileSync12(abs, "utf8");
     bytes += src.length;
     if (bytes > limits.maxBytes) {
       return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
@@ -12701,7 +13014,7 @@ async function refreshIndex(cachePath, repoRoot) {
   let reparsed = 0;
   let changed = false;
   for (const f of idx.files) {
-    const abs = resolve2(repoRoot, f.file);
+    const abs = resolve3(repoRoot, f.file);
     let st;
     try {
       st = statSync6(abs);
@@ -12713,7 +13026,7 @@ async function refreshIndex(cachePath, repoRoot) {
       out2.push(f);
       continue;
     }
-    const parsed = await parseSymbols(readFileSync11(abs, "utf8"));
+    const parsed = await parseSymbols(readFileSync12(abs, "utf8"));
     grammar = parsed.grammar;
     out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
@@ -12734,7 +13047,7 @@ function loadCodeIntelConfig(paths) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
   let raw;
   try {
-    raw = load(readFileSync12(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync13(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -12764,7 +13077,7 @@ function indexEnabled(cfg) {
 }
 function rootsFor(paths, cfg, dirs) {
   const chosen = dirs.length > 0 ? dirs : cfg.index.scope;
-  return chosen.map((d) => resolve3(paths.repoRoot, d));
+  return chosen.map((d) => resolve4(paths.repoRoot, d));
 }
 async function runIndex(paths, cfg, dirs) {
   const gate2 = indexEnabled(cfg);
@@ -12785,7 +13098,7 @@ async function runQuery(paths, cfg, sub, args) {
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
   } else if (existsSync10(paths.symbolLatest)) {
-    cache2 = paths.symbolCache(readFileSync12(paths.symbolLatest, "utf8").trim());
+    cache2 = paths.symbolCache(readFileSync13(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
@@ -13069,8 +13382,8 @@ function fmtTokens(n) {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return String(n);
 }
-function fmtWall(seconds) {
-  return seconds < 60 ? `${Math.round(seconds)}s` : `${(seconds / 60).toFixed(1)}m`;
+function fmtWall(seconds2) {
+  return seconds2 < 60 ? `${Math.round(seconds2)}s` : `${(seconds2 / 60).toFixed(1)}m`;
 }
 function fmtCost(costUsd, source) {
   if (costUsd === null) return "tokens";
@@ -13527,7 +13840,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync13(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync14(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -13545,7 +13858,7 @@ var list = (ctx) => {
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync13(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync14(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
     const res = readResult(paths, id, RUN3);
@@ -13604,7 +13917,7 @@ var plans = (ctx) => {
   const rows = ids.map((id) => {
     let revision = null;
     try {
-      revision = planRevision(readFileSync13(paths.planMd(id), "utf8"));
+      revision = planRevision(readFileSync14(paths.planMd(id), "utf8"));
     } catch {
     }
     let critiqueRound = null;
@@ -13707,12 +14020,12 @@ var orchestratorUsage = (ctx) => {
 };
 var setupStatusline = (ctx) => {
   const settingsPath = flagStr(ctx.args.flags, "settings") ?? join11(homedir3(), ".claude", "settings.json");
-  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
+  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve5(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
   if (existsSync11(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync13(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync14(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }

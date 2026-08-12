@@ -30,6 +30,15 @@ real judgment, and approve before anything merges. Nothing lands without you. (W
 executes a Plan approved via the design flow, the package-list pause is skipped -- that list
 was approved at `/router:plan`; the other two pauses remain.)
 
+**`go single`** is the third entry: one strong executor (Opus by default -- a floor, never
+silently downgraded) takes the whole feature as a single package while the main session
+stays planner/reviewer. The contract is a verbatim copy of the approved PLAN.md (anchored
+by revision + sha256) or a ~40-line compact template; dispatch runs **detached** (it
+survives the session) with a listener that wakes the session at terminal states; progress
+lives in the statusline -- every run now writes a live `status.json` (phase, elapsed vs
+budget, log activity, stall countdown, a redacted `recent_action`) and per-phase timings
+into metrics. `commands/go.md` has the full single-mode protocol.
+
 ## 1. One plan, one `plan_id`
 
 Every package of a plan carries the same `plan_id`, and everything written about that plan
@@ -275,6 +284,8 @@ pattern the project already uses.
     runs/<run>/
       DELIVERY.md               # the executor's final message
       diff.patch  result.json   # the diff and the full run record
+      status.json               # live phase/activity/terminal state (observation only --
+                                #   never an input to gates, land, or any verdict)
       logs/worker.log  logs/gate.log
   worktrees/<id>/<run>/         # the isolated checkout the executor worked in
 ```
