@@ -33,6 +33,7 @@ export interface RouterPaths {
   taskContext(id: string): string;
   runsDir(id: string): string;
   heartbeat(id: string, runId: string): string;
+  runStatus(id: string, runId: string): string;
   resultJson(id: string, runId: string): string;
   diffPatch(id: string, runId: string): string;
   delivery(id: string, runId: string): string;
@@ -77,6 +78,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     taskContext: (id) => join(taskDir(id), 'TASK_CONTEXT.md'),
     runsDir: (id) => join(taskDir(id), 'runs'),
     heartbeat: (id, run) => join(runDir(id, run), 'heartbeat'),
+    runStatus: (id, run) => join(runDir(id, run), 'status.json'),
     resultJson: (id, run) => join(runDir(id, run), 'result.json'),
     diffPatch: (id, run) => join(runDir(id, run), 'diff.patch'),
     delivery: (id, run) => join(runDir(id, run), 'DELIVERY.md'),

@@ -6,7 +6,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { DeliveryHeader, ExecutorQuota, ExitClass, MetricRecord, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { DeliveryHeader, ExecutorQuota, ExitClass, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import {
   detectContractConflict,
@@ -34,6 +34,7 @@ import { superviseWorker } from '../io/supervisor.ts';
 import { makeLauncher } from './codexLauncher.ts';
 import { loadModelConfig, tierWorkers } from './modelConfig.ts';
 import { loadTask } from './taskLoad.ts';
+import { RunStatusWriter, terminalStateFor } from './runStatus.ts';
 import {
   loadTaskContext,
   TASK_CONTEXT_SOFT_LIMIT,
@@ -63,6 +64,7 @@ export interface PreparedRun {
   context: TaskContext | null;
   workers: WorkerPolicy[];
   logPath: string;
+  status: RunStatusWriter;
 }
 
 const RUN = fmtRunId(1); // sync model: one attempt per task
@@ -103,43 +105,56 @@ function workerRecord(used: WorkerPolicy, model: string | undefined): RunResult[
 /** Prepare one task's isolated worktree and executor candidates. */
 export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
   const { paths } = deps;
-  const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
   const { task, contractMdText } = loadTask(paths, id);
-  const context = loadTaskContext(paths, task);
-  if (context !== null && context.base_sha !== baseSha) {
-    throw new Error(
-      `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", ` +
-        `but dispatch base is "${baseSha}"; regenerate the task context for this revision`,
-    );
-  }
-  // An explicit `worker` pin wins; otherwise resolve the difficulty tier (default
-  // weak) against the model config into per-executor candidates (each carrying its
-  // tier's model + effort). Router then still picks the executor by real quota.
-  const workers: WorkerPolicy[] = task.worker
-    ? [task.worker]
-    : tierWorkers(loadModelConfig(paths), task.tier ?? 'weak');
-
   const worktreeDir = paths.worktree(id, RUN);
-  const branch = runBranch(id, RUN);
-  worktreeRemove(paths.repoRoot, worktreeDir); // idempotent: clear any prior run branch
-  deleteBranch(paths.repoRoot, branch);
-  worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
-
-  return {
-    id,
-    task,
-    contractMdText,
+  const status = new RunStatusWriter({
+    path: paths.runStatus(id, RUN),
     worktreeDir,
-    branch,
-    baseSha,
-    context,
-    workers,
-    logPath: paths.workerLog(id, RUN),
-  };
+    budgetMinutes: task.max_wall_minutes,
+    clock: deps.clock,
+  });
+  try {
+    status.transition('worktree');
+    const baseSha = resolveCommit(paths.repoRoot, 'HEAD');
+    const context = loadTaskContext(paths, task);
+    if (context !== null && context.base_sha !== baseSha) {
+      throw new Error(
+        `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", ` +
+          `but dispatch base is "${baseSha}"; regenerate the task context for this revision`,
+      );
+    }
+    // An explicit `worker` pin wins; otherwise resolve the difficulty tier (default
+    // weak) against the model config into per-executor candidates (each carrying its
+    // tier's model + effort). Router then still picks the executor by real quota.
+    const workers: WorkerPolicy[] = task.worker
+      ? [task.worker]
+      : tierWorkers(loadModelConfig(paths), task.tier ?? 'weak');
+
+    const branch = runBranch(id, RUN);
+    worktreeRemove(paths.repoRoot, worktreeDir); // idempotent: clear any prior run branch
+    deleteBranch(paths.repoRoot, branch);
+    worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
+
+    return {
+      id,
+      task,
+      contractMdText,
+      worktreeDir,
+      branch,
+      baseSha,
+      context,
+      workers,
+      logPath: paths.workerLog(id, RUN),
+      status,
+    };
+  } catch (error) {
+    status.terminal('failed');
+    throw error;
+  }
 }
 
 /** Run one prepared task to a verified (or failed) result on its run branch. */
-export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
+async function runPreparedObserved(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
   const { paths } = deps;
   const { id, task, contractMdText, worktreeDir, baseSha, context, workers, logPath } = prep;
   if (task.mode === 'probe') rmSync(paths.diffPatch(id, RUN), { force: true });
@@ -160,6 +175,9 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     if (i > 0) writeFileSync(logPath, '');
     const launcher = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+    const stallMs = (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000;
+    const initialLogChars = safeRead(logPath).length;
+    prep.status.executorStarting(stallMs);
     const o = await superviseWorker({
       argv: launcher.buildArgv({
         task,
@@ -174,8 +192,10 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
       heartbeatPath: paths.heartbeat(id, RUN),
       watchDir: worktreeDir,
       maxWallMs: task.max_wall_minutes * 60_000,
-      stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
+      stallMs,
+      onPgid: () => prep.status.executorWorking(logPath, used.kind, initialLogChars),
     });
+    prep.status.finishExecutor();
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -197,7 +217,10 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
   const parsed: ParsedLog = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const conflict = detectContractConflict(parsed.finalMessage);
   if (conflict) exitClass = 'contract_conflict';
-  if (exitClass === 'ok') commitAll(worktreeDir, `router: ${id} ${RUN}`);
+  if (exitClass === 'ok') {
+    prep.status.transition('gating');
+    commitAll(worktreeDir, `router: ${id} ${RUN}`);
+  }
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null; // provider-reported only (no policy pricing table)
   // A configured slug the executor rejected -> the tier config is likely stale.
@@ -240,6 +263,7 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
       writeFileSync(paths.diffPatch(id, RUN), patch);
       result.diff_sha = createHash('sha256').update(patch).digest('hex');
     }
+    prep.status.transition('verify');
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       worktreeDir,
@@ -255,9 +279,22 @@ export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promis
     attachEffectiveRisk(result, task, worktreeDir, baseSha);
   }
 
+  const phaseTimings = prep.status.terminal(
+    terminalStateFor(result.exit_class, result.verifier?.result === 'PASSED'),
+  );
   store.writeResult(paths, id, RUN, result);
-  appendMetric(deps, result, task, context);
+  appendMetric(deps, result, task, context, phaseTimings);
   return result;
+}
+
+/** Run one prepared task, recording a failed terminal state on every handled exception. */
+export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
+  try {
+    return await runPreparedObserved(deps, prep);
+  } catch (error) {
+    prep.status.terminal('failed');
+    throw error;
+  }
 }
 
 /** Run one task synchronously to a verified (or failed) result on its run branch. */
@@ -291,7 +328,13 @@ export async function dispatchTasks(
     seen.add(id);
   }
 
-  const prepared = ids.map((id) => prepareRun(deps, id));
+  const prepared: PreparedRun[] = [];
+  try {
+    for (const id of ids) prepared.push(prepareRun(deps, id));
+  } catch (error) {
+    for (const prep of prepared) prep.status.terminal('cancelled');
+    throw error;
+  }
   const results = new Array<RunResult>(ids.length);
   const faults: { id: string; message: string }[] = [];
   const poolSize = resolvePoolSize(ids.length, maxParallel);
@@ -506,6 +549,7 @@ function appendMetric(
   result: RunResult,
   task: TaskYaml,
   context: TaskContext | null,
+  phaseTimings?: RunPhaseTimings,
 ): void {
   const metric: MetricRecord = {
     ts: deps.clock.nowIso(),
@@ -537,6 +581,7 @@ function appendMetric(
     tokens_output: result.tokens?.output ?? null,
     cost_usd: result.cost_usd ?? null,
     wall_seconds: result.wall_seconds,
+    ...(phaseTimings ?? {}),
     escalated: false,
     env_error: result.env_error,
   };

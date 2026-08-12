@@ -231,6 +231,29 @@ export interface RunResult {
   merge_commit?: string;
 }
 
+export type RunPhase = 'queued' | 'worktree' | 'executor_starting' | 'executor_working' | 'gating' | 'verify';
+
+export type RunTerminalState = 'succeeded' | 'failed' | 'stalled' | 'timed_out' | 'cancelled';
+
+export interface RunStatus {
+  phase: RunPhase;
+  terminal_state?: RunTerminalState;
+  started_at: string;
+  phase_started_at: string;
+  budget_minutes: number;
+  last_output_at: string | null;
+  stall_deadline: string | null;
+  recent_action?: string;
+}
+
+export interface RunPhaseTimings {
+  t_worktree: number;
+  t_launch: number;
+  t_exec: number;
+  t_gate: number;
+  t_verify: number;
+}
+
 export interface MetricRecord {
   ts: string;
   task_id: string;
@@ -260,6 +283,11 @@ export interface MetricRecord {
   tokens_output: number | null;
   cost_usd: number | null;
   wall_seconds: number;
+  t_worktree?: number;
+  t_launch?: number;
+  t_exec?: number;
+  t_gate?: number;
+  t_verify?: number;
   escalated: boolean;
   env_error: boolean;
 }
