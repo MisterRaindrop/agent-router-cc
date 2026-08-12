@@ -25,6 +25,56 @@ Read its frontmatter before anything else:
   everyday tasks that never needed a Design -- whether a change deserves the design flow is
   the user's call, never router's.
 
+## Single mode -- one executor takes the whole feature (`go single [--model <slug>]`)
+
+The user says "single": one work package = the whole feature, no decomposition, no tier
+routing. The contract pins `worker: {kind: claude, model: opus}` -- Opus is the floor, and
+the pin only changes when the user explicitly names another model (any kind, codex
+included). **Never silently swap or downgrade the pinned model** -- quota pressure or a
+launch failure fails loudly instead. The main session stays the advisor: plan, review,
+verdict; execution tokens all land on the executor.
+
+**Applicability first.** If the plan spans several unrelated top-level areas or the
+expected diff clearly exceeds one executor session, say so and get explicit confirmation
+("this looks like 2-3 packages -- single anyway?"). Budgets are sized to the WHOLE feature
+with test headroom (measured: ~40% of a real diff was tests; an 800-line cap rejected a
+correct 802-line diff) -- and **never silently enlarged**: the values and the reason go
+into the contract where the final review can see them.
+
+**The contract is a copy, not a composition.**
+- An approved `PLAN.md` exists -> verify its frontmatter says `status: plan_approved`
+  (refuse otherwise), then build `TASK_CONTRACT.md` as a compact yaml header (globs,
+  `verify`, worker pin, budgets, `plan_id`, `plan_revision`, and `plan_sha256` -- the
+  sha256 of the PLAN.md file) followed by the **entire PLAN.md verbatim** via shell
+  concatenation. Zero re-authoring -- byte-identical is the test -- so the contract is an
+  immutable snapshot of the approved revision; later PLAN.md edits cannot reach a
+  dispatched contract.
+- No plan (everyday task) -> the compact template: the seven faces at 1-3 lines each,
+  ~40 lines. The executor is a strong model; precision beats prose.
+- `TASK_CONTEXT.md` is **not** written (measured: +21% executor input, zero quality gain).
+
+**Detached execution plus a listener -- never a foreground wait.** The harness kills
+tracked background tasks **by process group** (measured: a nohup'd child died with its
+wrapper; a `detached: true` child survived), so launch dispatch detached -- a `node -e`
+one-liner using `child_process.spawn(..., {detached: true, stdio: ['ignore', log, log]})`
++ `.unref()`, output to the run's own log -- and arm a **listener** as a tracked
+background task watching three sources until one fires: (1) `status.json` gains a
+`terminal_state`; (2) the detached pid is gone; (3) `result.json`/`DELIVERY.md` appear.
+Process gone with no legal terminal state -> report **"status channel failed"** and fall
+back to the authoritative result files; never hang silently. The listener's completion is
+what wakes this session into review. If even the listener died (session restart), nothing
+is lost: `router list` plus the run's `status.json`/`result.json` rebuild the picture from
+disk -- resume the review there.
+
+**Conversation events: two kinds only.** The listener speaks at terminal states and
+anomalies (the stall countdown has started) -- periodic progress lives in the statusline,
+which costs zero turns. An opt-in periodic in-conversation heartbeat exists
+(`--heartbeat <min>`); it costs one model turn per beat, and enabling it says so.
+
+**On wake**: read `DELIVERY.md`, read the **complete diff**, judge it, land, run the final
+acceptance -- identical to steps 2-4 below. Single mode changes who executes and how you
+wait; it changes nothing about what may merge.
+
 **Division of labor.** The **router CLI** owns only the mechanism it alone can provide:
 isolated `git worktree`s, process supervision (one executor or several at once), and fast
 *environment-free* gates on the diff (it applies cleanly, stays within `allowed_globs`,
