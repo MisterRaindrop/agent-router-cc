@@ -243,6 +243,45 @@ export class RunStatusWriter {
   }
 }
 
+const RUN_PHASES: ReadonlySet<string> = new Set<RunPhase>([
+  'queued',
+  'worktree',
+  'executor_starting',
+  'executor_working',
+  'gating',
+  'verify',
+]);
+
+const TERMINAL_STATES: ReadonlySet<string> = new Set<RunTerminalState>([
+  'succeeded',
+  'failed',
+  'stalled',
+  'timed_out',
+  'cancelled',
+]);
+
+/**
+ * Read one run's live status document, for reporters only -- the writer above never reads.
+ * A run in flight has a status.json but no result.json yet, so this is the only way to see
+ * its current phase. Absent, unreadable or off-protocol content yields null rather than an
+ * exception: every caller is a read-only view that must degrade to what it showed before
+ * status.json existed, never fail because one run's file is half-written or hand-edited.
+ */
+export function readRunStatus(path: string): RunStatus | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || Array.isArray(parsed)) return null;
+  if (typeof parsed.phase !== 'string' || !RUN_PHASES.has(parsed.phase)) return null;
+  if (typeof parsed.started_at !== 'string' || !Number.isFinite(Date.parse(parsed.started_at))) return null;
+  const terminal = parsed.terminal_state;
+  if (terminal !== undefined && (typeof terminal !== 'string' || !TERMINAL_STATES.has(terminal))) return null;
+  return parsed as unknown as RunStatus;
+}
+
 export function terminalStateFor(exitClass: ExitClass, verifierPassed: boolean): RunTerminalState {
   if (exitClass === 'stalled') return 'stalled';
   if (exitClass === 'timeout') return 'timed_out';

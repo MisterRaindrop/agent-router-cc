@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
+import type { RunResult, RunStatus } from '../domain/types.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
@@ -18,6 +19,7 @@ import { runQueueGate } from '../app/gateQueue.ts';
 import { readLock } from '../io/lock.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
+import { readRunStatus } from '../app/runStatus.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
 import { buildRoutingReport, buildUsageReport, explainSavingsText, renderRouting, renderUsage } from '../app/usageReport.ts';
@@ -391,10 +393,23 @@ const result: Handler = (ctx) => {
   return 0;
 };
 
+// The status column answers "where is this task right now", so a run still in flight must
+// read as its live phase: result.json only lands when the run is over, status.json is
+// written throughout. Once result.json exists it wins -- it is the verified outcome, and
+// the last status.json of a finished run says nothing more than its terminal state does.
+function statusLabel(res: RunResult | null, live: RunStatus | null, nowMs: number): string {
+  if (res !== null) return res.verifier?.result ?? res.exit_class;
+  if (live === null) return 'none';
+  if (live.terminal_state !== undefined) return live.terminal_state;
+  const minutes = Math.max(0, Math.floor((nowMs - Date.parse(live.started_at)) / 60_000));
+  return `${live.phase} ${minutes}m`;
+}
+
 // List authored tasks with their last dispatch status and whether a worktree is
 // still on disk (read-only; helps you see leftovers before cleaning them).
 const list: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths, clock } = depsFor(ctx);
+  const nowMs = Date.parse(clock.nowIso());
   const ids = existsSync(paths.tasksDir)
     ? readdirSync(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
     : [];
@@ -406,22 +421,26 @@ const list: Handler = (ctx) => {
       /* missing/invalid task.yaml */
     }
     const res = store.readResult(paths, id, RUN);
-    const status = res === null ? 'none' : (res.verifier?.result ?? res.exit_class);
+    const live = readRunStatus(paths.runStatus(id, RUN));
+    const status = statusLabel(res, live, nowMs);
     const worktree = existsSync(paths.worktree(id, RUN));
     const risk = res?.risk ?? '-';
     const report = res?.delivery ? 'yes' : '-';
-    return { id, title, status, worktree, risk, report };
+    return { id, title, status, worktree, risk, report, live };
   });
+  // A live label ("executor_working 3m") is wider than any terminal one; widen the column
+  // to the longest row so the table stays aligned, and keep today's width when none is live.
+  const statusWidth = Math.max(10, ...rows.map((r) => r.status.length + 1));
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return 'No tasks in .router/tasks.';
     const lines = [
       `Tasks (${rows.length}):`,
-      pad('id', 22) + pad('status', 10) + pad('worktree', 10) + pad('risk', 10) + pad('report', 10) + 'title',
+      pad('id', 22) + pad('status', statusWidth) + pad('worktree', 10) + pad('risk', 10) + pad('report', 10) + 'title',
     ];
     for (const r of rows)
       lines.push(
         pad(r.id, 22) +
-          pad(String(r.status), 10) +
+          pad(String(r.status), statusWidth) +
           pad(r.worktree ? 'present' : '-', 10) +
           pad(r.risk, 10) +
           pad(r.report, 10) +

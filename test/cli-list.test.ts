@@ -59,10 +59,11 @@ test('list shows risk and delivery-report presence in table and JSON', () => {
     const json = router(dir, ['list', '--json']);
     assert.equal(json.code, 0, json.out);
     const rows = (JSON.parse(json.out) as { tasks: Record<string, unknown>[] }).tasks;
+    // `live` is the run's status.json; none of these tasks has one (see cli-list-live.test.ts).
     assert.deepEqual(rows, [
-      { id: 'no-run', title: 'No recorded run', status: 'none', worktree: false, risk: '-', report: '-' },
-      { id: 'plain-run', title: 'Neither signal', status: 'completed', worktree: false, risk: '-', report: '-' },
-      { id: 'risk-report', title: 'Risk and report', status: 'completed', worktree: false, risk: 'high', report: 'yes' },
+      { id: 'no-run', title: 'No recorded run', status: 'none', worktree: false, risk: '-', report: '-', live: null },
+      { id: 'plain-run', title: 'Neither signal', status: 'completed', worktree: false, risk: '-', report: '-', live: null },
+      { id: 'risk-report', title: 'Risk and report', status: 'completed', worktree: false, risk: 'high', report: 'yes', live: null },
     ]);
   } finally {
     fx.cleanup(dir);
