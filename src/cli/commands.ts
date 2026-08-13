@@ -454,12 +454,12 @@ const list: Handler = (ctx) => {
   return 0;
 };
 
-const PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const DESIGN_STATUSES = new Set(['design_draft', 'design_approved']);
+const PLAN_STATUSES = new Set(['plan_draft', 'plan_approved', 'executing', 'done']);
 
-// A malformed or missing PLAN.md must not fail the whole `plans` listing -- it just
-// means this one row's revision is unknown; see the `plans` handler below.
-function planRevision(text: string): string | null {
-  const match = PLAN_FRONTMATTER_RE.exec(text);
+function documentFrontmatter(text: string): Record<string, unknown> | null {
+  const match = DOCUMENT_FRONTMATTER_RE.exec(text);
   if (match === null) return null;
   let parsed: unknown;
   try {
@@ -468,8 +468,22 @@ function planRevision(text: string): string | null {
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-  const rev = (parsed as Record<string, unknown>).plan_revision;
-  return typeof rev === 'string' || typeof rev === 'number' ? String(rev) : null;
+  return parsed as Record<string, unknown>;
+}
+
+function scalarText(value: unknown): string | null {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
+}
+
+// Current plans declare `revision`; `plan_revision` remains readable for artifacts frozen
+// by the legacy flow. Malformed or missing frontmatter degrades only this row.
+function planRevision(frontmatter: Record<string, unknown> | null): string | null {
+  return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
+}
+
+function documentStage(frontmatter: Record<string, unknown> | null, allowed: Set<string>): string | null {
+  const status = frontmatter?.status;
+  return typeof status === 'string' && allowed.has(status) ? status : null;
 }
 
 function highestCritiqueRound(entries: string[]): number | null {
@@ -483,12 +497,12 @@ function highestCritiqueRound(entries: string[]): number | null {
   return max;
 }
 
-// List plan artifacts under .router/plans -- PLAN.md's declared revision, the highest
-// critique-<n>.md round on disk, whether DECISIONS.md exists, and whether a spec.lock is
-// currently held. Read-only: this is a browsing aid so a plan from last week is findable
-// without remembering its id by heart.
+// List plan artifacts under .router/plans -- document stage, PLAN.md's declared revision,
+// the highest critique round, decisions, and lock state. This handler deliberately avoids
+// depsFor(): browsing plans must never scaffold or otherwise write under .router/.
 const plans: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const explicit = flagStr(ctx.args.flags, 'router-dir');
+  const paths = routerPaths(explicit ?? findRouterDir(ctx.cwd) ?? join(ctx.cwd, ROUTER_DIR));
   // `.router/plans` has no dedicated field on RouterPaths (only per-plan-id accessors do);
   // this is the one directory we must list to discover which plan ids even exist.
   const plansRoot = join(paths.root, 'plans');
@@ -496,11 +510,21 @@ const plans: Handler = (ctx) => {
     ? readdirSync(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
     : [];
   const rows = ids.map((id) => {
-    let revision: string | null = null;
+    let planFrontmatter: Record<string, unknown> | null = null;
+    let hasPlan = true;
     try {
-      revision = planRevision(readFileSync(paths.planMd(id), 'utf8'));
-    } catch {
-      /* no PLAN.md, or unreadable -- revision stays unknown */
+      planFrontmatter = documentFrontmatter(readFileSync(paths.planMd(id), 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') hasPlan = false;
+      /* an unreadable existing PLAN.md still owns the stage, which therefore stays unknown */
+    }
+    let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
+    if (!hasPlan) {
+      try {
+        stage = documentStage(documentFrontmatter(readFileSync(join(paths.planDir(id), 'DESIGN.md'), 'utf8')), DESIGN_STATUSES);
+      } catch {
+        /* missing or unreadable DESIGN.md -- stage stays unknown */
+      }
     }
     let critiqueRound: number | null = null;
     try {
@@ -510,7 +534,8 @@ const plans: Handler = (ctx) => {
     }
     return {
       id,
-      plan_revision: revision,
+      plan_revision: planRevision(planFrontmatter),
+      stage,
       critique_round: critiqueRound,
       decisions: existsSync(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null,
@@ -518,16 +543,24 @@ const plans: Handler = (ctx) => {
   });
   emit(ctx.json, { ok: true, plans: rows }, () => {
     if (rows.length === 0) return 'No plans in .router/plans.';
+    const width = (header: string, floor: number, values: string[]): number =>
+      Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
+    const idWidth = width('id', 24, rows.map((r) => r.id));
+    const revisionWidth = width('revision', 12, rows.map((r) => r.plan_revision ?? 'unknown'));
+    const stageWidth = width('stage', 8, rows.map((r) => r.stage ?? '-'));
+    const critiqueWidth = width('critique', 10, rows.map((r) => r.critique_round === null ? '-' : String(r.critique_round)));
+    const decisionsWidth = width('decisions', 12, rows.map((r) => r.decisions ? 'yes' : '-'));
     const lines = [
       `Plans (${rows.length}):`,
-      pad('id', 24) + pad('revision', 12) + pad('critique', 10) + pad('decisions', 12) + 'locked',
+      pad('id', idWidth) + pad('revision', revisionWidth) + pad('stage', stageWidth) + pad('critique', critiqueWidth) + pad('decisions', decisionsWidth) + 'locked',
     ];
     for (const r of rows)
       lines.push(
-        pad(r.id, 24) +
-          pad(r.plan_revision ?? 'unknown', 12) +
-          pad(r.critique_round === null ? '-' : String(r.critique_round), 10) +
-          pad(r.decisions ? 'yes' : '-', 12) +
+        pad(r.id, idWidth) +
+          pad(r.plan_revision ?? 'unknown', revisionWidth) +
+          pad(r.stage ?? '-', stageWidth) +
+          pad(r.critique_round === null ? '-' : String(r.critique_round), critiqueWidth) +
+          pad(r.decisions ? 'yes' : '-', decisionsWidth) +
           (r.locked ? 'yes' : '-'),
       );
     return lines.join('\n');
@@ -801,7 +834,7 @@ export function helpText(): string {
     `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
     `  list                   list tasks with last status + whether a worktree remains\n` +
-    `  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock\n` +
+    `  plans                  list .router/plans/<id> artifacts: revision, stage, critique round, decisions, lock\n` +
     `  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches\n` +
     `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
