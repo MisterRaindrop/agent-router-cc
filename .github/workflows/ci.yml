@@ -25,7 +25,11 @@ jobs:
       # actually ships, so a stale bundle means users run old code while CI stays green --
       # that shipped a whole release self-reporting the previous version once already.
       - name: committed bundle is up to date with src
-        run: git diff --exit-code -- dist/ || { echo '::error::dist/ is stale: run `npm run build` and commit the result'; exit 1; }
+        run: |
+          if ! git diff --exit-code -- dist/; then
+            echo "::error::dist/ is stale - run 'npm run build' and commit the result"
+            exit 1
+          fi
 
   # The shipped bundle declares `engines: node >= 18` — hold that promise on every
   # supported major, without the dev toolchain (the bundle is dependency-free).
