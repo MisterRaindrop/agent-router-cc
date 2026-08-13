@@ -21,6 +21,11 @@ jobs:
       # The committed bundle must build and run on bare Node.
       - run: npm run build
       - run: node dist/router.js --version
+      # ...and it must BE the build of the committed source. `dist/` is what the plugin
+      # actually ships, so a stale bundle means users run old code while CI stays green --
+      # that shipped a whole release self-reporting the previous version once already.
+      - name: committed bundle is up to date with src
+        run: git diff --exit-code -- dist/ || { echo '::error::dist/ is stale: run `npm run build` and commit the result'; exit 1; }
 
   # The shipped bundle declares `engines: node >= 18` — hold that promise on every
   # supported major, without the dev toolchain (the bundle is dependency-free).

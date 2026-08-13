@@ -38,11 +38,32 @@ rounds, twelve objections adjudicated one by one; records in the plan's DECISION
   group; a `detached:true` child survives), a listener wakes the session at terminal
   states, and a dead status channel falls back to the authoritative result files.
 
+- **`router list` shows the live phase** of a run still in flight (`executor_working 3m`)
+  instead of `none`; `--json` gains `live`. A malformed `status.json` degrades to the old
+  output rather than breaking a read-only view.
+- **`recent_action` for codex runs**, extracted from `command_execution` events (login-shell
+  wrapper unwrapped) under the same redaction allowlist as the claude path; model prose is
+  ignored outright.
+- **`router usage --routing` reports per-phase medians** (`worktree/launch/exec/gate/verify`)
+  with their sample counts. Rows lacking the fields are excluded from the median rather than
+  counted as zero, and a group with no timed rows renders `—`, never `0.0s`.
+- **`router plans` gains a `stage` column** (the furthest recognized document status) and
+  sizes its columns to the longest value.
+- CI now fails when the committed `dist/` bundle is not the build of the committed source.
+
 ### Changed
 
 - Conversation-side progress is two-tier by design: statusline carries periodic status
   (zero model turns); the conversation gets only terminal states and anomalies. An
   opt-in periodic heartbeat exists and is documented as costing one model turn per beat.
+
+### Fixed
+
+- `router plans` reported **every** revision as `unknown`: it read the legacy
+  `plan_revision` key while the current flow writes `revision` (the legacy key is still
+  honored). Long plan ids also overflowed the id column and swallowed the next one.
+- `router plans` no longer creates `.router/` as a side effect of being run — browsing is
+  read-only.
 
 ## [0.8.5] - 2026-08-11
 

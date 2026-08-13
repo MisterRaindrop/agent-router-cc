@@ -11086,6 +11086,9 @@ var RunStatusWriter = class {
     if (kind === "claude") {
       const action = recentClaudeAction(line, this.worktreeDir);
       if (action !== void 0) this.status.recent_action = action;
+    } else if (kind === "codex") {
+      const action = recentCodexAction(line);
+      if (action !== void 0) this.status.recent_action = action;
     }
     this.pendingActivity = true;
     const monoNow = this.clock.monotonicMs();
@@ -11166,6 +11169,35 @@ var RunStatusWriter = class {
     this.onWrite?.({ ...this.status });
   }
 };
+var RUN_PHASES = /* @__PURE__ */ new Set([
+  "queued",
+  "worktree",
+  "executor_starting",
+  "executor_working",
+  "gating",
+  "verify"
+]);
+var TERMINAL_STATES = /* @__PURE__ */ new Set([
+  "succeeded",
+  "failed",
+  "stalled",
+  "timed_out",
+  "cancelled"
+]);
+function readRunStatus(path) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync6(path, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || Array.isArray(parsed)) return null;
+  if (typeof parsed.phase !== "string" || !RUN_PHASES.has(parsed.phase)) return null;
+  if (typeof parsed.started_at !== "string" || !Number.isFinite(Date.parse(parsed.started_at))) return null;
+  const terminal = parsed.terminal_state;
+  if (terminal !== void 0 && (typeof terminal !== "string" || !TERMINAL_STATES.has(terminal))) return null;
+  return parsed;
+}
 function terminalStateFor(exitClass, verifierPassed) {
   if (exitClass === "stalled") return "stalled";
   if (exitClass === "timeout") return "timed_out";
@@ -11196,6 +11228,25 @@ function recentClaudeAction(line, worktreeDir) {
     }
   }
   return recent;
+}
+function recentCodexAction(line) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return void 0;
+  }
+  if (!isRecord(event) || event.type !== "item.started" && event.type !== "item.completed") {
+    return void 0;
+  }
+  const item = event.item;
+  if (!isRecord(item) || item.type !== "command_execution" || typeof item.command !== "string") {
+    return void 0;
+  }
+  const command = unwrapShellCommand(item.command);
+  if (command === void 0) return void 0;
+  const tokens = bashTokens(command);
+  return tokens.length === 0 ? "Bash:" : `Bash: ${tokens.join(" ")}`;
 }
 function collectToolUses(value, found) {
   if (Array.isArray(value)) {
@@ -11228,6 +11279,38 @@ function bashTokens(command) {
     tokens.push(subcommand);
   }
   return tokens;
+}
+function unwrapShellCommand(command) {
+  const match = /^(\S+)[ \t]+(-lc|-c)[ \t]+([\s\S]+)$/u.exec(command.trim());
+  if (match === null) return void 0;
+  const shell = basename(match[1]);
+  const option = match[2];
+  if (!((shell === "zsh" || shell === "bash") && option === "-lc") && !(shell === "sh" && option === "-c")) {
+    return void 0;
+  }
+  return unwrapQuotedShellWord(match[3]);
+}
+function unwrapQuotedShellWord(word) {
+  const quote = word[0];
+  if (quote !== '"' && quote !== "'" || word.length < 2) return void 0;
+  let unwrapped = "";
+  for (let index = 1; index < word.length; index += 1) {
+    const character = word[index];
+    if (character === quote) return index === word.length - 1 ? unwrapped : void 0;
+    if (quote === '"' && character === "\\") {
+      const escaped = word[index + 1];
+      if (escaped === void 0 || escaped === "\n") return void 0;
+      if (escaped === '"' || escaped === "\\" || escaped === "$" || escaped === "`") {
+        unwrapped += escaped;
+      } else {
+        unwrapped += `\\${escaped}`;
+      }
+      index += 1;
+    } else {
+      unwrapped += character;
+    }
+  }
+  return void 0;
 }
 function safeToken(token) {
   return /^[A-Za-z0-9_./:@%+,-]+$/u.test(token) && !token.includes("=");
@@ -13187,7 +13270,12 @@ function buildUsageReport(paths, nowIso, opts = {}) {
       inputTokensRecorded: r.tokens_input,
       wallSecondsRecorded: typeof r.wall_seconds === "number" ? r.wall_seconds : null,
       savingsUsd,
-      optimized: savingsUsd === null ? null : savingsUsd > 0
+      optimized: savingsUsd === null ? null : savingsUsd > 0,
+      tWorktree: r.t_worktree,
+      tLaunch: r.t_launch,
+      tExec: r.t_exec,
+      tGate: r.t_gate,
+      tVerify: r.t_verify
     });
   }
   rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
@@ -13279,6 +13367,11 @@ function buildRoutingReport(rows) {
     const conflict = group.flatMap((row) => typeof row.conflict === "boolean" ? [row.conflict] : []);
     const wall = group.flatMap((row) => row.wallSecondsRecorded == null ? [] : [row.wallSecondsRecorded]);
     const input = group.flatMap((row) => row.inputTokensRecorded == null ? [] : [row.inputTokensRecorded]);
+    const worktree = group.flatMap((row) => row.tWorktree === void 0 ? [] : [row.tWorktree]);
+    const launch = group.flatMap((row) => row.tLaunch === void 0 ? [] : [row.tLaunch]);
+    const exec = group.flatMap((row) => row.tExec === void 0 ? [] : [row.tExec]);
+    const gate2 = group.flatMap((row) => row.tGate === void 0 ? [] : [row.tGate]);
+    const verify = group.flatMap((row) => row.tVerify === void 0 ? [] : [row.tVerify]);
     const insufficientData = group.length < ROUTING_MINIMUM_RUNS;
     return {
       executor: group[0].executor,
@@ -13295,7 +13388,17 @@ function buildRoutingReport(rows) {
       medianWallSeconds: insufficientData ? null : median(wall),
       medianWallSamples: insufficientData ? 0 : wall.length,
       medianInputTokens: insufficientData ? null : median(input),
-      medianInputSamples: insufficientData ? 0 : input.length
+      medianInputSamples: insufficientData ? 0 : input.length,
+      medianWorktreeSeconds: insufficientData ? null : median(worktree),
+      medianWorktreeSamples: insufficientData ? 0 : worktree.length,
+      medianLaunchSeconds: insufficientData ? null : median(launch),
+      medianLaunchSamples: insufficientData ? 0 : launch.length,
+      medianExecSeconds: insufficientData ? null : median(exec),
+      medianExecSamples: insufficientData ? 0 : exec.length,
+      medianGateSeconds: insufficientData ? null : median(gate2),
+      medianGateSamples: insufficientData ? 0 : gate2.length,
+      medianVerifySeconds: insufficientData ? null : median(verify),
+      medianVerifySamples: insufficientData ? 0 : verify.length
     };
   });
   groups.sort((a, b) => a.executor.localeCompare(b.executor) || String(a.tier).localeCompare(String(b.tier)) || String(a.effort).localeCompare(String(b.effort)));
@@ -13475,6 +13578,9 @@ function routingRate(label, value, samples) {
 function routingMedian(label, value, samples, format) {
   return value === null ? `${label} unavailable` : `${label} ${format(value)} (n=${samples})`;
 }
+function routingPhaseMedian(label, value, samples) {
+  return `${label} ${value === null ? "\u2014" : `${value}s`} (n=${samples})`;
+}
 function renderRouting(report) {
   const lines = ["Router routing evidence"];
   if (report.groups.length === 0) {
@@ -13490,6 +13596,15 @@ function renderRouting(report) {
     }
     lines.push(
       pad(label, 36) + pad(String(group.runs), 6) + pad(routingRate("first-pass", group.firstPassRate, group.firstPassSamples), 23) + pad(routingRate("re-dispatch", group.reDispatchRate, group.reDispatchSamples), 23) + pad(routingRate("conflict", group.conflictRate, group.conflictSamples), 23) + pad(routingMedian("wall", group.medianWallSeconds, group.medianWallSamples, fmtWall), 21) + routingMedian("input", group.medianInputTokens, group.medianInputSamples, fmtTokens)
+    );
+    lines.push(
+      "  phases: " + [
+        routingPhaseMedian("worktree", group.medianWorktreeSeconds, group.medianWorktreeSamples),
+        routingPhaseMedian("launch", group.medianLaunchSeconds, group.medianLaunchSamples),
+        routingPhaseMedian("exec", group.medianExecSeconds, group.medianExecSamples),
+        routingPhaseMedian("gate", group.medianGateSeconds, group.medianGateSamples),
+        routingPhaseMedian("verify", group.medianVerifySeconds, group.medianVerifySamples)
+      ].join(" \xB7 ")
     );
   }
   if (!report.groups.some((group) => !group.insufficientData)) {
@@ -13852,8 +13967,16 @@ ${tail}`;
   });
   return 0;
 };
+function statusLabel(res, live, nowMs) {
+  if (res !== null) return res.verifier?.result ?? res.exit_class;
+  if (live === null) return "none";
+  if (live.terminal_state !== void 0) return live.terminal_state;
+  const minutes = Math.max(0, Math.floor((nowMs - Date.parse(live.started_at)) / 6e4));
+  return `${live.phase} ${minutes}m`;
+}
 var list = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths, clock } = depsFor(ctx);
+  const nowMs = Date.parse(clock.nowIso());
   const ids = existsSync11(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
@@ -13862,21 +13985,23 @@ var list = (ctx) => {
     } catch {
     }
     const res = readResult(paths, id, RUN3);
-    const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
+    const live = readRunStatus(paths.runStatus(id, RUN3));
+    const status = statusLabel(res, live, nowMs);
     const worktree = existsSync11(paths.worktree(id, RUN3));
     const risk = res?.risk ?? "-";
     const report = res?.delivery ? "yes" : "-";
-    return { id, title, status, worktree, risk, report };
+    return { id, title, status, worktree, risk, report, live };
   });
+  const statusWidth = Math.max(10, ...rows.map((r) => r.status.length + 1));
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return "No tasks in .router/tasks.";
     const lines = [
       `Tasks (${rows.length}):`,
-      pad2("id", 22) + pad2("status", 10) + pad2("worktree", 10) + pad2("risk", 10) + pad2("report", 10) + "title"
+      pad2("id", 22) + pad2("status", statusWidth) + pad2("worktree", 10) + pad2("risk", 10) + pad2("report", 10) + "title"
     ];
     for (const r of rows)
       lines.push(
-        pad2(r.id, 22) + pad2(String(r.status), 10) + pad2(r.worktree ? "present" : "-", 10) + pad2(r.risk, 10) + pad2(r.report, 10) + r.title
+        pad2(r.id, 22) + pad2(String(r.status), statusWidth) + pad2(r.worktree ? "present" : "-", 10) + pad2(r.risk, 10) + pad2(r.report, 10) + r.title
       );
     const leftover = rows.filter((r) => r.worktree).length;
     if (leftover > 0)
@@ -13886,9 +14011,11 @@ ${leftover} worktree(s) still on disk. Land the task to clean it, or remove .rou
   });
   return 0;
 };
-var PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-function planRevision(text2) {
-  const match = PLAN_FRONTMATTER_RE.exec(text2);
+var DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+var DESIGN_STATUSES = /* @__PURE__ */ new Set(["design_draft", "design_approved"]);
+var PLAN_STATUSES = /* @__PURE__ */ new Set(["plan_draft", "plan_approved", "executing", "done"]);
+function documentFrontmatter(text2) {
+  const match = DOCUMENT_FRONTMATTER_RE.exec(text2);
   if (match === null) return null;
   let parsed;
   try {
@@ -13897,8 +14024,17 @@ function planRevision(text2) {
     return null;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-  const rev = parsed.plan_revision;
-  return typeof rev === "string" || typeof rev === "number" ? String(rev) : null;
+  return parsed;
+}
+function scalarText(value) {
+  return typeof value === "string" || typeof value === "number" ? String(value) : null;
+}
+function planRevision(frontmatter) {
+  return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
+}
+function documentStage(frontmatter, allowed) {
+  const status = frontmatter?.status;
+  return typeof status === "string" && allowed.has(status) ? status : null;
 }
 function highestCritiqueRound(entries) {
   let max = null;
@@ -13911,14 +14047,24 @@ function highestCritiqueRound(entries) {
   return max;
 }
 var plans = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const explicit = flagStr(ctx.args.flags, "router-dir");
+  const paths = routerPaths(explicit ?? findRouterDir(ctx.cwd) ?? join11(ctx.cwd, ROUTER_DIR));
   const plansRoot = join11(paths.root, "plans");
   const ids = existsSync11(plansRoot) ? readdirSync5(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
-    let revision = null;
+    let planFrontmatter = null;
+    let hasPlan = true;
     try {
-      revision = planRevision(readFileSync14(paths.planMd(id), "utf8"));
-    } catch {
+      planFrontmatter = documentFrontmatter(readFileSync14(paths.planMd(id), "utf8"));
+    } catch (error) {
+      if (error.code === "ENOENT") hasPlan = false;
+    }
+    let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
+    if (!hasPlan) {
+      try {
+        stage = documentStage(documentFrontmatter(readFileSync14(join11(paths.planDir(id), "DESIGN.md"), "utf8")), DESIGN_STATUSES);
+      } catch {
+      }
     }
     let critiqueRound = null;
     try {
@@ -13927,7 +14073,8 @@ var plans = (ctx) => {
     }
     return {
       id,
-      plan_revision: revision,
+      plan_revision: planRevision(planFrontmatter),
+      stage,
       critique_round: critiqueRound,
       decisions: existsSync11(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null
@@ -13935,13 +14082,19 @@ var plans = (ctx) => {
   });
   emit(ctx.json, { ok: true, plans: rows }, () => {
     if (rows.length === 0) return "No plans in .router/plans.";
+    const width = (header, floor, values) => Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
+    const idWidth = width("id", 24, rows.map((r) => r.id));
+    const revisionWidth = width("revision", 12, rows.map((r) => r.plan_revision ?? "unknown"));
+    const stageWidth = width("stage", 8, rows.map((r) => r.stage ?? "-"));
+    const critiqueWidth = width("critique", 10, rows.map((r) => r.critique_round === null ? "-" : String(r.critique_round)));
+    const decisionsWidth = width("decisions", 12, rows.map((r) => r.decisions ? "yes" : "-"));
     const lines = [
       `Plans (${rows.length}):`,
-      pad2("id", 24) + pad2("revision", 12) + pad2("critique", 10) + pad2("decisions", 12) + "locked"
+      pad2("id", idWidth) + pad2("revision", revisionWidth) + pad2("stage", stageWidth) + pad2("critique", critiqueWidth) + pad2("decisions", decisionsWidth) + "locked"
     ];
     for (const r of rows)
       lines.push(
-        pad2(r.id, 24) + pad2(r.plan_revision ?? "unknown", 12) + pad2(r.critique_round === null ? "-" : String(r.critique_round), 10) + pad2(r.decisions ? "yes" : "-", 12) + (r.locked ? "yes" : "-")
+        pad2(r.id, idWidth) + pad2(r.plan_revision ?? "unknown", revisionWidth) + pad2(r.stage ?? "-", stageWidth) + pad2(r.critique_round === null ? "-" : String(r.critique_round), critiqueWidth) + pad2(r.decisions ? "yes" : "-", decisionsWidth) + (r.locked ? "yes" : "-")
       );
     return lines.join("\n");
   });
@@ -14188,7 +14341,7 @@ Usage: router <command> [options]
   gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)
   result <id>            show the verifier report + log tail
   list                   list tasks with last status + whether a worktree remains
-  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock
+  plans                  list .router/plans/<id> artifacts: revision, stage, critique round, decisions, lock
   usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches
   orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript
   models                 print the resolved model-tier config (default + .router/models.yaml)
