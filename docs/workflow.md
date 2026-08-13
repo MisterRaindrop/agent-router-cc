@@ -30,9 +30,13 @@ real judgment, and approve before anything merges. Nothing lands without you. (W
 executes a Plan approved via the design flow, the package-list pause is skipped -- that list
 was approved at `/router:plan`; the other two pauses remain.)
 
-**`go single`** is the third entry: one strong executor (Opus by default -- a floor, never
-silently downgraded) takes the whole feature as a single package while the main session
-stays planner/reviewer. The contract is a verbatim copy of the approved PLAN.md (anchored
+**`go single`** is the third entry: one **pinned** executor takes the whole feature as a
+single package while the main session stays planner/reviewer. Either family is a
+first-class target -- `claude` (default) or `codex` -- and the pin always carries all three
+fields (`kind`, `model`, `effort`) taken from that family's `critical` row in `router
+models`, because an omitted effort silently falls back to the provider default. The user
+may deliberately pin lower; router never lowers it on its own (a 429 fails loudly instead
+of demoting). The contract is a verbatim copy of the approved PLAN.md (anchored
 by revision + sha256) or a ~40-line compact template; dispatch runs **detached** (it
 survives the session) with a listener that wakes the session at terminal states; progress
 lives in the statusline -- every run now writes a live `status.json` (phase, elapsed vs

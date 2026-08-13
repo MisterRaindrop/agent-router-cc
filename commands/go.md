@@ -25,14 +25,44 @@ Read its frontmatter before anything else:
   everyday tasks that never needed a Design -- whether a change deserves the design flow is
   the user's call, never router's.
 
-## Single mode -- one executor takes the whole feature (`go single [--model <slug>]`)
+## Single mode -- one executor takes the whole feature (`go single [...]`)
 
 The user says "single": one work package = the whole feature, no decomposition, no tier
-routing. The contract pins `worker: {kind: claude, model: opus}` -- Opus is the floor, and
-the pin only changes when the user explicitly names another model (any kind, codex
-included). **Never silently swap or downgrade the pinned model** -- quota pressure or a
-launch failure fails loudly instead. The main session stays the advisor: plan, review,
-verdict; execution tokens all land on the executor.
+routing, no quota rebalancing. The main session stays the advisor -- plan, review, verdict
+-- while one **pinned** executor writes all the code.
+
+**Both executor families are first-class targets.** The pin is always fully specified --
+`worker: {kind, model, effort}` -- because each field changes what actually runs: `kind`
+picks the launcher (`claude --model <slug>` vs `codex exec -m <slug> -c
+model_reasoning_effort=<effort>`), and **an omitted `effort` silently falls back to the
+provider default**, which on the codex side is a real capability downgrade. Never write a
+partial pin.
+
+Resolve the three fields like this, and state the result before dispatching:
+
+- **Nothing specified** -> `kind: claude`, and the model/effort from the **`critical` row
+  of `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" models --json` for that kind** (today:
+  `opus` at `xhigh`). Read the table, do not hardcode a slug -- the table is the source of
+  truth and a stale slug in a prompt is exactly what the `model_mismatch` detector exists
+  to catch.
+- **The user names a family** ("用 codex 跑", `--codex`) -> same rule against that kind's
+  `critical` row (today: `gpt-5.6-sol` at `xhigh`).
+- **The user names a model slug** -> look the slug up in `models --json` to get its `kind`;
+  keep that kind's `critical` effort unless the user names an effort too. If the slug
+  appears in neither family, **ask** -- never guess which launcher a slug belongs to.
+
+**The critical row is the floor, per family.** Single hands one executor an entire feature,
+so it gets that family's most capable configuration. The user may deliberately go lower
+("用 sonnet 就行"), and that is honored verbatim and recorded in the contract -- but router
+**never** lowers it on its own: quota pressure, a 429, or a launch failure **fails loudly**
+instead of quietly demoting the run. There is no tier lookup and no quota reordering in
+single mode; the pin is the whole routing decision.
+
+**Known observability gap on the codex side.** The live `recent_action` field is extracted
+from the claude executor's `stream-json` events. A codex single run still reports phase,
+elapsed-vs-budget, log activity and the stall countdown -- but not "which file it is
+editing right now". Say so when the user pins codex, rather than letting them wonder why
+the statusline is less specific.
 
 **Applicability first.** If the plan spans several unrelated top-level areas or the
 expected diff clearly exceeds one executor session, say so and get explicit confirmation

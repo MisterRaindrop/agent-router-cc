@@ -208,7 +208,7 @@ depends_on: []
 | 命令 | 作用 |
 |---|---|
 | `/router:go` | **上层命令** —— 执行你们刚商定的方案(或逐字执行已批准的 `PLAN.md`),替你驱动下面的一切 |
-| `/router:go single` | 单个强执行器(默认 Opus,绝不静默降档)整体承接 feature;detached 后台执行,statusline 实时显示阶段/活性,终态才唤醒会话 |
+| `/router:go single` | 单个钉死的执行器整体承接 feature —— **两侧都支持**(claude/opus 或 codex/gpt-5.6-sol),默认取该侧 `critical` 档能力,除你显式指定外绝不降档;detached 后台执行,statusline 实时显示阶段/活性,终态才唤醒会话 |
 | `/router:design` | 大型功能的 opt-in 入口 —— 澄清、调研、逐节起草并批准 `DESIGN.md` |
 | `/router:design-review` | 对 Design 的对抗式第二意见 —— 每条意见由你裁决,绝不自动采纳 |
 | `/router:plan` | 把已批准的 Design 变成 `PLAN.md` —— 步骤、任务拆分、验证;经你批准 |
