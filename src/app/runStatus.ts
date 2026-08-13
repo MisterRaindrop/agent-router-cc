@@ -148,6 +148,9 @@ export class RunStatusWriter {
     if (kind === 'claude') {
       const action = recentClaudeAction(line, this.worktreeDir);
       if (action !== undefined) this.status.recent_action = action;
+    } else if (kind === 'codex') {
+      const action = recentCodexAction(line);
+      if (action !== undefined) this.status.recent_action = action;
     }
     this.pendingActivity = true;
 
@@ -316,6 +319,27 @@ export function recentClaudeAction(line: string, worktreeDir: string): string | 
   return recent;
 }
 
+/** Extract only allowlisted command metadata from one Codex JSON event. */
+export function recentCodexAction(line: string): string | undefined {
+  let event: unknown;
+  try {
+    event = JSON.parse(line) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(event) || (event.type !== 'item.started' && event.type !== 'item.completed')) {
+    return undefined;
+  }
+  const item = event.item;
+  if (!isRecord(item) || item.type !== 'command_execution' || typeof item.command !== 'string') {
+    return undefined;
+  }
+  const command = unwrapShellCommand(item.command);
+  if (command === undefined) return undefined;
+  const tokens = bashTokens(command);
+  return tokens.length === 0 ? 'Bash:' : `Bash: ${tokens.join(' ')}`;
+}
+
 function collectToolUses(value: unknown, found: Record<string, unknown>[]): void {
   if (Array.isArray(value)) {
     for (const item of value) collectToolUses(item, found);
@@ -356,6 +380,43 @@ function bashTokens(command: string): string[] {
     tokens.push(subcommand);
   }
   return tokens;
+}
+
+function unwrapShellCommand(command: string): string | undefined {
+  const match = /^(\S+)[ \t]+(-lc|-c)[ \t]+([\s\S]+)$/u.exec(command.trim());
+  if (match === null) return undefined;
+  const shell = basename(match[1]!);
+  const option = match[2]!;
+  if (
+    !((shell === 'zsh' || shell === 'bash') && option === '-lc') &&
+    !(shell === 'sh' && option === '-c')
+  ) {
+    return undefined;
+  }
+  return unwrapQuotedShellWord(match[3]!);
+}
+
+function unwrapQuotedShellWord(word: string): string | undefined {
+  const quote = word[0];
+  if ((quote !== '"' && quote !== "'") || word.length < 2) return undefined;
+  let unwrapped = '';
+  for (let index = 1; index < word.length; index += 1) {
+    const character = word[index]!;
+    if (character === quote) return index === word.length - 1 ? unwrapped : undefined;
+    if (quote === '"' && character === '\\') {
+      const escaped = word[index + 1];
+      if (escaped === undefined || escaped === '\n') return undefined;
+      if (escaped === '"' || escaped === '\\' || escaped === '$' || escaped === '`') {
+        unwrapped += escaped;
+      } else {
+        unwrapped += `\\${escaped}`;
+      }
+      index += 1;
+    } else {
+      unwrapped += character;
+    }
+  }
+  return undefined;
 }
 
 function safeToken(token: string): boolean {
