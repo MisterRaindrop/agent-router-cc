@@ -48,6 +48,13 @@ export interface UsageRow {
   // Did this dispatch use a model cheaper than the strong baseline? Derived from
   // savingsUsd: >0 -> optimized; ===0 -> ran on the baseline model; null -> unknown model.
   optimized: boolean | null;
+  // Optional phase timings were added after the original usage history. Preserve
+  // absence so routing medians never turn an unmeasured phase into zero seconds.
+  tWorktree?: number | undefined;
+  tLaunch?: number | undefined;
+  tExec?: number | undefined;
+  tGate?: number | undefined;
+  tVerify?: number | undefined;
 }
 
 /** A floor for honesty, not a statistical claim. */
@@ -69,6 +76,16 @@ export interface RoutingGroup {
   medianWallSamples: number;
   medianInputTokens: number | null;
   medianInputSamples: number;
+  medianWorktreeSeconds: number | null;
+  medianWorktreeSamples: number;
+  medianLaunchSeconds: number | null;
+  medianLaunchSamples: number;
+  medianExecSeconds: number | null;
+  medianExecSamples: number;
+  medianGateSeconds: number | null;
+  medianGateSamples: number;
+  medianVerifySeconds: number | null;
+  medianVerifySamples: number;
 }
 
 export interface RoutingReport {
@@ -164,6 +181,11 @@ export function buildUsageReport(paths: RouterPaths, nowIso: string, opts: { all
       wallSecondsRecorded: typeof r.wall_seconds === 'number' ? r.wall_seconds : null,
       savingsUsd,
       optimized: savingsUsd === null ? null : savingsUsd > 0,
+      tWorktree: r.t_worktree,
+      tLaunch: r.t_launch,
+      tExec: r.t_exec,
+      tGate: r.t_gate,
+      tVerify: r.t_verify,
     });
   }
   rows.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0)); // newest first
@@ -267,6 +289,11 @@ export function buildRoutingReport(rows: UsageRow[]): RoutingReport {
     const conflict = group.flatMap((row) => (typeof row.conflict === 'boolean' ? [row.conflict] : []));
     const wall = group.flatMap((row) => (row.wallSecondsRecorded == null ? [] : [row.wallSecondsRecorded]));
     const input = group.flatMap((row) => (row.inputTokensRecorded == null ? [] : [row.inputTokensRecorded]));
+    const worktree = group.flatMap((row) => (row.tWorktree === undefined ? [] : [row.tWorktree]));
+    const launch = group.flatMap((row) => (row.tLaunch === undefined ? [] : [row.tLaunch]));
+    const exec = group.flatMap((row) => (row.tExec === undefined ? [] : [row.tExec]));
+    const gate = group.flatMap((row) => (row.tGate === undefined ? [] : [row.tGate]));
+    const verify = group.flatMap((row) => (row.tVerify === undefined ? [] : [row.tVerify]));
     const insufficientData = group.length < ROUTING_MINIMUM_RUNS;
     return {
       executor: group[0]!.executor,
@@ -284,6 +311,16 @@ export function buildRoutingReport(rows: UsageRow[]): RoutingReport {
       medianWallSamples: insufficientData ? 0 : wall.length,
       medianInputTokens: insufficientData ? null : median(input),
       medianInputSamples: insufficientData ? 0 : input.length,
+      medianWorktreeSeconds: insufficientData ? null : median(worktree),
+      medianWorktreeSamples: insufficientData ? 0 : worktree.length,
+      medianLaunchSeconds: insufficientData ? null : median(launch),
+      medianLaunchSamples: insufficientData ? 0 : launch.length,
+      medianExecSeconds: insufficientData ? null : median(exec),
+      medianExecSamples: insufficientData ? 0 : exec.length,
+      medianGateSeconds: insufficientData ? null : median(gate),
+      medianGateSamples: insufficientData ? 0 : gate.length,
+      medianVerifySeconds: insufficientData ? null : median(verify),
+      medianVerifySamples: insufficientData ? 0 : verify.length,
     };
   });
   groups.sort((a, b) => a.executor.localeCompare(b.executor) || String(a.tier).localeCompare(String(b.tier)) || String(a.effort).localeCompare(String(b.effort)));
@@ -500,6 +537,10 @@ function routingMedian(label: string, value: number | null, samples: number, for
   return value === null ? `${label} unavailable` : `${label} ${format(value)} (n=${samples})`;
 }
 
+function routingPhaseMedian(label: string, value: number | null, samples: number): string {
+  return `${label} ${value === null ? '\u2014' : `${value}s`} (n=${samples})`;
+}
+
 export function renderRouting(report: RoutingReport): string {
   const lines = ['Router routing evidence'];
   if (report.groups.length === 0) {
@@ -521,6 +562,16 @@ export function renderRouting(report: RoutingReport): string {
         pad(routingRate('conflict', group.conflictRate, group.conflictSamples), 23) +
         pad(routingMedian('wall', group.medianWallSeconds, group.medianWallSamples, fmtWall), 21) +
         routingMedian('input', group.medianInputTokens, group.medianInputSamples, fmtTokens),
+    );
+    lines.push(
+      '  phases: ' +
+        [
+          routingPhaseMedian('worktree', group.medianWorktreeSeconds, group.medianWorktreeSamples),
+          routingPhaseMedian('launch', group.medianLaunchSeconds, group.medianLaunchSamples),
+          routingPhaseMedian('exec', group.medianExecSeconds, group.medianExecSamples),
+          routingPhaseMedian('gate', group.medianGateSeconds, group.medianGateSamples),
+          routingPhaseMedian('verify', group.medianVerifySeconds, group.medianVerifySamples),
+        ].join(' \u00b7 '),
     );
   }
   if (!report.groups.some((group) => !group.insufficientData)) {
