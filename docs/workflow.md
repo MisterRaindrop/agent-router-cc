@@ -5,30 +5,50 @@ dispatchable packages, what the executor owes back, which gate proves what, and 
 review each change earns. This page is that protocol end to end. `docs/quickstart.md` is the
 five-minute version; `references/work-package.md` is the copy the orchestrator itself reads.
 
-**The one rule everything else follows from:** the CLI owns only mechanism -- worktree
-isolation, supervision, concurrency, locks, and gates that need no environment -- and every
-judgment stays with you and the main session. A cheap model can clear a shallow gate while
+**The one rule everything else follows from:** the CLI owns only mechanism -- the exclusive
+lock on the checkout, rescuing your uncommitted work, cutting and asserting the task branch,
+supervision, and gates that need no environment -- and every judgment stays with you and the
+main session. A cheap model can clear a shallow gate while
 being lazy or wrong, so "is this right" is never delegated, and never compressed.
 
 ## The shape of a run
 
 ```
 everyday task:   plan with Opus in conversation  ->  /router:go  ->  /router:review (optional)
-                                                     packages, dispatch,    independent, strict
-                                                     gate, review, land     review of landed code
+                                                     one package, one       independent, strict
+                                                     executor, gate,        review of landed code
+                                                     review, land
 
 large feature (opt-in -- the user's call, never router's):
-  /router:design  ->  /router:design-review (opt.)  ->  /router:plan  ->  /router:go  ->  /router:review (opt.)
-  clarify + code      independent adversarial pass;     the how: task     executes the
-  research; DESIGN.md  every objection adjudicated      breakdown, deps,  approved plan
-  approved section     by the user, none auto-applied   verification;     verbatim
-  by section                                            approved as summary
+  /router:brainstorm -> /router:design -> /router:design-review (opt.) -> /router:workplan -> /router:go
+  question the idea;    clarify + code    independent adversarial          the how: task       executes the
+  compare with how      research;         pass; every objection            breakdown, deps,    approved plan
+  others solve it;      DESIGN.md         adjudicated by the user,         verification;       verbatim
+  argue against         approved section  none auto-applied                approved as
+                        by section                                         summary
 ```
 
-`/router:go` pauses at exactly three points: confirm the package list, handle whatever needs
-real judgment, and approve before anything merges. Nothing lands without you. (When `go`
-executes a Plan approved via the design flow, the package-list pause is skipped -- that list
-was approved at `/router:plan`; the other two pauses remain.)
+`/router:go` pauses at exactly three points: confirm the package, handle whatever needs real
+judgment, and approve before anything merges. Nothing lands without you. (When `go` executes a
+work plan approved via the design flow, the first pause is skipped -- that was approved at
+`/router:workplan`; the other two remain.)
+
+**One run, one package, one executor.** The pin always carries all three fields (`kind`,
+`model`, `effort`) taken from that family's `critical` row in `router models`, because an
+omitted effort silently falls back to the provider default. The user may deliberately pin
+lower; router never lowers it on its own (a 429 fails loudly instead of demoting). The contract
+is a verbatim copy of the approved `WORKPLAN.md` **and `DESIGN.md`** (each anchored by revision
++ sha256) or a ~40-line compact template. Dispatch runs **detached** (it survives the session)
+with a listener that wakes the session at terminal states; progress lives in the statusline --
+every run writes a live `status.json` (phase, elapsed vs budget, log activity, stall countdown,
+a redacted `recent_action`) and per-phase timings into metrics. `commands/go.md` has the flow;
+`references/task-contract.md` has the authoring detail.
+
+**Where the executor works.** In your own checkout, on a branch called `router/<task-id>`. Not
+in a `git worktree`: a fresh one has no dependencies, no build objects and no configure output,
+so a real project cannot compile in it -- and the build has to happen in the main checkout
+anyway, which then adds a "carry the code back" step. What replaces the directory isolation is
+git plus a lock, described in section 4.
 
 ## 1. One plan, one `plan_id`
 
@@ -81,27 +101,56 @@ across several top-level directories) and never lowers it. When the declaration 
 signals disagree, the higher one wins, and the run records `risk_raised_by` so the escalation
 is visible rather than mysterious.
 
-## 4. Dispatch runs independent packages concurrently
+## 4. Dispatch runs one task at a time, under a lock
 
 ```
-router dispatch <id> <id> ... [--max-parallel <n>] --json
+router dispatch <id> --json
 ```
 
-Two packages may run at once exactly when neither needs the other's output and their
-`allowed_globs` are disjoint; anything else declares `depends_on` and waits. That judgment is
-yours -- but `land` is fail-close, so a wrong call aborts the merge and restores the tree
-rather than producing a mess.
+Parallel dispatch was removed, and not for cost: measured, the whole orchestration overhead was
+0.26s against 393s of executor time -- effectively free. It cost the human. Several executors
+editing at once means tracking who changed what, in what order things merge, and whether
+merging them breaks each other; and every result still needs reviewing one at a time, so review
+was the bottleneck the parallelism kept feeding. Several packages means several `go` runs.
 
-Pass every independent package in **one** call: the wall clock becomes the slowest package
-instead of the sum, and it costs one orchestrator turn instead of one per package. Measured:
-26s + 31s ran as a 32s batch; 234s + 244s ran as 244s. Never fan out background shells you
-then poll -- each poll is a full turn, the expensive thing here.
+Because the executor shares your checkout, the run is a transaction:
+
+| Step | What it does |
+|---|---|
+| probe | read the branch and working tree. Already on an unmerged `router/*` branch -> ask before continuing |
+| take lock | **before the first write**. Blocked -> report the holder's pid and last-active time |
+| reap | lock reclaimed from a dead holder -> kill its orphan executor group first, and wait for it |
+| rescue | your uncommitted work -> one commit, file list and sha reported |
+| branch | create `router/<task-id>`. Name already taken -> **fail**, never reuse |
+| contract | `WORKPLAN.md` + `DESIGN.md` concatenated verbatim, each with its sha256 |
+| dispatch | launch the executor detached, cwd = the repository root |
+| work | the executor commits **one functional unit at a time** |
+| closing | assert: on the task branch, `base_sha` is an ancestor of `HEAD`, **nothing uncommitted** |
+| verify | `gate.yaml` reset, clean-vs-incremental gate, then the environment-free checks |
+| report | done, and **which branch you are on**. No switch back, no merge |
+| release | terminate the executor's process group, release the lock |
+
+Three rules make sharing the checkout safe, and each replaces something the worktree used to
+give for free:
+
+- **The lock is taken before the first write and held until the executor is dead.** The
+  resource being protected starts changing at the rescue commit, so a lock taken later would
+  let two runs commit over each other while neither yet held anything. Its heartbeat runs in a
+  separate process, because verify commands block the event loop and an in-process beat would
+  go silent for exactly as long as the lock's 90-second staleness window.
+- **Nothing destructive runs without asserting identity.** A reset only happens while the
+  current branch is exactly the task's and `base_sha` is still an ancestor of `HEAD`. And it is
+  a tracked-only reset: the variant that also runs `git clean -fd` would delete files created
+  while the executor was running, yours included.
+- **The closing invariant.** There is no catch-all commit any more -- the executor commits its
+  own units -- so a file it forgot would never enter `base_sha..HEAD`, and every gate would pass
+  without ever seeing it. The run fails on leftovers instead of reporting success.
 
 ## 5. What the executor owes back
 
 The executor owns its whole loop: read the code, decide its internal steps, implement, write
 tests, run the gate, fix to green, self-check its scope, and report. Both protocols below
-ride on its **final message**, so nothing is written into the worktree where it would enter
+ride on its **final message**, so nothing is written into the working tree where it would enter
 the diff and trip the scope gate.
 
 **The delivery report.** Prose a human can read, then a `router-delivery` fenced block:
@@ -146,24 +195,36 @@ order -- the deterministic guarantees a cheap model cannot fake:
 | `exec_bit` | a script added where its same-extension siblings are executable carries the bit |
 | `verify` | the task's own `verify` command(s) exited 0 (skipped when `verify: []`) |
 
-**The real gate** is a property of the project, not of the task, so decide it once and check
-it empirically once. `.router/gate.yaml` declares which mode applies:
+**The real gate** is a property of the project, not of the task, so decide it once and check it
+empirically once. The executor now works in your checkout, so it already has the environment the
+gate needs -- warm dependencies, warm objects, a real configure result. That is why the worktree
+mode this section used to describe is gone: the reason for a separate mode was that a worktree
+could not build.
 
-- **`mode: worktree`** -- the build and tests run inside the run worktree. Valid when
-  dependencies resolve from an ancestor directory or a global cache and nothing needs an
-  exclusive shared resource. A run worktree lives under the repository, so ancestor resolution
-  often just works (verified here: the full gate runs in a worktree, 174 tests in 4.7s). Put
-  that command in every package's `verify:` and the diff arrives already proven to compile and
-  pass. Implementation and verification are both fully parallel.
-- **`mode: queue`** -- the real environment exists **once**: a single build directory, a
-  long-running Docker container bound to a fixed host path, a live service. Executors write code
-  and tests in parallel worktrees and **do not build**; `router gate <id...>` feeds their commits
-  one at a time into the project's own checkout, where the caches are warm.
+Declare it in `.router/gate.yaml` and the dispatch flow runs it:
 
-Why the main checkout and not a dedicated verification worktree: the container mounts a **fixed
-host path**, and the build directory, ccache, `CMakeCache.txt`, ninja depfiles and
-`compile_commands.json` are all keyed to that path. A worktree is a different source path, so
-its caches and absolute paths are worthless even when the path sits inside the mount.
+| key | what it does |
+|---|---|
+| `gate` | the incremental build-and-test command |
+| `clean_gate` | the full-rebuild command |
+| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate` |
+| `reset` | run **before** verification, clearing state a previous build left behind |
+| `env` | extra environment variable names the gate needs |
+| `lock_wait_minutes` | how long to wait when another run holds the checkout |
+| `gate_wall_minutes` | hard ceiling on one gate command |
+
+When `gate.yaml` declares commands they **replace** the task's `verify`: it describes how the
+project builds, `verify` describes one task, and running both builds twice. Any **deletion** in
+the diff forces `clean_gate` regardless of triggers -- an incremental build keeps a stale object
+for a source file that no longer exists, and nothing in the diff tells it to drop it.
+
+`mode: queue` still exists for a project that verifies on a shared **integration branch**:
+`router gate <id...>` merges each task commit onto that branch in the project's own checkout,
+where the caches are warm. The reason it uses your checkout rather than a dedicated verification
+worktree has not changed: the container mounts a **fixed host path**, and the build directory,
+ccache, `CMakeCache.txt`, ninja depfiles and `compile_commands.json` are all keyed to it. A
+worktree is a different source path, so its caches and absolute paths are worthless even when
+the path sits inside the mount.
 
 Borrowing your checkout is only safe under hard rules, all of which the queue enforces:
 
@@ -222,7 +283,8 @@ later turn, so raw logs are the largest avoidable cost.
 ## 8. Sessions: resume, or start fresh
 
 - **Same task, fixing what the gate reported -> `router resume <id> --feedback "..."`.** Same
-  worktree, same base, same scope; the executor keeps what it learned instead of re-exploring the
+  branch, same base, same scope -- and it refuses if you have checked something else out in the
+  meantime; the executor keeps what it learned instead of re-exploring the
   repository. Send a precise error summary, not a log dump. Cap it at two attempts, then take the
   package over or bring it to the user.
 - **Resume saves exploration, not tokens.** An executor's session is re-sent in full every turn, so
@@ -231,7 +293,7 @@ later turn, so raw logs are the largest avoidable cost.
   cost more input than the original 1181-line implementation. So: put **all** your findings into
   one resume rather than three, and **make trivial mechanical edits yourself** — a resume for two
   comment changes cost roughly what the entire implementation had.
-- **A different task -> a fresh session.** `resume` reuses the same worktree and the same
+- **A different task -> a fresh session.** `resume` continues on the same task branch from the same
   `base_sha`, so a reused session's memory and the files on disk drift apart silently -- and the
   scope gate diffs against `base_sha`, so a second task there would carry the first one's changes.
   "One task, one auditable diff" is gone. A stale session also cheerfully revives plans it already
@@ -267,17 +329,23 @@ pattern the project already uses.
   gate.yaml                     # the real gate: mode + commands (you confirm it once)
   models.yaml                   # optional tier overrides; `router models` shows the result
   metrics.jsonl                 # append-only: one row per run, plus orchestrator rows
-  plans/<plan_id>/              # DESIGN.md, PLAN.md, critique-<round>.md, DECISIONS.md, spec.lock
+  gate.lock                     # the exclusive lock on this checkout, while a run holds it
+  plans/<plan_id>/              # BRAINSTORM.md, DESIGN.md, WORKPLAN.md,
+                                #   critique-<round>.md, DECISIONS.md, spec.lock
   tasks/<id>/
     task.yaml                   # the machine contract (scope, tier, risk, verify, depends_on)
     TASK_CONTRACT.md            # the seven faces, for the executor to read
-    TASK_CONTEXT.md             # optional navigation summary
-    runs/<run>/
-      DELIVERY.md               # the executor's final message
-      diff.patch  result.json   # the diff and the full run record
-      logs/worker.log  logs/gate.log
-  worktrees/<id>/<run>/         # the isolated checkout the executor worked in
+    DELIVERY.md                 # the executor's final message
+    diff.patch  result.json     # the diff and the full run record
+    status.json                 # live phase/activity/terminal state (observation only --
+                                #   never an input to gates, land, or any verdict)
+    logs/worker.log  logs/gate.log
 ```
+
+Run artifacts sit directly in `tasks/<id>/`. They used to live under `tasks/<id>/runs/run-001/`,
+which was a directory level over a constant -- dispatch has been one attempt per task since the
+synchronous model landed. The old path is still **read** so an existing task's history does not
+vanish on upgrade; nothing writes it.
 
 All of it is gitignored and created on first use -- there is no `init`, no policy file, and
 nothing router writes into your repository.

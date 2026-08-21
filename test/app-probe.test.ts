@@ -114,17 +114,19 @@ test('probe passes when its executor writes nothing and stores the delivery repo
       checks: [{ id: 'probe_no_diff', ok: true }],
     });
     assert.equal(result.diff_sha, undefined);
-    assert.equal(existsSync(paths.diffPatch('probe-task', RUN)), false);
+    assert.equal(existsSync(paths.diffPatch('probe-task')), false);
     assert.ok(result.delivery);
-    assert.match(readFileSync(paths.delivery('probe-task', RUN), 'utf8'), /^Probe delivery report/);
-    assert.equal(fx.git(paths.worktree('probe-task', RUN), ['rev-parse', 'HEAD']).trim(), result.base_sha);
+    assert.match(readFileSync(paths.delivery('probe-task'), 'utf8'), /^Probe delivery report/);
+    // A probe must leave no commit at all, so the task branch still points at the base.
+    assert.equal(fx.git(paths.repoRoot, ['rev-parse', 'HEAD']).trim(), result.base_sha);
+    assert.equal(fx.git(paths.repoRoot, ['branch', '--show-current']).trim(), 'router/probe-task');
   });
 });
 
 test('probe fails with the file count when its executor writes code and leaves no diff patch', async () => {
   await withProbeExecutor(true, async ({ paths, deps }) => {
     mkdirSync(join(paths.runsDir('probe-task'), RUN), { recursive: true });
-    writeFileSync(paths.diffPatch('probe-task', RUN), 'stale patch from an earlier run\n');
+    writeFileSync(paths.diffPatch('probe-task'), 'stale patch from an earlier run\n');
     const result = await dispatchTask(deps, 'probe-task');
 
     assert.equal(result.exit_class, 'ok');
@@ -133,7 +135,7 @@ test('probe fails with the file count when its executor writes code and leaves n
       checks: [{ id: 'probe_no_diff', ok: false, detail: 'probe wrote 1 file; expected no diff' }],
     });
     assert.equal(result.diff_sha, undefined);
-    assert.equal(existsSync(paths.diffPatch('probe-task', RUN)), false);
+    assert.equal(existsSync(paths.diffPatch('probe-task')), false);
     assert.ok(result.delivery);
   });
 });
@@ -141,7 +143,7 @@ test('probe fails with the file count when its executor writes code and leaves n
 function verifyRequest(repo: string, baseSha: string): TaskVerifyRequest {
   return {
     repoRoot: repo,
-    worktreeDir: repo,
+    workDir: repo,
     baseSha,
     head: 'HEAD',
     allowedGlobs: ['src/**'],

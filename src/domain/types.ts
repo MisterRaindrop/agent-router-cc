@@ -154,6 +154,12 @@ export interface VerifierReport {
   result: 'PASSED' | 'FAILED';
   checks: VerifierCheck[];
   changed_lines?: number;
+  /**
+   * A verify command hit the hard timeout. Still a FAILED report -- nothing may land on it --
+   * but the distinction matters when reporting: a timeout proves nothing about the change,
+   * so it is `unverified` in assurance terms, not evidence that the code is broken.
+   */
+  timed_out?: boolean;
 }
 
 // -- Run result + metrics ------------------------------------------------------
@@ -187,7 +193,6 @@ export interface DeliveryHeader {
 }
 
 export interface RunResult {
-  run_id: string;
   task_id: string;
   attempt_number: number;
   exit_class: ExitClass;
@@ -216,7 +221,22 @@ export interface RunResult {
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
   /** What the resumed run actually reported: another id, or `null` for none at all. */
   resume_reported_session?: string | null;
-  base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
+  base_sha?: string; // commit the task branch was created from (diff base; used by resume)
+  /** The task branch this run developed on. The final report has to name it: the user is left
+   *  standing on it, and router never merges or switches back for them. */
+  branch?: string;
+  /** Step 4: the user's own uncommitted work, committed onto their branch before anything moved.
+   *  Present only when there was something to rescue -- a clean tree gets no empty commit. */
+  rescue_sha?: string;
+  /** Commits made solely so a destructive reset could not lose them. Unreachable after the
+   *  reset, recoverable by sha -- which is the whole reason they are reported. */
+  discarded_shas?: string[];
+  /** Step 9, the closing invariant, checked before verification and reported either way.
+   *  A run that fails it is not verified and does not claim completion. */
+  closeout?: { ok: true } | { ok: false; reason: string; files: string[] };
+  /** Submodule content dirt seen in the checkout. Not the user's work and not rescuable (it
+   *  lives in another repository), so it is reported rather than acted on. */
+  dirty_submodules?: string[];
   // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
   // Set so a caller can recover work from a run that was killed after it had finished.
   uncommitted_changes?: boolean;
@@ -229,6 +249,29 @@ export interface RunResult {
   // commit is the only durable handle on what the task changed:
   // `git show <merge_commit>` / `git diff <merge_commit>^1 <merge_commit>`.
   merge_commit?: string;
+}
+
+export type RunPhase = 'queued' | 'worktree' | 'executor_starting' | 'executor_working' | 'gating' | 'verify';
+
+export type RunTerminalState = 'succeeded' | 'failed' | 'stalled' | 'timed_out' | 'cancelled';
+
+export interface RunStatus {
+  phase: RunPhase;
+  terminal_state?: RunTerminalState;
+  started_at: string;
+  phase_started_at: string;
+  budget_minutes: number;
+  last_output_at: string | null;
+  stall_deadline: string | null;
+  recent_action?: string;
+}
+
+export interface RunPhaseTimings {
+  t_worktree: number;
+  t_launch: number;
+  t_exec: number;
+  t_gate: number;
+  t_verify: number;
 }
 
 export interface MetricRecord {
@@ -244,6 +287,13 @@ export interface MetricRecord {
   context_base_sha?: string;
   /** Whether this metric is for the main model or an executor. */
   role?: 'executor' | 'orchestrator';
+  /**
+   * Legacy label: `'orchestrator'` for a main-model row, `'run-001'` for an executor one.
+   *
+   * Kept, unlike RunResult's, because metrics.jsonl is append-only history: a field that means
+   * one thing in the old rows and another in the new ones is worse to read than a constant.
+   * Nothing branches on it.
+   */
   run_id: string;
   attempt_number: number;
   model: string | null;
@@ -260,6 +310,11 @@ export interface MetricRecord {
   tokens_output: number | null;
   cost_usd: number | null;
   wall_seconds: number;
+  t_worktree?: number;
+  t_launch?: number;
+  t_exec?: number;
+  t_gate?: number;
+  t_verify?: number;
   escalated: boolean;
   env_error: boolean;
 }

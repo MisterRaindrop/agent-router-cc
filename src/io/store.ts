@@ -17,11 +17,17 @@ function readJson<T>(path: string): T | null {
 }
 
 // -- run artifacts --
-export function readResult(p: RouterPaths, id: string, run: string): RunResult | null {
-  return readJson<RunResult>(p.resultJson(id, run));
+/**
+ * The task's run record, falling back to the pre-fold `runs/run-001/` location.
+ *
+ * The fallback is read-only and deliberate: upgrading router must not make an existing task's
+ * result vanish, and `land` / `result` / `usage` all read this.
+ */
+export function readResult(p: RouterPaths, id: string): RunResult | null {
+  return readJson<RunResult>(p.resultJson(id)) ?? readJson<RunResult>(p.legacyResultJson(id));
 }
-export function writeResult(p: RouterPaths, id: string, run: string, result: RunResult): void {
-  writeJsonAtomic(p.resultJson(id, run), result);
+export function writeResult(p: RouterPaths, id: string, result: RunResult): void {
+  writeJsonAtomic(p.resultJson(id), result);
 }
 
 // -- metrics --

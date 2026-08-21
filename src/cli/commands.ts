@@ -1,23 +1,26 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
+import type { RunResult, RunStatus } from '../domain/types.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
+import { EXECUTOR_SANDBOX_ENV } from '../io/env.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
-import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
-import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
+import { branchExists, currentBranch, deleteBranch, mergeAbort, mergeNoFF, resolveCommit } from '../io/git.ts';
+import { findRouterDir, routerPaths, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask, dispatchTasks, resolvePoolSize, resumeTask } from '../app/dispatch.ts';
+import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
 import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
 import { runQueueGate } from '../app/gateQueue.ts';
 import { readLock } from '../io/lock.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
+import { readRunStatus } from '../app/runStatus.ts';
 import { isDegraded, loadCodeIntelConfig, runIndex, runQuery } from '../app/symbolIndex.ts';
 import { parseSymbols } from '../io/treeSitter.ts';
 import { buildRoutingReport, buildUsageReport, explainSavingsText, renderRouting, renderUsage } from '../app/usageReport.ts';
@@ -44,12 +47,35 @@ interface Deps {
 
 // Auto-scaffold: no `init` needed. If no .router is found up-tree, create one at the
 // cwd; `.router/` is fully gitignored so router state never pollutes the repo.
+//
+// Except from inside an executor, where every path through here is refused. This is the
+// enforcement for "the executor must not write real orchestration state", and it has to live
+// in the CLI because nothing else can reach it: the guard-router-state hook inspects
+// Write/Edit file paths, so it sees neither a Bash invocation nor codex at all.
+//
+// The reachable case, reproduced before this check existed: give an executor a task that
+// changes `router new`, and it runs `router new --id smoke` to try its own work. Under the
+// branch model its cwd IS the repo root, so `.router/` resolves to the real state directory
+// and `.router/tasks/smoke/` gets written. `.router/.gitignore` is `*`, so no gate ever sees
+// it. Refusing the whole verb -- read and write -- is deliberate: the CLI is the
+// orchestrator's instrument, the executor works through files, git and its own gate, and one
+// rule cannot be half-bypassed the way an allowlist of safe verbs could be.
 function depsFor(ctx: Ctx): Deps {
+  if ((process.env[EXECUTOR_SANDBOX_ENV] ?? '') !== '') {
+    throw new CliError(
+      `refusing to touch router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). ` +
+        `Orchestration state belongs to the dispatching session; work through files, git and your gate.`,
+      2,
+    );
+  }
   const explicit = flagStr(ctx.args.flags, 'router-dir');
   const found = explicit ?? findRouterDir(ctx.cwd);
   const rd = found ?? join(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
-  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
+  // Not worktreesDir: nothing creates a per-task worktree any more, and scaffolding an empty
+  // directory that will stay empty is the kind of leftover that reads as "there are live runs
+  // in here". The deprecated path creates its own if it is ever re-enabled.
+  for (const d of [paths.root, paths.tasksDir]) {
     if (!existsSync(d)) mkdirSync(d, { recursive: true });
   }
   const gi = join(paths.root, '.gitignore');
@@ -148,10 +174,10 @@ const newTask: Handler = (ctx) => {
 const dispatch: Handler = async (ctx) => {
   const deps = depsFor(ctx);
   const ids = requireIds(ctx);
-  const maxParallelText = flagStr(ctx.args.flags, 'max-parallel');
-  const maxParallel = maxParallelText === undefined ? undefined : Number(maxParallelText);
-  if (maxParallel !== undefined && (!Number.isInteger(maxParallel) || maxParallel < 1)) {
-    throw new CliError('--max-parallel must be an integer >= 1', 2);
+  // Rejected rather than ignored: silently accepting a flag that no longer does anything is
+  // how a caller ends up believing four executors ran when one did.
+  if (flagStr(ctx.args.flags, 'max-parallel') !== undefined) {
+    throw new CliError('--max-parallel was removed; router dispatches one task at a time', 2);
   }
   if (ids.length === 1) {
     const id = ids[0]!;
@@ -161,14 +187,12 @@ const dispatch: Handler = async (ctx) => {
     return v === 'PASSED' ? 0 : 1;
   }
 
-  const results = await dispatchTasks(deps, ids, maxParallel);
-  const parallel = resolvePoolSize(ids.length, maxParallel);
+  const results = await dispatchTasks(deps, ids);
   const passed = results.filter((result) => result.verifier?.result === 'PASSED').length;
   emit(
     ctx.json,
     {
       ok: passed === results.length,
-      parallel,
       results: results.map((result, index) => dispatchOutput(ids[index]!, result, false)),
     },
     () => [...results.map((result, index) => dispatchLine(ids[index]!, result)), `${passed}/${results.length} PASSED`].join('\n'),
@@ -199,6 +223,11 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     delivery: result.delivery?.path ?? null,
     delivery_header: result.delivery?.header_error ?? (result.delivery?.header ? 'ok' : 'missing'),
     uncommitted_changes: result.uncommitted_changes ?? false,
+    branch: result.branch ?? null,
+    rescue_sha: result.rescue_sha ?? null,
+    discarded_shas: result.discarded_shas ?? [],
+    closeout: result.closeout ?? null,
+    dirty_submodules: result.dirty_submodules ?? [],
   };
 }
 
@@ -206,12 +235,31 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
   const v = result.verifier?.result ?? 'FAILED';
   const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
   const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
-  if (result.conflict === true || result.exit_class === 'contract_conflict') {
-    const report = result.delivery?.path ?? `.router/tasks/${id}/runs/${result.run_id}/DELIVERY.md`;
-    const recoverable = result.uncommitted_changes
-      ? `\nNOTE: the uncommitted worktree remains available at .router/worktrees/${id}/${result.run_id}`
+  // Where the user is left standing. Router never switches back and never merges, so a report
+  // that omits this leaves them on a branch they did not check out and were not told about.
+  const where = result.branch ? `\nYou are now on branch ${result.branch}.` : '';
+  const rescued = result.rescue_sha
+    ? `\nYour uncommitted work was committed first as ${result.rescue_sha.slice(0, 12)} ` +
+      `(undo with: git reset --soft ${result.rescue_sha.slice(0, 12)}~1).`
+    : '';
+  const salvaged =
+    result.discarded_shas && result.discarded_shas.length > 0
+      ? `\nSalvaged before an executor switch, unreachable but recoverable: ` +
+        `${result.discarded_shas.map((sha) => sha.slice(0, 12)).join(', ')}`
       : '';
-    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing committed or verified; the plan needs revising; report: ${report}${recoverable}`;
+  const submodules =
+    result.dirty_submodules && result.dirty_submodules.length > 0
+      ? `\nNOTE: ${result.dirty_submodules.length} submodule(s) have uncommitted content. That lives in ` +
+        `another repository, so it was neither rescued nor reset.`
+      : '';
+  const closeout =
+    result.closeout && !result.closeout.ok
+      ? `\nCLOSING INVARIANT FAILED: ${result.closeout.reason}` +
+        (result.closeout.files.length > 0 ? `\n  ${result.closeout.files.join('\n  ')}` : '')
+      : '';
+  if (result.conflict === true || result.exit_class === 'contract_conflict') {
+    const report = result.delivery?.path ?? `.router/tasks/${id}/DELIVERY.md`;
+    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing verified; the plan needs revising; report: ${report}${where}${rescued}`;
   }
   const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
   const warn = result.model_mismatch
@@ -221,17 +269,19 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
   const report = result.delivery
     ? ` report: ${result.delivery.path}${result.delivery.header_error ? ` [delivery_header: ${result.delivery.header_error}]` : ''}`
     : '';
-  // Nothing is committed unless the run ended ok, so an unfinished run's work is only
-  // discoverable if we say where it is.
+  // An unfinished run leaves work uncommitted in the user's own checkout now, not in a
+  // worktree they would never have looked in.
   const recoverable = result.uncommitted_changes
-    ? `\nNOTE: this run did not commit, but its worktree still holds changes -- the work is ` +
-      `recoverable: git -C .router/worktrees/${id}/${result.run_id} status`
+    ? `\nNOTE: this run left uncommitted changes in your checkout -- inspect with: git status`
     : '';
   const raisedRisk =
     result.risk_raised_by && result.risk_raised_by.length > 0
       ? `\nRISK RAISED to ${result.risk}: ${result.risk_raised_by.join(', ')}`
       : '';
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}${raisedRisk}`;
+  return (
+    `${id}: ${v} (executor ${who}${sw}); ${next}${report}` +
+    `${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`
+  );
 }
 
 // Resume the prior dispatch's executor session with feedback (context retained) instead
@@ -276,15 +326,26 @@ const land: Handler = (ctx) => {
   const ids = requireIds(ctx);
   const landed: { id: string; merged: string; merge_commit: string }[] = [];
   for (const id of ids) {
-    const result = store.readResult(paths, id, RUN);
+    const result = store.readResult(paths, id);
     const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(', ')}` : '';
     if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
     if (result.conflict === true || result.exit_class === 'contract_conflict') {
-      const report = result.delivery?.path ?? paths.delivery(id, RUN);
+      const report = result.delivery?.path ?? paths.delivery(id);
       throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
     }
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
-    const branch = runBranch(id, RUN);
+    const branch = result.branch ?? taskBranch(id);
+    // Dispatch now leaves the user standing ON the task branch, so `land` has to say so rather
+    // than attempt to merge a branch into itself (and then fail to delete the branch it is on).
+    // Checking out the merge target is the user's decision: merging is irreversible, and
+    // choosing what to merge into is the whole point of not doing it automatically.
+    if (currentBranch(paths.repoRoot) === branch) {
+      throw new CliError(
+        `${id}: you are on ${branch}, the branch to be landed. Check out the branch you want to ` +
+          `merge INTO first, then re-run \`router land ${id}\`${prior}`,
+        1,
+      );
+    }
     try {
       mergeNoFF(paths.repoRoot, branch);
     } catch (e) {
@@ -295,17 +356,8 @@ const land: Handler = (ctx) => {
     // the only durable handle on what this task changed (`git show <sha>`). Without it a
     // later review or post-mortem has no way back to the task's diff.
     const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
-    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
-    // The run's checkout is gone; drop its now-empty parent so `.router/worktrees/` does not
-    // keep one empty directory per task that ever ran. rmdir refuses a non-empty directory,
-    // so another run of the same task is never touched.
-    try {
-      rmdirSync(dirname(paths.worktree(id, RUN)));
-    } catch {
-      /* still holds another run, or already gone */
-    }
     deleteBranch(paths.repoRoot, branch);
-    store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
+    store.writeResult(paths, id, { ...result, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
   // Report once, after the loop: a batch has to leave stdout as ONE json document, so
@@ -374,11 +426,11 @@ const result: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
   const run = flagStr(ctx.args.flags, 'run') ?? RUN;
-  const res = store.readResult(paths, id, run);
+  const res = store.readResult(paths, id);
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = '';
   try {
-    tail = readFileSync(paths.workerLog(id, run), 'utf8').split('\n').slice(-50).join('\n');
+    tail = readFileSync(paths.workerLog(id), 'utf8').split('\n').slice(-50).join('\n');
   } catch {
     /* no log */
   }
@@ -391,10 +443,23 @@ const result: Handler = (ctx) => {
   return 0;
 };
 
+// The status column answers "where is this task right now", so a run still in flight must
+// read as its live phase: result.json only lands when the run is over, status.json is
+// written throughout. Once result.json exists it wins -- it is the verified outcome, and
+// the last status.json of a finished run says nothing more than its terminal state does.
+function statusLabel(res: RunResult | null, live: RunStatus | null, nowMs: number): string {
+  if (res !== null) return res.verifier?.result ?? res.exit_class;
+  if (live === null) return 'none';
+  if (live.terminal_state !== undefined) return live.terminal_state;
+  const minutes = Math.max(0, Math.floor((nowMs - Date.parse(live.started_at)) / 60_000));
+  return `${live.phase} ${minutes}m`;
+}
+
 // List authored tasks with their last dispatch status and whether a worktree is
 // still on disk (read-only; helps you see leftovers before cleaning them).
 const list: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths, clock } = depsFor(ctx);
+  const nowMs = Date.parse(clock.nowIso());
   const ids = existsSync(paths.tasksDir)
     ? readdirSync(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
     : [];
@@ -405,42 +470,49 @@ const list: Handler = (ctx) => {
     } catch {
       /* missing/invalid task.yaml */
     }
-    const res = store.readResult(paths, id, RUN);
-    const status = res === null ? 'none' : (res.verifier?.result ?? res.exit_class);
-    const worktree = existsSync(paths.worktree(id, RUN));
+    const res = store.readResult(paths, id);
+    const live = readRunStatus(paths.runStatus(id));
+    const status = statusLabel(res, live, nowMs);
+    // Was "is there a worktree on disk". There are no per-task worktrees any more, so the
+    // question that matters is whether the task's branch is still around to review or merge.
+    const branch = res?.branch ?? taskBranch(id);
+    const branchLive = branchExists(paths.repoRoot, branch);
     const risk = res?.risk ?? '-';
     const report = res?.delivery ? 'yes' : '-';
-    return { id, title, status, worktree, risk, report };
+    return { id, title, status, branch: branchLive ? branch : null, risk, report, live };
   });
+  // A live label ("executor_working 3m") is wider than any terminal one; widen the column
+  // to the longest row so the table stays aligned, and keep today's width when none is live.
+  const statusWidth = Math.max(10, ...rows.map((r) => r.status.length + 1));
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return 'No tasks in .router/tasks.';
     const lines = [
       `Tasks (${rows.length}):`,
-      pad('id', 22) + pad('status', 10) + pad('worktree', 10) + pad('risk', 10) + pad('report', 10) + 'title',
+      pad('id', 22) + pad('status', statusWidth) + pad('branch', 10) + pad('risk', 10) + pad('report', 10) + 'title',
     ];
     for (const r of rows)
       lines.push(
         pad(r.id, 22) +
-          pad(String(r.status), 10) +
-          pad(r.worktree ? 'present' : '-', 10) +
+          pad(String(r.status), statusWidth) +
+          pad(r.branch !== null ? 'present' : '-', 10) +
           pad(r.risk, 10) +
           pad(r.report, 10) +
           r.title,
       );
-    const leftover = rows.filter((r) => r.worktree).length;
+    const leftover = rows.filter((r) => r.branch !== null).length;
     if (leftover > 0)
-      lines.push(`\n${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+      lines.push(`\n${leftover} task branch(es) still present. \`router land <id>\` merges and deletes one; \`git branch -D <branch>\` discards it.`);
     return lines.join('\n');
   });
   return 0;
 };
 
-const PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const DESIGN_STATUSES = new Set(['design_draft', 'design_approved']);
+const PLAN_STATUSES = new Set(['plan_draft', 'plan_approved', 'executing', 'done']);
 
-// A malformed or missing PLAN.md must not fail the whole `plans` listing -- it just
-// means this one row's revision is unknown; see the `plans` handler below.
-function planRevision(text: string): string | null {
-  const match = PLAN_FRONTMATTER_RE.exec(text);
+function documentFrontmatter(text: string): Record<string, unknown> | null {
+  const match = DOCUMENT_FRONTMATTER_RE.exec(text);
   if (match === null) return null;
   let parsed: unknown;
   try {
@@ -449,8 +521,22 @@ function planRevision(text: string): string | null {
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-  const rev = (parsed as Record<string, unknown>).plan_revision;
-  return typeof rev === 'string' || typeof rev === 'number' ? String(rev) : null;
+  return parsed as Record<string, unknown>;
+}
+
+function scalarText(value: unknown): string | null {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
+}
+
+// Current plans declare `revision`; `plan_revision` remains readable for artifacts frozen
+// by the legacy flow. Malformed or missing frontmatter degrades only this row.
+function planRevision(frontmatter: Record<string, unknown> | null): string | null {
+  return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
+}
+
+function documentStage(frontmatter: Record<string, unknown> | null, allowed: Set<string>): string | null {
+  const status = frontmatter?.status;
+  return typeof status === 'string' && allowed.has(status) ? status : null;
 }
 
 function highestCritiqueRound(entries: string[]): number | null {
@@ -464,12 +550,12 @@ function highestCritiqueRound(entries: string[]): number | null {
   return max;
 }
 
-// List plan artifacts under .router/plans -- PLAN.md's declared revision, the highest
-// critique-<n>.md round on disk, whether DECISIONS.md exists, and whether a spec.lock is
-// currently held. Read-only: this is a browsing aid so a plan from last week is findable
-// without remembering its id by heart.
+// List plan artifacts under .router/plans -- document stage, PLAN.md's declared revision,
+// the highest critique round, decisions, and lock state. This handler deliberately avoids
+// depsFor(): browsing plans must never scaffold or otherwise write under .router/.
 const plans: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const explicit = flagStr(ctx.args.flags, 'router-dir');
+  const paths = routerPaths(explicit ?? findRouterDir(ctx.cwd) ?? join(ctx.cwd, ROUTER_DIR));
   // `.router/plans` has no dedicated field on RouterPaths (only per-plan-id accessors do);
   // this is the one directory we must list to discover which plan ids even exist.
   const plansRoot = join(paths.root, 'plans');
@@ -477,12 +563,28 @@ const plans: Handler = (ctx) => {
     ? readdirSync(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
     : [];
   const rows = ids.map((id) => {
-    let revision: string | null = null;
+    let planFrontmatter: Record<string, unknown> | null = null;
+    let hasPlan = true;
     try {
-      revision = planRevision(readFileSync(paths.planMd(id), 'utf8'));
-    } catch {
-      /* no PLAN.md, or unreadable -- revision stays unknown */
+      planFrontmatter = documentFrontmatter(readFileSync(paths.planMd(id), 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') hasPlan = false;
+      /* an unreadable existing PLAN.md still owns the stage, which therefore stays unknown */
     }
+    let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
+    // The design's own revision, read separately from the plan's. Without this the design stage
+    // was unobservable from the tooling: `revision` reads PLAN.md, so a design at revision 3
+    // with no plan yet showed as "unknown" -- while /router:design is required to freeze a
+    // bumped revision at every approval. Two documents, two revisions, two columns.
+    let designRevision: string | null = null;
+    let designFrontmatter: Record<string, unknown> | null = null;
+    try {
+      designFrontmatter = documentFrontmatter(readFileSync(join(paths.planDir(id), 'DESIGN.md'), 'utf8'));
+      designRevision = scalarText(designFrontmatter?.revision);
+    } catch {
+      /* missing or unreadable DESIGN.md -- no design revision to report */
+    }
+    if (!hasPlan) stage = documentStage(designFrontmatter, DESIGN_STATUSES);
     let critiqueRound: number | null = null;
     try {
       critiqueRound = highestCritiqueRound(readdirSync(paths.planDir(id)));
@@ -491,7 +593,9 @@ const plans: Handler = (ctx) => {
     }
     return {
       id,
-      plan_revision: revision,
+      plan_revision: planRevision(planFrontmatter),
+      design_revision: designRevision,
+      stage,
       critique_round: critiqueRound,
       decisions: existsSync(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null,
@@ -499,16 +603,26 @@ const plans: Handler = (ctx) => {
   });
   emit(ctx.json, { ok: true, plans: rows }, () => {
     if (rows.length === 0) return 'No plans in .router/plans.';
+    const width = (header: string, floor: number, values: string[]): number =>
+      Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
+    const idWidth = width('id', 24, rows.map((r) => r.id));
+    const revisionWidth = width('revision', 12, rows.map((r) => r.plan_revision ?? 'unknown'));
+    const designWidth = width('design', 8, rows.map((r) => r.design_revision ?? '-'));
+    const stageWidth = width('stage', 8, rows.map((r) => r.stage ?? '-'));
+    const critiqueWidth = width('critique', 10, rows.map((r) => r.critique_round === null ? '-' : String(r.critique_round)));
+    const decisionsWidth = width('decisions', 12, rows.map((r) => r.decisions ? 'yes' : '-'));
     const lines = [
       `Plans (${rows.length}):`,
-      pad('id', 24) + pad('revision', 12) + pad('critique', 10) + pad('decisions', 12) + 'locked',
+      pad('id', idWidth) + pad('design', designWidth) + pad('revision', revisionWidth) + pad('stage', stageWidth) + pad('critique', critiqueWidth) + pad('decisions', decisionsWidth) + 'locked',
     ];
     for (const r of rows)
       lines.push(
-        pad(r.id, 24) +
-          pad(r.plan_revision ?? 'unknown', 12) +
-          pad(r.critique_round === null ? '-' : String(r.critique_round), 10) +
-          pad(r.decisions ? 'yes' : '-', 12) +
+        pad(r.id, idWidth) +
+          pad(r.design_revision ?? '-', designWidth) +
+          pad(r.plan_revision ?? 'unknown', revisionWidth) +
+          pad(r.stage ?? '-', stageWidth) +
+          pad(r.critique_round === null ? '-' : String(r.critique_round), critiqueWidth) +
+          pad(r.decisions ? 'yes' : '-', decisionsWidth) +
           (r.locked ? 'yes' : '-'),
       );
     return lines.join('\n');
@@ -776,13 +890,13 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)\n` +
-    `  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs\n` +
+    `  dispatch <id...>       run tasks one at a time on quota-picked executors to verified diffs\n` +
     `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
     `  land <id...>           merge PASSED dispatch diffs sequentially\n` +
     `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
-    `  list                   list tasks with last status + whether a worktree remains\n` +
-    `  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock\n` +
+    `  list                   list tasks with last status + whether the task branch remains\n` +
+    `  plans                  list .router/plans/<id> artifacts: revision, stage, critique round, decisions, lock\n` +
     `  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches\n` +
     `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
@@ -790,6 +904,6 @@ export function helpText(): string {
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --all, --routing, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --routing, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }

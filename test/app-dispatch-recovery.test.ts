@@ -18,7 +18,7 @@ import * as fx from '../testkit/gitRepo.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { dispatchTask } from '../src/app/dispatch.ts';
-import { worktreeDirty } from '../src/io/git.ts';
+import { uncommittedSourceFiles, worktreeDirty } from '../src/io/git.ts';
 
 const FAKE_EDIT_THEN_FAIL = fileURLToPath(new URL('../testkit/fakeCodexEditThenFail.mjs', import.meta.url));
 
@@ -64,10 +64,10 @@ test('a run that fails after doing work reports the work as recoverable', async 
     const result = await withFakeCodex(FAKE_EDIT_THEN_FAIL, repo, () => dispatchTask(deps, 't1'));
     assert.notEqual(result.exit_class, 'ok');
     assert.equal(result.uncommitted_changes, true);
-    // The claim has to be true: the edit really is still sitting in the worktree.
-    const worktree = paths.worktree('t1', 'run-001');
-    assert.equal(worktreeDirty(worktree), true);
-    assert.match(readFileSync(join(worktree, 'src', 'a.ts'), 'utf8'), /edited before failing/);
+    // The claim has to be true, and the place has changed: the edit is sitting in the user's
+    // own checkout now, not in a worktree they would never have thought to look in.
+    assert.deepEqual(uncommittedSourceFiles(paths.repoRoot, ['.router']), [' M src/a.ts']);
+    assert.match(readFileSync(join(paths.repoRoot, 'src', 'a.ts'), 'utf8'), /edited before failing/);
   } finally {
     fx.cleanup(repo);
   }
@@ -78,11 +78,11 @@ test('a failed run still stores its delivery report and parses the header', asyn
   try {
     const result = await withFakeCodex(FAKE_EDIT_THEN_FAIL, repo, () => dispatchTask(deps, 't1'));
     assert.ok(result.delivery, 'a failed run must still keep its report');
-    assert.equal(result.delivery?.path, paths.delivery('t1', 'run-001'));
+    assert.equal(result.delivery?.path, paths.delivery('t1'));
     assert.equal(result.delivery?.header?.gate_ran, false);
     assert.equal(result.delivery?.header?.escalate_review, true);
     assert.equal(result.delivery?.header_error, undefined);
-    assert.match(readFileSync(paths.delivery('t1', 'run-001'), 'utf8'), /then hit a wall/);
+    assert.match(readFileSync(paths.delivery('t1'), 'utf8'), /then hit a wall/);
   } finally {
     fx.cleanup(repo);
   }
@@ -93,7 +93,7 @@ test('a report that cannot be written surfaces the error instead of failing the 
   try {
     // A directory where the report file belongs makes the write fail deterministically on
     // every platform -- no permission games, and it never leaves the repo unusable.
-    const runDir = join(paths.root, 'tasks', 't1', 'runs', 'run-001');
+    const runDir = join(paths.root, 'tasks', 't1');
     mkdirSync(join(runDir, 'DELIVERY.md'), { recursive: true });
     const result = await withFakeCodex(FAKE_EDIT_THEN_FAIL, repo, () => dispatchTask(deps, 't1'));
     assert.match(result.delivery?.header_error ?? '', /^write failed: /);

@@ -27,7 +27,7 @@ const TASK: TaskYaml = {
 function prompt(task: TaskYaml, taskContext?: { text: string } | null): string {
   const argv = codexLauncher({ model: 'm', effort: 'high' }).buildArgv({
     task,
-    worktreeDir: '/wt',
+    workDir: '/wt',
     contractMdText: '# Contract\nDo the thing.',
     planExists: false,
     ...(taskContext !== undefined ? { taskContext } : {}),
@@ -105,11 +105,22 @@ test('the original scope constraints survive, and both launchers share the promp
   const p = prompt(TASK);
   assert.match(p, /Change ONLY files matching: src\/\*\*/);
   assert.match(p, /Do not touch tests except to make them pass legitimately/);
-  assert.match(p, /Leave changes in the working tree/);
+  // Replaces 'Leave changes in the working tree; the orchestrator will commit them'. There is no
+  // catch-all commit any more: the executor commits each functional unit, and the closing
+  // invariant fails the run over anything left behind.
+  assert.doesNotMatch(p, /Leave changes in the working tree/);
+  assert.match(p, /COMMIT AS YOU GO\. One commit per functional unit/);
+  assert.match(p, /Do NOT wait for green to commit/);
+  assert.match(p, /leave NOTHING uncommitted/);
+  // The granularity has to be pinned in both directions, or "one commit per unit" reads as
+  // either "one commit total" or "a commit per edit".
+  assert.match(p, /not the smallest possible change and\nnot the whole task/);
+  // And the permission boundary the git grant actually enforces.
+  assert.match(p, /no permission to checkout, reset, rebase, or move branches/);
 
   const claudeArgv = claudeLauncher({ model: 'sonnet' }).buildArgv({
     task: TASK,
-    worktreeDir: '/wt',
+    workDir: '/wt',
     contractMdText: '# Contract\nDo the thing.',
     planExists: false,
   });

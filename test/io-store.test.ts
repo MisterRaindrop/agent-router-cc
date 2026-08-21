@@ -3,9 +3,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { appendJsonl, readJsonl } from '../src/io/jsonl.ts';
 import * as store from '../src/io/store.ts';
 import { routerPaths } from '../src/io/paths.ts';
@@ -87,6 +87,42 @@ test('appendMetric writes one JSONL record to metrics.jsonl', () => {
     const got = readJsonl<MetricRecord>(p.metrics);
     assert.equal(got.length, 1);
     assert.equal(got[0]!.task_id, 't1');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The run dimension is folded: a run's files sit in `tasks/<id>/`, not `tasks/<id>/runs/run-001/`.
+// That directory level was always over a constant -- dispatch has been one attempt per task
+// since the synchronous model landed -- but records written before the fold still exist on disk,
+// and an upgrade that made a task's history vanish would be worse than one extra lookup.
+test('readResult finds a record written in the pre-fold runs/run-001 location', () => {
+  const dir = tmp();
+  try {
+    const p = routerPaths(join(dir, '.router'));
+    const legacy = p.legacyResultJson('old-task');
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(legacy, JSON.stringify({ task_id: 'old-task', exit_class: 'ok' }));
+    assert.equal(store.readResult(p, 'old-task')?.exit_class, 'ok');
+
+    // The current location wins when both exist: the legacy one is a fallback, not a merge.
+    store.writeResult(p, 'old-task', { task_id: 'old-task', exit_class: 'task_failed' } as never);
+    assert.equal(store.readResult(p, 'old-task')?.exit_class, 'task_failed');
+    // ...and writing never touches the old path.
+    assert.match(readFileSync(legacy, 'utf8'), /"exit_class":"ok"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeResult puts the record directly under tasks/<id>', () => {
+  const dir = tmp();
+  try {
+    const p = routerPaths(join(dir, '.router'));
+    store.writeResult(p, 't1', { task_id: 't1', exit_class: 'ok' } as never);
+    assert.equal(p.resultJson('t1'), join(dir, '.router', 'tasks', 't1', 'result.json'));
+    assert.doesNotMatch(p.resultJson('t1'), /runs/);
+    assert.ok(existsSync(join(dir, '.router', 'tasks', 't1', 'result.json')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

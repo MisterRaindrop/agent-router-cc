@@ -21,7 +21,17 @@ export interface SuperviseSpec {
   env: NodeJS.ProcessEnv;
   logPath: string;
   heartbeatPath: string;
-  watchDir: string; // worktree; its change is a liveness signal
+  /**
+   * Paths whose mtime counts as "the executor is still doing something", alongside log growth.
+   *
+   * Explicit paths rather than a directory, because under the branch model a directory is the
+   * wrong probe in both directions: editing an existing source file does not change the repo
+   * root's mtime, while `.git`'s mtime moves for any git operation at all, including the
+   * user's. What dispatch passes instead is the task branch's ref file -- a commit landing is
+   * the executor actually finishing something, which only became a usable signal once the
+   * contract started requiring one commit per functional unit.
+   */
+  watchPaths: readonly string[];
   maxWallMs: number;
   stallMs: number;
   heartbeatIntervalMs?: number;
@@ -42,18 +52,18 @@ export interface SupervisionOutcome {
   endedAtMs: number;
 }
 
-function activitySignal(logPath: string, watchDir: string): number {
+function activitySignal(logPath: string, watchPaths: readonly string[]): number {
   let sig = 0;
   try {
     sig += statSync(logPath).size;
   } catch {
     /* not created yet */
   }
-  for (const p of [watchDir, join(watchDir, '.git')]) {
+  for (const p of watchPaths) {
     try {
       sig += Math.floor(statSync(p).mtimeMs);
     } catch {
-      /* ignore */
+      /* not created yet -- e.g. the task branch has no commit on it so far */
     }
   }
   return sig;
@@ -74,7 +84,7 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
     let stalled = false;
     let settled = false;
     let lastActivity = startedAtMs;
-    let lastSignal = activitySignal(spec.logPath, spec.watchDir);
+    let lastSignal = activitySignal(spec.logPath, spec.watchPaths);
 
     const timers: NodeJS.Timeout[] = [];
     const clearAll = (): void => {
@@ -152,7 +162,7 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
       // Stall watchdog.
       timers.push(
         setInterval(() => {
-          const sig = activitySignal(spec.logPath, spec.watchDir);
+          const sig = activitySignal(spec.logPath, spec.watchPaths);
           if (sig !== lastSignal) {
             lastSignal = sig;
             lastActivity = Date.now();

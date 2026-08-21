@@ -59,12 +59,21 @@ export function buildWorkerEnv(
   return out;
 }
 
+/**
+ * Set in every executor environment so a nested `router` invocation refuses to touch
+ * orchestration state. See the check in cli/commands.ts depsFor().
+ */
+export const EXECUTOR_SANDBOX_ENV = 'ROUTER_EXECUTOR_SANDBOX';
+
 /** Environment for the trusted executor CLI (codex/claude), not verifier commands. */
 export function buildExecutorEnv(
   source: NodeJS.ProcessEnv,
   extraKeys: readonly string[] = [],
 ): NodeJS.ProcessEnv {
   const out = buildWorkerEnv(source);
+  // Marked here rather than at the call site because this is the single funnel every
+  // executor environment goes through -- a per-call flag is a flag somebody forgets.
+  out[EXECUTOR_SANDBOX_ENV] = '1';
   for (const key of EXECUTOR_CONTEXT_ALLOW) copy(source, out, key);
   for (const key of NO_PROXY_KEYS) copy(source, out, key);
   for (const key of PROXY_URL_KEYS) {

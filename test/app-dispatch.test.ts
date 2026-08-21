@@ -12,7 +12,9 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, resolvePoolSize, runPrepared } from '../src/app/dispatch.ts';
+import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
+import { acquireLock } from '../src/io/lock.ts';
+import { currentBranch, uncommittedSourceFiles } from '../src/io/git.ts';
 
 const NODE = process.execPath;
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
@@ -102,8 +104,15 @@ test('dispatchTask runs the executor synchronously to a PASSED verifier result',
     assert.equal(result.exit_class, 'ok');
     assert.equal(result.verifier?.result, 'PASSED');
     assert.equal(result.worker.kind, 'codex');
-    // the verified diff is on the run branch inside the worktree
-    assert.match(readFileSync(join(paths.worktree('t1', 'run-001'), 'src', 'a.ts'), 'utf8'), /fake codex/);
+    // The verified commits are on the task branch in the user's own checkout -- and the run
+    // leaves us standing on it, which no worktree run ever did.
+    assert.equal(result.branch, 'router/t1');
+    assert.equal(currentBranch(paths.repoRoot), 'router/t1');
+    assert.match(readFileSync(join(paths.repoRoot, 'src', 'a.ts'), 'utf8'), /fake codex/);
+    // The executor committed it; there is no catch-all commit behind it any more.
+    assert.deepEqual(result.closeout, { ok: true });
+    assert.deepEqual(uncommittedSourceFiles(paths.repoRoot, ['.router']), []);
+    assert.match(fx.git(repo, ['log', '-1', '--pretty=%s']).trim(), /^fake: unit a$/);
     const metrics = readJsonl<MetricRecord>(paths.metrics);
     assert.equal(metrics.length, 1);
     assert.equal(metrics[0]!.role, 'executor');
@@ -172,8 +181,8 @@ test('dispatch records bound task-context metrics and keeps context out of the w
     assert.equal(metrics[0]!.plan_revision, 'rev-1');
 
     assert.equal(
-      readFileSync(withContext.paths.diffPatch('t1', 'run-001'), 'utf8'),
-      readFileSync(withoutContext.paths.diffPatch('t1', 'run-001'), 'utf8'),
+      readFileSync(withContext.paths.diffPatch('t1'), 'utf8'),
+      readFileSync(withoutContext.paths.diffPatch('t1'), 'utf8'),
     );
     assert.equal(existsSync(join(withContext.paths.worktree('t1', 'run-001'), 'TASK_CONTEXT.md')), false);
   } finally {
@@ -196,7 +205,7 @@ test('a stale task context fails before a worktree or executor is started', asyn
       /base_sha mismatch.*context describes "stale-base-sha".*dispatch base is "[0-9a-f]{40}".*regenerate/s,
     );
     assert.equal(existsSync(paths.worktree('t1', 'run-001')), false);
-    assert.equal(existsSync(paths.workerLog('t1', 'run-001')), false);
+    assert.equal(existsSync(paths.workerLog('t1')), false);
   } finally {
     fx.cleanup(repo);
   }
@@ -266,15 +275,7 @@ test('prepareRun and runPrepared compose to the same dispatch result', async () 
   }
 });
 
-test('resolvePoolSize never exceeds the task count and never drops below one', () => {
-  assert.equal(resolvePoolSize(2), 2); // default caps at 4, so two tasks -> two
-  assert.equal(resolvePoolSize(9), 4);
-  assert.equal(resolvePoolSize(2, 8), 2); // a cap above the batch size is still the batch
-  assert.equal(resolvePoolSize(5, 2), 2);
-  assert.equal(resolvePoolSize(5, 0), 1); // a nonsensical cap still runs one at a time
-});
-
-test('dispatchTasks rejects duplicate ids before preparing worktrees', async () => {
+test('dispatchTasks rejects duplicate ids before touching the checkout', async () => {
   const { repo, paths, deps } = setup();
   try {
     stageTask(paths);
@@ -284,7 +285,7 @@ test('dispatchTasks rejects duplicate ids before preparing worktrees', async () 
   }
 });
 
-test('dispatchTasks with maxParallel 1 completes every task in input order', async () => {
+test('dispatchTasks completes every task in input order, one at a time', async () => {
   chmodSync(FAKE_SCOPED, 0o755);
   const { repo, paths, deps } = setup();
   const prev = process.env.ROUTER_CODEX_BIN;
@@ -293,9 +294,14 @@ test('dispatchTasks with maxParallel 1 completes every task in input order', asy
   try {
     stageScopedTask(paths, 'p1');
     stageScopedTask(paths, 'p2');
-    const results = await dispatchTasks(deps, ['p2', 'p1'], 1);
+    const results = await dispatchTasks(deps, ['p2', 'p1']);
     assert.deepEqual(results.map((result) => result.task_id), ['p2', 'p1']);
     assert.deepEqual(results.map((result) => result.verifier?.result), ['PASSED', 'PASSED']);
+    // Serial, not merely ordered: the second executor must not start before the first ended.
+    assert.ok(
+      Date.parse(results[1]!.started_at) >= Date.parse(results[0]!.ended_at),
+      `runs overlapped: ${results[0]!.started_at}..${results[0]!.ended_at} vs ${results[1]!.started_at}`,
+    );
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
@@ -378,6 +384,85 @@ test('orderByQuota puts the executor with the most real headroom first', () => {
     assert.equal(order[0]!.kind, 'claude');
     assert.equal(order[1]!.kind, 'codex');
   } finally {
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+// Fault-injection case 8a. The lock has to be taken before the FIRST write, not at dispatch
+// time: under the branch model the resource being protected is the user's own checkout, and it
+// starts changing at the rescue commit. A second run must therefore be turned away with the
+// checkout untouched -- no rescue commit, no branch, no branch switch.
+test('a second dispatch is refused before it writes anything (8a)', async () => {
+  const { repo, paths, deps } = setup();
+  try {
+    stageTask(paths);
+    // Someone else's uncommitted work, sitting in the tree. If the refusal came too late, this
+    // is what would already have been swept into a commit by the time we bailed.
+    fx.write(repo, 'src/user-was-editing.ts', 'export const wip = true;\n');
+    const branchesBefore = fx.git(repo, ['branch', '--format=%(refname:short)']);
+    const headBefore = fx.git(repo, ['rev-parse', 'HEAD']).trim();
+
+    const held = acquireLock(paths.gateLock(), { waitMs: 0 });
+    assert.ok(!('blocked' in held));
+    try {
+      await assert.rejects(dispatchTask(deps, 't1'), (err: unknown) => {
+        assert.ok(err instanceof CheckoutBusyError, `expected CheckoutBusyError, got ${String(err)}`);
+        assert.equal(err.holderPid, process.pid);
+        assert.match(err.message, /router runs one task at a time/);
+        return true;
+      });
+    } finally {
+      held.release();
+    }
+
+    assert.equal(fx.git(repo, ['rev-parse', 'HEAD']).trim(), headBefore);
+    assert.equal(fx.git(repo, ['branch', '--format=%(refname:short)']), branchesBefore);
+    assert.deepEqual(uncommittedSourceFiles(paths.repoRoot, ['.router']), ['?? src/user-was-editing.ts']);
+  } finally {
+    fx.cleanup(repo);
+  }
+});
+
+// Fault-injection case 8f, and the reason the catch-all `commitAll` could not simply be deleted.
+// A file the executor forgets never enters base_sha..HEAD, so every gate passes without ever
+// seeing it: the run would report success while unreviewed code sat in the user's checkout.
+test('an executor that forgets a file fails the run instead of passing the gate (8f)', async () => {
+  const { repo, paths, deps } = setup();
+  const forgetful = join(repo, 'fake-forgetful.mjs');
+  writeFileSync(
+    forgetful,
+    '#!/usr/bin/env node\n' +
+      'import {writeFileSync} from "node:fs";import {execFileSync} from "node:child_process";\n' +
+      // One unit committed properly...
+      'writeFileSync("src/a.ts","export const x = 2;\\n");\n' +
+      'execFileSync("git",["add","--","src/a.ts"]);\n' +
+      'execFileSync("git",["-c","user.name=f","-c","user.email=f@l","commit","-q","-m","fake: unit a"]);\n' +
+      // ...and a second file left behind.
+      'writeFileSync("src/forgotten.ts","export const oops = true;\\n");\n' +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(forgetful, 0o755);
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = forgetful;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+
+    assert.equal(result.exit_class, 'task_failed');
+    assert.equal(result.closeout?.ok, false);
+    assert.ok(result.closeout !== undefined && !result.closeout.ok);
+    assert.match(result.closeout.reason, /did not commit its last unit/);
+    assert.deepEqual(result.closeout.files, ['?? src/forgotten.ts']);
+    // Never verified -- not verified-and-failed. Running the gate on a diff that is missing a
+    // file would produce a pass that means nothing.
+    assert.equal(result.verifier, undefined);
+    // And the work is still there to be finished.
+    assert.match(readFileSync(join(paths.repoRoot, 'src', 'forgotten.ts'), 'utf8'), /oops/);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
     fx.cleanup(repo);
   }

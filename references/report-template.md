@@ -27,7 +27,7 @@ review; nothing lowers it. A missing delivery header, `scope_drift: true`, or a 
 never ran on is a Phase 1 finding in its own right.
 
 If scope drifted or the bar was never approved, stop and return to `/router:design` /
-`/router:plan` rather than reviewing against a bar that no longer matches the code.
+`/router:workplan` rather than reviewing against a bar that no longer matches the code.
 
 ## Finding shape
 
@@ -47,7 +47,7 @@ Emit each finding as:
 
 `level: spec` means the bar itself is wrong (a Design acceptance criterion, or a Plan
 verification row that proves the wrong thing) — that returns to `/router:design` /
-`/router:plan`, it is not fixed silently in review.
+`/router:workplan`, it is not fixed silently in review.
 
 ## Evidence block
 

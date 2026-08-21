@@ -231,7 +231,27 @@ export function applyCheck(cwd: string, patch: string): boolean {
   return tryGit(cwd, ['apply', '--check', '-'], patch).ok;
 }
 
+/**
+ * Create a per-task worktree on a new branch.
+ *
+ * @deprecated Executors work in the repository root on a `router/<id>` branch. Kept only for
+ * the rollback window in DEPRECATIONS.md, and guarded so it cannot be reached by accident: two
+ * live execution paths that behave differently is precisely the bug that is hard to find later.
+ * `worktreeAddDetached` is NOT deprecated -- the verifier's throwaway patch-check worktree is a
+ * different thing and stays.
+ */
 export function worktreeAdd(cwd: string, path: string, branch: string, base: string): void {
+  // An escape hatch rather than dead code, so "kept for one version" means something you can
+  // actually do: set ROUTER_ALLOW_WORKTREE_MODE=1. Refusing by default is the point -- a
+  // deprecated path that still runs silently gives you two execution models with different
+  // behaviour and no way to tell which one produced a result.
+  if (process.env.ROUTER_ALLOW_WORKTREE_MODE !== '1') {
+    throw new Error(
+      'worktreeAdd is deprecated: executors run in the repository root on a router/<id> branch. ' +
+        'Use createBranchStrict. To re-enable during the rollback window, set ' +
+        'ROUTER_ALLOW_WORKTREE_MODE=1 (see DEPRECATIONS.md).',
+    );
+  }
   git(cwd, ['worktree', 'add', '-b', branch, '--', path, base]);
 }
 
@@ -315,4 +335,180 @@ export function branchExists(cwd: string, branch: string): boolean {
 
 export function deleteBranch(cwd: string, branch: string): void {
   tryGit(cwd, ['branch', '-D', branch]);
+}
+
+// ---------------------------------------------------------------------------
+// Branch-mode primitives (P2).
+//
+// The execution model moved out of a per-task worktree and into the user's own
+// checkout on a dedicated branch, which changes what "safe" means. In a worktree a
+// mistake could only destroy a throwaway directory; here every destructive step is
+// one directory away from the user's uncommitted work. These are the primitives the
+// dispatch flow is required to go through, and the reason each exists is the specific
+// way the old primitive was unsafe.
+// ---------------------------------------------------------------------------
+
+/** A task's identity assertion failed: we are not where the task record says we are. */
+export class TaskIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaskIdentityError';
+  }
+}
+
+/**
+ * Create `branch` at HEAD and check it out. Refuses when the name is already taken.
+ *
+ * `checkoutBranch` silently checks out an existing same-named branch instead, which was
+ * harmless while each task owned a worktree and became a data-loss path once tasks share
+ * the user's checkout: a re-dispatch under a recycled task id would adopt a stale branch,
+ * and the retry path's `reset --hard` would then discard commits that belong to whatever
+ * ran there before. "The branch exists" also does not mean "the same task" -- identity is
+ * branch + base_sha + session, so the caller has to decide between resume and a new id.
+ */
+export function createBranchStrict(cwd: string, branch: string): void {
+  if (branchExists(cwd, branch)) {
+    throw new TaskIdentityError(
+      `branch ${branch} already exists; refusing to reuse it. Resume that task, or dispatch under a different task id.`,
+    );
+  }
+  git(cwd, ['checkout', '--quiet', '-b', branch, 'HEAD']);
+}
+
+/** The checked-out branch, or null when HEAD is detached (a Git detached head, not a detached process). */
+export function currentBranch(cwd: string): string | null {
+  const r = tryGit(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return r.ok ? r.stdout.trim() : null;
+}
+
+/** Whether `ancestor` is reachable from `descendant`. Unreadable refs report false. */
+export function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {
+  return tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]).ok;
+}
+
+/**
+ * Porcelain entries whose dirt is submodule *content* rather than a tracked change of ours.
+ *
+ * Kept separate because it is neither the user's work (so rescuing it is impossible -- the
+ * changes live in another repository) nor a reason to refuse (measured on a real ClickHouse
+ * checkout: 107 of 110 porcelain entries were build residue inside `contrib/*`). The caller
+ * reports these on their own line instead of pretending the tree is clean or bailing out.
+ */
+export function submoduleDirty(cwd: string, exclude: readonly string[] = []): string[] {
+  const scope = pathspec(exclude);
+  const all = tryGit(cwd, ['status', '--porcelain', ...scope]);
+  if (!all.ok) return [];
+  const ignoring = new Set(
+    tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...scope]).stdout.split('\n'),
+  );
+  return all.stdout.split('\n').filter((line) => line !== '' && !ignoring.has(line));
+}
+
+/**
+ * Turn exclusion pathspecs into a `git` argument tail, or nothing when there are none.
+ *
+ * Callers pass these to keep router's OWN state out of a commit made on the user's behalf.
+ * `.router/` carries a `*` gitignore, so in a well-formed repo it is invisible anyway -- but
+ * "the user's uncommitted work" and "orchestration state" must not be one decision away from
+ * each other, and a missing or edited .gitignore would otherwise commit router's bookkeeping
+ * into the user's history.
+ */
+function pathspec(exclude: readonly string[]): string[] {
+  if (exclude.length === 0) return [];
+  return ['--', '.', ...exclude.map((path) => `:(exclude,glob)${path}`), ...exclude.map((path) => `:(exclude,glob)${path}/**`)];
+}
+
+/**
+ * Uncommitted work that the closing invariant forbids: tracked edits and non-ignored
+ * untracked files, excluding submodule content dirt. Returned as porcelain lines so the
+ * caller can name the files in its failure message.
+ *
+ * This is the check that replaces the old catch-all `commitAll`. Dropping that catch-all
+ * without adding this would let an executor forget its last file: the file never enters
+ * `base_sha..HEAD`, so every gate passes without ever seeing it, and the run reports success
+ * while unreviewed code sits in the user's checkout.
+ */
+export function uncommittedSourceFiles(cwd: string, exclude: readonly string[] = []): string[] {
+  const r = tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...pathspec(exclude)]);
+  if (!r.ok) return [];
+  return r.stdout.split('\n').filter((line) => line !== '');
+}
+
+/**
+ * Stage tracked edits plus non-ignored untracked files and commit them, returning the commit
+ * and the paths it captured. Returns null when there is nothing to rescue -- deliberately, so
+ * a clean checkout does not gain an empty commit.
+ *
+ * This is how the flow keeps its first Must NOT ("never lose the user's uncommitted work")
+ * before it starts moving branches around. `git stash` was rejected for the job: a stash is
+ * detached from the branch, and a pop that conflicts on the failure path leaves the user's
+ * changes suspended somewhere they have to be told about. A commit is on their branch,
+ * visible in `git log`, and undone with `reset --soft HEAD~1`.
+ *
+ * Carries its own committer identity via -c, so bookkeeping never depends on ambient git
+ * config -- fresh containers and CI images often have none.
+ */
+export function rescueCommit(
+  cwd: string,
+  message: string,
+  exclude: readonly string[] = [],
+): { sha: string; files: string[] } | null {
+  const before = uncommittedSourceFiles(cwd, exclude);
+  if (before.length === 0) return null;
+  // Stage everything, then UNSTAGE the exclusions -- rather than handing `git add` an
+  // exclusion pathspec, which is what this used to do.
+  //
+  // Found by a real end-to-end dispatch, not by reasoning: `git add -A -- .
+  // ':(exclude,glob).router'` **exits 1** when `.router` is also matched by a .gitignore rule.
+  // Git staged exactly the right files and then failed anyway, because naming a path in a
+  // pathspec at all -- even to exclude it -- makes it "explicitly listed", and an explicitly
+  // listed ignored path is an error. So the dispatch aborted on every project that gitignores
+  // `.router`, which is every project that has ever run router. `git status` has no such rule,
+  // which is why the check that decides *whether* to rescue was unaffected and the failure
+  // landed on the write.
+  //
+  // Reset-after-add has neither problem: it exits 0 whether or not the path is ignored, stages
+  // the identical set, and is a no-op when nothing from the exclusions was staged.
+  git(cwd, ['add', '-A']);
+  for (const path of exclude) tryGit(cwd, ['reset', '-q', '--', path]);
+  const staged = git(cwd, ['diff', '--cached', '--name-only', '-z']);
+  const files = splitNul(staged);
+  if (files.length === 0) return null; // e.g. only submodule content was dirty
+  git(cwd, [
+    '-c',
+    'user.name=router',
+    '-c',
+    'user.email=router@localhost',
+    'commit',
+    '-q',
+    '-m',
+    message,
+  ]);
+  return { sha: resolveCommit(cwd, 'HEAD'), files };
+}
+
+/**
+ * Assert we are exactly where the task record says before anything destructive runs.
+ *
+ * Two separate failures, both of which the old worktree model made impossible and the branch
+ * model makes reachable: the user checking out something else mid-run, and a same-named branch
+ * that belongs to a different task. Either one aimed at `reset --hard` destroys work that was
+ * never part of this task, so this throws rather than reporting.
+ */
+export function assertTaskIdentity(cwd: string, task: { branch: string; baseSha: string }): void {
+  const on = currentBranch(cwd);
+  if (on === null) {
+    throw new TaskIdentityError(
+      `HEAD is detached; task ${task.branch} requires its own branch to be checked out.`,
+    );
+  }
+  if (on !== task.branch) {
+    throw new TaskIdentityError(`on branch ${on}, but task requires ${task.branch}.`);
+  }
+  if (!isAncestor(cwd, task.baseSha, 'HEAD')) {
+    throw new TaskIdentityError(
+      `base_sha ${task.baseSha.slice(0, 12)} is not an ancestor of HEAD on ${task.branch}; ` +
+        `the branch was reset or rewritten outside this task.`,
+    );
+  }
 }

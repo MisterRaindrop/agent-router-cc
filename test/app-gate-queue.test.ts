@@ -10,11 +10,10 @@ import { gateYamlPath } from '../src/app/gateConfig.ts';
 import type { RunResult } from '../src/domain/types.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { acquireLock, type LockHandle } from '../src/io/lock.ts';
-import { routerPaths, runBranch } from '../src/io/paths.ts';
+import { routerPaths, taskBranch } from '../src/io/paths.ts';
 import * as store from '../src/io/store.ts';
 import * as fx from '../testkit/gitRepo.ts';
 
-const RUN = 'run-001';
 const INTEGRATION = 'router/integration';
 const NODE = process.execPath;
 
@@ -44,7 +43,6 @@ function setup(): Fixture {
 
 function passedResult(id: string): RunResult {
   return {
-    run_id: RUN,
     task_id: id,
     attempt_number: 1,
     exit_class: 'ok',
@@ -66,12 +64,12 @@ function stageTask(
   mutate: (repo: string) => void,
   base = fixture.base,
 ): string {
-  const branch = runBranch(id, RUN);
+  const branch = taskBranch(id);
   fx.git(fixture.repo, ['checkout', '-q', '-b', branch, base]);
   mutate(fixture.repo);
   const sha = fx.addCommit(fixture.repo, `task ${id}`);
   fx.git(fixture.repo, ['checkout', '-q', 'main']);
-  store.writeResult(fixture.paths, id, RUN, passedResult(id));
+  store.writeResult(fixture.paths, id, passedResult(id));
   return sha;
 }
 
@@ -128,8 +126,8 @@ test('passing queue gate keeps the integration merge, restores the ref, releases
     assert.notEqual(gate.head_sha, fixture.base);
     assert.equal(currentBranch(fixture.repo), 'main');
     assert.equal(existsSync(fixture.paths.gateLock()), false);
-    assert.match(readFileSync(fixture.paths.gateLog('pass', RUN), 'utf8'), /gate passed/);
-    assert.deepEqual(store.readResult(fixture.paths, 'pass', RUN)?.gate, gate);
+    assert.match(readFileSync(fixture.paths.gateLog('pass'), 'utf8'), /gate passed/);
+    assert.deepEqual(store.readResult(fixture.paths, 'pass')?.gate, gate);
   } finally {
     fx.cleanup(fixture.repo);
   }
@@ -242,10 +240,10 @@ test('failing reset rolls back without running the gate and leaves the gate log 
     assert.equal(gate.reason, 'reset_failed');
     assert.equal(gate.rc, 9);
     assert.equal(existsSync(marker), false);
-    assert.equal(readMaybe(fixture.paths.gateLog('reset', RUN)), '');
+    assert.equal(readMaybe(fixture.paths.gateLog('reset')), '');
     // An empty gate log is honest -- no gate command ran -- but the reason must still be
     // reachable from the result rather than stranded in an unreferenced sibling file.
-    assert.equal(gate.reset_log, `${fixture.paths.gateLog('reset', RUN)}.reset`);
+    assert.equal(gate.reset_log, `${fixture.paths.gateLog('reset')}.reset`);
     assert.ok(existsSync(gate.reset_log ?? ''), 'the reset log the result points at must exist');
     assert.equal(fx.git(fixture.repo, ['rev-parse', INTEGRATION]).trim(), fixture.base);
     assert.equal(currentBranch(fixture.repo), 'main');
@@ -271,7 +269,7 @@ test('a deletion selects the configured clean gate', async () => {
 
     assert.equal(gate.ok, true);
     assert.equal(gate.level, 'clean');
-    assert.match(readFileSync(fixture.paths.gateLog('delete', RUN), 'utf8'), /clean gate/);
+    assert.match(readFileSync(fixture.paths.gateLog('delete'), 'utf8'), /clean gate/);
   } finally {
     fx.cleanup(fixture.repo);
   }
@@ -305,7 +303,7 @@ test('a thrown gate error still restores the original ref and releases the lock'
   try {
     stageTask(fixture, 'throws', (repo) => fx.write(repo, 'throws.txt', 'task\n'));
     writeGate(fixture, [[NODE, '-e', 'process.exit(0)']]);
-    const logsDir = dirname(fixture.paths.gateLog('throws', RUN));
+    const logsDir = dirname(fixture.paths.gateLog('throws'));
     mkdirSync(dirname(logsDir), { recursive: true });
     writeFileSync(logsDir, 'not a directory');
 

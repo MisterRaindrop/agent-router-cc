@@ -4,19 +4,21 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { VerifierCheck, VerifierReport } from '../domain/types.ts';
+import type { GateConfig, VerifierCheck, VerifierReport } from '../domain/types.ts';
 import { evaluateScope } from '../core/scope.ts';
 import { scanSecrets } from '../core/secrets.ts';
 import { dirOf, extensionOf, findExecBitViolations, type ExecBitInput } from '../core/execBit.ts';
 import {
   applyCheck,
   collectDiff,
+  uncommittedSourceFiles,
   listDirFileModes,
   rawDiff,
   worktreeAddDetached,
   worktreeRemove,
 } from '../io/git.ts';
 import { runCommand } from '../io/proc.ts';
+import { selectGate } from './gateConfig.ts';
 
 // The mechanical verifier (policy-free). The task carries its own scope and verify
 // command; checks run in order, fail-fast. Every gate the executor must clear lives
@@ -25,6 +27,18 @@ import { runCommand } from '../io/proc.ts';
 
 const DEFAULT_TEST_GLOBS = ['test/**', 'tests/**', '**/*.test.*', '**/*_test.*'];
 const DEFAULT_MAX_CHANGED_LINES = 400;
+
+/**
+ * Hard ceiling on ONE verify command, applied whether or not the caller asked for a timeout.
+ *
+ * It used to be opt-in, which was survivable while verification ran in a throwaway worktree:
+ * a hung build wedged a directory nobody else wanted. Under the branch model the same hang
+ * holds the exclusive lock on the user's own checkout, so `go` would sit on it forever with no
+ * upper bound. 90 minutes is far above any real gate here (measured t_exec 393s for a whole
+ * executor session) and far below "forever"; a project that genuinely needs longer sets
+ * buildTimeoutMs explicitly.
+ */
+const DEFAULT_BUILD_TIMEOUT_MS = 90 * 60 * 1000;
 
 function fail(id: string, detail: string, rc?: number): VerifierCheck {
   return rc !== undefined ? { id, ok: false, detail, rc } : { id, ok: false, detail };
@@ -35,7 +49,7 @@ function pass(id: string, detail?: string): VerifierCheck {
 
 export interface TaskVerifyRequest {
   repoRoot: string;
-  worktreeDir: string;
+  workDir: string;
   baseSha: string;
   head: string;
   mode?: 'implement' | 'probe';
@@ -43,6 +57,20 @@ export interface TaskVerifyRequest {
   forbiddenGlobs?: string[];
   maxChangedLines?: number;
   verify: string[][]; // argv list; [] = diff/scope/secret only
+  /** Pathspecs excluded when looking for uncommitted files (router's own state). */
+  uncommittedExclude?: readonly string[];
+  /**
+   * The project's own gate configuration, when it has one.
+   *
+   * Present: its `reset` runs before verification, and its `gate`/`clean_gate` pair REPLACES
+   * `verify` -- `clean_triggers` deciding which. That replacement is the point rather than a
+   * side effect: gate.yaml describes how this project actually builds and tests, `verify`
+   * describes one task, and running both would build twice. Absent: behaviour is unchanged,
+   * which is what keeps every project without a gate.yaml exactly where it was.
+   */
+  gate?: GateConfig;
+  /** Environment for gate.yaml's commands; falls back to `env`. */
+  gateEnv?: NodeJS.ProcessEnv;
   env: NodeJS.ProcessEnv;
   secretExtraPatterns?: string[];
   buildTimeoutMs?: number;
@@ -51,18 +79,22 @@ export interface TaskVerifyRequest {
 export function verifyTask(req: TaskVerifyRequest): VerifierReport {
   const checks: VerifierCheck[] = [];
 
-  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  const changes = collectDiff(req.workDir, req.baseSha, req.head);
   if (req.mode === 'probe') {
-    if (changes.length === 0) {
+    // Committed changes AND uncommitted ones. A probe is required to write nothing at all, and
+    // it is the one mode exempt from the closing "commit everything" invariant -- so an
+    // uncommitted file is a probe violation to report here, not a leftover to sweep up.
+    const touched = changes.length + uncommittedSourceFiles(req.workDir, req.uncommittedExclude ?? []).length;
+    if (touched === 0) {
       checks.push(pass('probe_no_diff'));
       return { result: 'PASSED', checks };
     }
-    const files = `${changes.length} file${changes.length === 1 ? '' : 's'}`;
+    const files = `${touched} file${touched === 1 ? '' : 's'}`;
     checks.push(fail('probe_no_diff', `probe wrote ${files}; expected no diff`));
     return { result: 'FAILED', checks };
   }
 
-  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
+  const patch = rawDiff(req.workDir, req.baseSha, req.head);
   if (patch.trim() === '') {
     checks.push(fail('diff_applies', 'diff is empty - executor produced no committed change'));
     return { result: 'FAILED', checks };
@@ -111,7 +143,7 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
     const ext = extensionOf(c.path);
     if (ext === '') continue; // no extension -> no sibling grouping to compare against
     const base = c.path.slice(c.path.lastIndexOf('/') + 1);
-    const siblingModes = listDirFileModes(req.worktreeDir, req.baseSha, dirOf(c.path))
+    const siblingModes = listDirFileModes(req.workDir, req.baseSha, dirOf(c.path))
       .filter((s) => s.name !== base && s.name.endsWith(ext))
       .map((s) => s.mode);
     execCandidates.push({ path: c.path, newMode: c.newMode, siblingModes });
@@ -126,21 +158,52 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
   }
   checks.push(pass('exec_bit'));
 
-  for (const [i, argv] of req.verify.entries()) {
+  const gateEnv = req.gateEnv ?? req.env;
+  const limitMs = req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
+
+  // The project's reset, before anything is measured. A warm checkout can hold objects from a
+  // previous build, and verifying against those is how wrong code passes: the gate answers a
+  // question about the last build rather than about this diff.
+  for (const [i, argv] of (req.gate?.reset ?? []).entries()) {
     if (argv.length === 0) continue;
-    const r = runCommand(argv, {
-      cwd: req.worktreeDir,
-      env: req.env,
-      ...(req.buildTimeoutMs !== undefined ? { timeoutMs: req.buildTimeoutMs } : {}),
-    });
-    const label = req.verify.length > 1 ? `verify[${i}]` : 'verify';
+    const r = runCommand(argv, { cwd: req.workDir, env: gateEnv, timeoutMs: limitMs });
+    const label = (req.gate?.reset ?? []).length > 1 ? `reset[${i}]` : 'reset';
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
     }
     if (r.timedOut) {
-      checks.push(fail(label, 'timed out'));
+      checks.push(fail(label, `timed out after ${Math.round(limitMs / 1000)}s: ${argv.join(' ')}`));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines, timed_out: true };
+    }
+    if (r.rc !== 0) {
+      checks.push(fail(label, `${argv.join(' ')} (rc ${r.rc})`, r.rc ?? undefined));
       return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    checks.push(pass(label, `${argv.join(' ')} (rc 0)`));
+  }
+
+  const selected = req.gate === undefined ? null : selectGate(req.gate, changes);
+  const commands = selected?.commands ?? req.verify;
+  const prefix = selected === null ? 'verify' : `gate:${selected.level}`;
+
+  for (const [i, argv] of commands.entries()) {
+    if (argv.length === 0) continue;
+    const r = runCommand(argv, {
+      cwd: req.workDir,
+      env: selected === null ? req.env : gateEnv,
+      timeoutMs: limitMs,
+    });
+    const label = commands.length > 1 ? `${prefix}[${i}]` : prefix;
+    if (r.spawnError !== null) {
+      checks.push(fail(label, `spawn error: ${r.spawnError}`));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    if (r.timedOut) {
+      checks.push(fail(label, `timed out after ${Math.round(limitMs / 1000)}s: ${argv.join(' ')}`));
+      // timed_out, not just FAILED: the command never returned a verdict, so this says nothing
+      // about the change itself. The caller reports it as unverified rather than as a defect.
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines, timed_out: true };
     }
     if (r.rc !== 0) {
       checks.push(fail(label, `${argv.join(' ')} (rc ${r.rc})`, r.rc ?? undefined));

@@ -2982,7 +2982,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve5.call(this, root, ref);
+      let _sch = resolve6.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3009,7 +3009,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve5(root, ref) {
+    function resolve6(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3640,55 +3640,55 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve5(baseURI, relativeURI, options) {
+    function resolve6(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse(baseURI, schemelessOptions), parse(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative2, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse(serialize(base, options), options);
-        relative2 = parse(serialize(relative2, options), options);
+        relative3 = parse(serialize(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative2.scheme) {
-        target.scheme = relative2.scheme;
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-          target.userinfo = relative2.userinfo;
-          target.host = relative2.host;
-          target.port = relative2.port;
-          target.path = removeDotSegments(relative2.path || "");
-          target.query = relative2.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative2.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative2.query !== void 0) {
-              target.query = relative2.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative2.path[0] === "/") {
-              target.path = removeDotSegments(relative2.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative2.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative2.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative2.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3696,7 +3696,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative2.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -3898,7 +3898,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve5,
+      resolve: resolve6,
       resolveComponent,
       equal,
       serialize,
@@ -6592,6 +6592,7 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set([
   "wall",
   "model",
   "max-parallel",
+  // removed; still parsed so `dispatch` can reject it by name
   "keep-metrics",
   "settings",
   "statusline"
@@ -6638,10 +6639,10 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync13, rmdirSync, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync5, readdirSync as readdirSync5, readFileSync as readFileSync14, writeFileSync as writeFileSync5 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
-import { dirname as dirname6, join as join11, resolve as resolve4 } from "node:path";
+import { dirname as dirname6, join as join12, resolve as resolve5 } from "node:path";
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -9378,8 +9379,8 @@ function writeFlowMapping(state, level, node) {
     if (explicitPair) pairBuffer += "? ";
     else if (state.quoteFlowKeys) pairBuffer += '"';
     const valueText = writeNode(state, level, value, {});
-    const sep = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep}${valueText}`;
+    const sep2 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep2}${valueText}`;
     result2 += pairBuffer;
   }
   const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
@@ -9476,8 +9477,8 @@ function writeNode(state, level, node, ctx) {
       if (anchor !== null) props.push(anchor);
       if (tag !== null) props.push(tag);
     }
-    const sep = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    body = `${props.join(" ")}${sep}${body}`;
+    const sep2 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    body = `${props.join(" ")}${sep2}${body}`;
   }
   return body;
 }
@@ -9522,8 +9523,8 @@ function present(documents, options) {
         block: true,
         compact: true
       });
-      const sep = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result2 += `---${sep}${body}
+      const sep2 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result2 += `---${sep2}${body}
 `;
     } else result2 += writeNode(state, 0, doc.contents, {
       block: true,
@@ -9578,7 +9579,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.8.4" : "0.0.0-dev";
+var VERSION = true ? "0.10.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -9586,6 +9587,61 @@ var systemClock = {
   nowIso: () => (/* @__PURE__ */ new Date()).toISOString(),
   monotonicMs: () => performance.now()
 };
+
+// src/io/env.ts
+var BASE_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM"];
+var EXECUTOR_CONTEXT_ALLOW = [
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  // macOS Keychain/session lookup used by native Claude Code.
+  "SECURITYSESSIONID",
+  "LaunchInstanceID",
+  "XPC_FLAGS",
+  "XPC_SERVICE_NAME",
+  "__CF_USER_TEXT_ENCODING",
+  // Explicit config/certificate locations and update policy.
+  "CLAUDE_CONFIG_DIR",
+  "XDG_CONFIG_HOME",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "DISABLE_AUTO_UPDATE"
+];
+var PROXY_URL_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+var NO_PROXY_KEYS = ["NO_PROXY", "no_proxy"];
+function copy(source, target, key) {
+  const value = source[key];
+  if (value !== void 0) target[key] = value;
+}
+function proxyHasCredentials(value) {
+  if (!value.includes("://")) return value.includes("@");
+  try {
+    const url = new URL(value);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return true;
+  }
+}
+function buildWorkerEnv(source, extraKeys = []) {
+  const out2 = {};
+  for (const key of [...BASE_ALLOW, ...extraKeys]) copy(source, out2, key);
+  return out2;
+}
+var EXECUTOR_SANDBOX_ENV = "ROUTER_EXECUTOR_SANDBOX";
+function buildExecutorEnv(source, extraKeys = []) {
+  const out2 = buildWorkerEnv(source);
+  out2[EXECUTOR_SANDBOX_ENV] = "1";
+  for (const key of EXECUTOR_CONTEXT_ALLOW) copy(source, out2, key);
+  for (const key of NO_PROXY_KEYS) copy(source, out2, key);
+  for (const key of PROXY_URL_KEYS) {
+    const value = source[key];
+    if (value !== void 0 && !proxyHasCredentials(value)) out2[key] = value;
+  }
+  for (const key of extraKeys) copy(source, out2, key);
+  return out2;
+}
 
 // src/io/atomicWrite.ts
 import {
@@ -9799,9 +9855,6 @@ function applyCheck(cwd, patch) {
   if (patch.trim() === "") return true;
   return tryGit(cwd, ["apply", "--check", "-"], patch).ok;
 }
-function worktreeAdd(cwd, path, branch, base) {
-  git(cwd, ["worktree", "add", "-b", branch, "--", path, base]);
-}
 function worktreeAddDetached(cwd, path, sha) {
   git(cwd, ["worktree", "add", "--detach", "--", path, sha]);
 }
@@ -9810,24 +9863,10 @@ function worktreeRemove(cwd, path, force = true) {
   const r = tryGit(cwd, args);
   if (!r.ok) tryGit(cwd, ["worktree", "prune"]);
 }
-function commitAll(cwd, message) {
-  git(cwd, ["add", "-A"]);
-  if (git(cwd, ["diff", "--cached", "--name-only"]).trim() === "") return false;
-  git(cwd, ["-c", "user.name=router", "-c", "user.email=router@localhost", "commit", "-q", "-m", message]);
-  return true;
-}
-function worktreeDirty(cwd) {
-  const r = tryGit(cwd, ["status", "--porcelain"]);
-  return r.ok && r.stdout.trim() !== "";
-}
 function trackedChanges(cwd) {
   const r = tryGit(cwd, ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules=dirty"]);
   if (!r.ok) return [];
   return r.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== "");
-}
-function resetHard(cwd, sha) {
-  git(cwd, ["reset", "--hard", sha]);
-  git(cwd, ["clean", "-fd"]);
 }
 function resetHardTracked(cwd, sha) {
   git(cwd, ["reset", "--hard", sha]);
@@ -9844,6 +9883,81 @@ function branchExists(cwd, branch) {
 function deleteBranch(cwd, branch) {
   tryGit(cwd, ["branch", "-D", branch]);
 }
+var TaskIdentityError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TaskIdentityError";
+  }
+};
+function createBranchStrict(cwd, branch) {
+  if (branchExists(cwd, branch)) {
+    throw new TaskIdentityError(
+      `branch ${branch} already exists; refusing to reuse it. Resume that task, or dispatch under a different task id.`
+    );
+  }
+  git(cwd, ["checkout", "--quiet", "-b", branch, "HEAD"]);
+}
+function currentBranch(cwd) {
+  const r = tryGit(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  return r.ok ? r.stdout.trim() : null;
+}
+function isAncestor(cwd, ancestor, descendant) {
+  return tryGit(cwd, ["merge-base", "--is-ancestor", ancestor, descendant]).ok;
+}
+function submoduleDirty(cwd, exclude = []) {
+  const scope = pathspec(exclude);
+  const all = tryGit(cwd, ["status", "--porcelain", ...scope]);
+  if (!all.ok) return [];
+  const ignoring = new Set(
+    tryGit(cwd, ["status", "--porcelain", "--ignore-submodules=dirty", ...scope]).stdout.split("\n")
+  );
+  return all.stdout.split("\n").filter((line) => line !== "" && !ignoring.has(line));
+}
+function pathspec(exclude) {
+  if (exclude.length === 0) return [];
+  return ["--", ".", ...exclude.map((path) => `:(exclude,glob)${path}`), ...exclude.map((path) => `:(exclude,glob)${path}/**`)];
+}
+function uncommittedSourceFiles(cwd, exclude = []) {
+  const r = tryGit(cwd, ["status", "--porcelain", "--ignore-submodules=dirty", ...pathspec(exclude)]);
+  if (!r.ok) return [];
+  return r.stdout.split("\n").filter((line) => line !== "");
+}
+function rescueCommit(cwd, message, exclude = []) {
+  const before = uncommittedSourceFiles(cwd, exclude);
+  if (before.length === 0) return null;
+  git(cwd, ["add", "-A"]);
+  for (const path of exclude) tryGit(cwd, ["reset", "-q", "--", path]);
+  const staged = git(cwd, ["diff", "--cached", "--name-only", "-z"]);
+  const files = splitNul(staged);
+  if (files.length === 0) return null;
+  git(cwd, [
+    "-c",
+    "user.name=router",
+    "-c",
+    "user.email=router@localhost",
+    "commit",
+    "-q",
+    "-m",
+    message
+  ]);
+  return { sha: resolveCommit(cwd, "HEAD"), files };
+}
+function assertTaskIdentity(cwd, task) {
+  const on = currentBranch(cwd);
+  if (on === null) {
+    throw new TaskIdentityError(
+      `HEAD is detached; task ${task.branch} requires its own branch to be checked out.`
+    );
+  }
+  if (on !== task.branch) {
+    throw new TaskIdentityError(`on branch ${on}, but task requires ${task.branch}.`);
+  }
+  if (!isAncestor(cwd, task.baseSha, "HEAD")) {
+    throw new TaskIdentityError(
+      `base_sha ${task.baseSha.slice(0, 12)} is not an ancestor of HEAD on ${task.branch}; the branch was reset or rewritten outside this task.`
+    );
+  }
+}
 
 // src/io/paths.ts
 import { existsSync, statSync } from "node:fs";
@@ -9851,14 +9965,16 @@ import { dirname as dirname2, join as join2, resolve } from "node:path";
 function runId(n) {
   return `run-${String(n).padStart(3, "0")}`;
 }
-function runBranch(id, run) {
-  return `router/${id}/${run}`;
+function taskBranch(id) {
+  return `router/${id}`;
+}
+function branchRefPath(repoRoot, branch) {
+  return join2(repoRoot, ".git", "refs", "heads", ...branch.split("/"));
 }
 function routerPaths(routerDir) {
   const root = resolve(routerDir);
   const tasksDir = join2(root, "tasks");
   const taskDir = (id) => join2(tasksDir, id);
-  const runDir = (id, run) => join2(taskDir(id), "runs", run);
   return {
     root,
     repoRoot: dirname2(root),
@@ -9869,7 +9985,11 @@ function routerPaths(routerDir) {
     symbolLatest: join2(root, "symbols", "latest"),
     gateLock: () => join2(root, "gate.lock"),
     planDir: (planId) => join2(root, "plans", planId),
-    planMd: (planId) => join2(root, "plans", planId, "PLAN.md"),
+    planMd: (planId) => {
+      const workplan = join2(root, "plans", planId, "WORKPLAN.md");
+      return existsSync(workplan) ? workplan : join2(root, "plans", planId, "PLAN.md");
+    },
+    workplanMd: (planId) => join2(root, "plans", planId, "WORKPLAN.md"),
     specCritique: (planId, round) => join2(root, "plans", planId, `critique-${round}.md`),
     specDecisions: (planId) => join2(root, "plans", planId, "DECISIONS.md"),
     specLock: (planId) => join2(root, "plans", planId, "spec.lock"),
@@ -9879,12 +9999,14 @@ function routerPaths(routerDir) {
     contractMd: (id) => join2(taskDir(id), "TASK_CONTRACT.md"),
     taskContext: (id) => join2(taskDir(id), "TASK_CONTEXT.md"),
     runsDir: (id) => join2(taskDir(id), "runs"),
-    heartbeat: (id, run) => join2(runDir(id, run), "heartbeat"),
-    resultJson: (id, run) => join2(runDir(id, run), "result.json"),
-    diffPatch: (id, run) => join2(runDir(id, run), "diff.patch"),
-    delivery: (id, run) => join2(runDir(id, run), "DELIVERY.md"),
-    workerLog: (id, run) => join2(runDir(id, run), "logs", "worker.log"),
-    gateLog: (id, run) => join2(runDir(id, run), "logs", "gate.log"),
+    heartbeat: (id) => join2(taskDir(id), "heartbeat"),
+    runStatus: (id) => join2(taskDir(id), "status.json"),
+    resultJson: (id) => join2(taskDir(id), "result.json"),
+    diffPatch: (id) => join2(taskDir(id), "diff.patch"),
+    delivery: (id) => join2(taskDir(id), "DELIVERY.md"),
+    workerLog: (id) => join2(taskDir(id), "logs", "worker.log"),
+    gateLog: (id) => join2(taskDir(id), "logs", "gate.log"),
+    legacyResultJson: (id) => join2(taskDir(id), "runs", "run-001", "result.json"),
     worktree: (id, run) => join2(root, "worktrees", id, run)
   };
 }
@@ -9934,11 +10056,11 @@ function readJson(path) {
   if (!existsSync3(path)) return null;
   return JSON.parse(readFileSync2(path, "utf8"));
 }
-function readResult(p, id, run) {
-  return readJson(p.resultJson(id, run));
+function readResult(p, id) {
+  return readJson(p.resultJson(id)) ?? readJson(p.legacyResultJson(id));
 }
-function writeResult(p, id, run, result2) {
-  writeJsonAtomic(p.resultJson(id, run), result2);
+function writeResult(p, id, result2) {
+  writeJsonAtomic(p.resultJson(id), result2);
 }
 function appendMetric(p, record) {
   appendJsonl(p.metrics, record);
@@ -9946,9 +10068,9 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync7, readFileSync as readFileSync7, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { readFileSync as readFileSync10, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 
 // src/core/pickExecutor.ts
 function pickExecutor(quotas) {
@@ -10102,62 +10224,536 @@ function effectiveRisk(declared, signals) {
   return { risk, raisedBy };
 }
 
-// src/io/env.ts
-var BASE_ALLOW = ["PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "TERM"];
-var EXECUTOR_CONTEXT_ALLOW = [
-  "USER",
-  "LOGNAME",
-  "SHELL",
-  // macOS Keychain/session lookup used by native Claude Code.
-  "SECURITYSESSIONID",
-  "LaunchInstanceID",
-  "XPC_FLAGS",
-  "XPC_SERVICE_NAME",
-  "__CF_USER_TEXT_ENCODING",
-  // Explicit config/certificate locations and update policy.
-  "CLAUDE_CONFIG_DIR",
-  "XDG_CONFIG_HOME",
-  "SSL_CERT_FILE",
-  "SSL_CERT_DIR",
-  "NODE_EXTRA_CA_CERTS",
-  "REQUESTS_CA_BUNDLE",
-  "DISABLE_AUTO_UPDATE"
-];
-var PROXY_URL_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
-var NO_PROXY_KEYS = ["NO_PROXY", "no_proxy"];
-function copy(source, target, key) {
-  const value = source[key];
-  if (value !== void 0) target[key] = value;
-}
-function proxyHasCredentials(value) {
-  if (!value.includes("://")) return value.includes("@");
+// src/io/heartbeat.ts
+import { spawn } from "node:child_process";
+var DEFAULT_BEAT_MS = 15e3;
+var CHILD_SOURCE = `
+const fs = require('node:fs');
+const [lockPath, token, intervalRaw, parentRaw] = process.argv.slice(1);
+const interval = Number(intervalRaw);
+const parentPid = Number(parentRaw);
+function beat() {
+  try { process.kill(parentPid, 0); } catch { process.exit(0); }
+  let fd;
+  try { fd = fs.openSync(lockPath, 'r+'); } catch { process.exit(0); }
   try {
-    const url = new URL(value);
-    return url.username !== "" || url.password !== "";
-  } catch {
+    let stored;
+    try { stored = JSON.parse(fs.readFileSync(fd, 'utf8')); } catch { process.exit(0); }
+    if (stored === null || typeof stored !== 'object' || stored.ownerToken !== token) process.exit(0);
+    stored.beatAtMs = Date.now();
+    const data = Buffer.from(JSON.stringify(stored) + '\\n');
+    let offset = 0;
+    while (offset < data.length) {
+      const written = fs.writeSync(fd, data, offset, data.length - offset, offset);
+      if (written === 0) process.exit(0);
+      offset += written;
+    }
+    fs.ftruncateSync(fd, data.length);
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
+beat();
+setInterval(beat, interval);
+`;
+function startHeartbeat(lockPath, ownerToken2, intervalMs = DEFAULT_BEAT_MS) {
+  const child = spawn(
+    process.execPath,
+    ["-e", CHILD_SOURCE, lockPath, ownerToken2, String(intervalMs), String(process.pid)],
+    { detached: true, stdio: "ignore" }
+  );
+  child.unref();
+  let stopped = false;
+  const pid = child.pid ?? null;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (pid === null) return;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+    }
+  };
+  return {
+    stop,
+    get pid() {
+      return pid;
+    }
+  };
+}
+
+// src/io/signals.ts
+function killProcessGroup(pgid, signal) {
+  if (!Number.isInteger(pgid) || pgid <= 1) return false;
+  try {
+    process.kill(-pgid, signal);
     return true;
+  } catch (err2) {
+    const code = err2.code;
+    if (code === "ESRCH" || code === "EPERM") return false;
+    throw err2;
   }
 }
-function buildWorkerEnv(source, extraKeys = []) {
-  const out2 = {};
-  for (const key of [...BASE_ALLOW, ...extraKeys]) copy(source, out2, key);
-  return out2;
+
+// src/io/lock.ts
+import {
+  closeSync as closeSync2,
+  fstatSync,
+  fsyncSync as fsyncSync2,
+  ftruncateSync,
+  openSync as openSync2,
+  readFileSync as readFileSync3,
+  statSync as statSync2,
+  unlinkSync as unlinkSync2,
+  writeSync as writeSync2
+} from "node:fs";
+var DEFAULT_STALE_MS = 9e4;
+var DEFAULT_POLL_MS = 100;
+var DEFAULT_REAP_GRACE_MS = 3e3;
+var ownerCounter = 0;
+function ownerToken() {
+  ownerCounter += 1;
+  return `${process.pid}-${ownerCounter}-${process.hrtime.bigint()}`;
 }
-function buildExecutorEnv(source, extraKeys = []) {
-  const out2 = buildWorkerEnv(source);
-  for (const key of EXECUTOR_CONTEXT_ALLOW) copy(source, out2, key);
-  for (const key of NO_PROXY_KEYS) copy(source, out2, key);
-  for (const key of PROXY_URL_KEYS) {
-    const value = source[key];
-    if (value !== void 0 && !proxyHasCredentials(value)) out2[key] = value;
+function errorCode(err2) {
+  return err2.code;
+}
+function parseStored(text2) {
+  let value;
+  try {
+    value = JSON.parse(text2);
+  } catch {
+    return null;
   }
-  for (const key of extraKeys) copy(source, out2, key);
-  return out2;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const object = value;
+  if (!Number.isInteger(object.pid) || object.pid <= 0) return null;
+  if (typeof object.startedAtMs !== "number" || !Number.isFinite(object.startedAtMs)) return null;
+  if (typeof object.beatAtMs !== "number" || !Number.isFinite(object.beatAtMs)) return null;
+  if (object.label !== void 0 && typeof object.label !== "string") return null;
+  const info = {
+    pid: object.pid,
+    startedAtMs: object.startedAtMs,
+    beatAtMs: object.beatAtMs
+  };
+  if (typeof object.label === "string") info.label = object.label;
+  if (Number.isInteger(object.execPgid) && object.execPgid > 1) {
+    info.execPgid = object.execPgid;
+  }
+  return { info, stored: value };
+}
+function readForAcquire(path) {
+  let text2;
+  try {
+    text2 = readFileSync3(path, "utf8");
+  } catch (err2) {
+    if (errorCode(err2) === "ENOENT") return { kind: "missing" };
+    throw new Error(`cannot read lock ${path}: ${err2.message}`);
+  }
+  const parsed = parseStored(text2);
+  if (parsed === null) return { kind: "corrupt" };
+  return { kind: "valid", ...parsed };
+}
+function ownsLock(path, token) {
+  try {
+    return parseStored(readFileSync3(path, "utf8"))?.stored.ownerToken === token;
+  } catch {
+    return false;
+  }
+}
+function readLock(path) {
+  try {
+    const parsed = parseStored(readFileSync3(path, "utf8"));
+    return parsed?.info ?? null;
+  } catch {
+    return null;
+  }
+}
+function pidIsGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err2) {
+    return errorCode(err2) === "ESRCH";
+  }
+}
+function groupIsGone(pgid) {
+  try {
+    process.kill(-pgid, 0);
+    return false;
+  } catch (err2) {
+    const code = errorCode(err2);
+    return code === "ESRCH";
+  }
+}
+function reapExecutorGroup(pgid, graceMs) {
+  if (groupIsGone(pgid)) return void 0;
+  killProcessGroup(pgid, "SIGTERM");
+  const termDeadline = Date.now() + graceMs;
+  while (Date.now() < termDeadline) {
+    if (groupIsGone(pgid)) return { pgid, signal: "SIGTERM" };
+    sleepSync(50);
+  }
+  killProcessGroup(pgid, "SIGKILL");
+  const killDeadline = Date.now() + graceMs;
+  while (Date.now() < killDeadline) {
+    if (groupIsGone(pgid)) return { pgid, signal: "SIGKILL" };
+    sleepSync(50);
+  }
+  throw new Error(
+    `cannot reclaim lock: the previous holder's executor group ${pgid} survived SIGKILL. Proceeding would put two executors in one checkout; kill it manually and retry.`
+  );
+}
+function staleReason(read, atMs, staleMs) {
+  if (read.kind === "corrupt") return "corrupt";
+  if (atMs - read.info.beatAtMs > staleMs) return "stale-heartbeat";
+  if (pidIsGone(read.info.pid)) return "dead-pid";
+  return null;
+}
+function identity(fd) {
+  const stat = fstatSync(fd, { bigint: true });
+  return { dev: stat.dev, ino: stat.ino };
+}
+function sameIdentity(a, b) {
+  return a.dev === b.dev && a.ino === b.ino;
+}
+function currentIdentity(path) {
+  try {
+    const stat = statSync2(path, { bigint: true });
+    return { dev: stat.dev, ino: stat.ino };
+  } catch (err2) {
+    if (errorCode(err2) === "ENOENT") return null;
+    throw err2;
+  }
+}
+function writeStored(fd, value) {
+  const data = Buffer.from(`${JSON.stringify(value)}
+`);
+  let offset = 0;
+  while (offset < data.length) {
+    const written = writeSync2(fd, data, offset, data.length - offset, offset);
+    if (written === 0) throw new Error("lock write made no progress");
+    offset += written;
+  }
+  ftruncateSync(fd, data.length);
+  fsyncSync2(fd);
+}
+function sleepSync(ms) {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function assertOption(name, value, allowZero) {
+  if (!Number.isFinite(value) || (allowZero ? value < 0 : value <= 0)) {
+    throw new Error(`${name} must be ${allowZero ? "a non-negative" : "a positive"} finite number`);
+  }
+}
+function acquireLock(path, opts) {
+  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
+  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
+  const reapGraceMs = opts.reapGraceMs ?? DEFAULT_REAP_GRACE_MS;
+  assertOption("waitMs", opts.waitMs, true);
+  assertOption("staleMs", staleMs, true);
+  assertOption("pollMs", pollMs, false);
+  const clock = opts.now ?? Date.now;
+  const usesRealClock = opts.now === void 0;
+  const waitingStartedAt = clock();
+  let atMs = waitingStartedAt;
+  let takeover;
+  for (; ; ) {
+    const token = ownerToken();
+    let fd;
+    try {
+      fd = openSync2(path, "wx");
+    } catch (err2) {
+      if (errorCode(err2) !== "EEXIST") {
+        throw new Error(`cannot acquire lock ${path}: ${err2.message}`);
+      }
+      const holderRead = readForAcquire(path);
+      if (holderRead.kind === "missing") {
+        atMs = clock();
+        continue;
+      }
+      const reason = staleReason(holderRead, atMs, staleMs);
+      if (reason !== null) {
+        const confirmed = readForAcquire(path);
+        if (confirmed.kind === "missing") {
+          takeover = void 0;
+          atMs = clock();
+          continue;
+        }
+        const confirmedReason = staleReason(confirmed, atMs, staleMs);
+        if (confirmedReason === null) {
+          takeover = void 0;
+          atMs = clock();
+          continue;
+        }
+        let removed = false;
+        try {
+          unlinkSync2(path);
+          removed = true;
+        } catch (unlinkErr) {
+          if (errorCode(unlinkErr) !== "ENOENT") {
+            throw new Error(`cannot reclaim stale lock ${path}: ${unlinkErr.message}`);
+          }
+        }
+        if (removed) {
+          const holder = confirmed.kind === "valid" ? confirmed.info : null;
+          const reaped = holder?.execPgid !== void 0 ? reapExecutorGroup(holder.execPgid, reapGraceMs) : void 0;
+          takeover = {
+            atMs,
+            reason: confirmedReason,
+            holder,
+            ...reaped !== void 0 ? { reaped } : {}
+          };
+        } else {
+          takeover = void 0;
+        }
+        atMs = clock();
+        continue;
+      }
+      takeover = void 0;
+      if (atMs - waitingStartedAt >= opts.waitMs) {
+        return {
+          blocked: true,
+          holder: holderRead.kind === "valid" ? holderRead.info : readLock(path)
+        };
+      }
+      if (usesRealClock) {
+        sleepSync(Math.min(pollMs, opts.waitMs - (atMs - waitingStartedAt)));
+      }
+      atMs = clock();
+      continue;
+    }
+    const stored = {
+      pid: process.pid,
+      startedAtMs: atMs,
+      beatAtMs: atMs,
+      ownerToken: token
+    };
+    if (takeover !== void 0) stored.takeover = takeover;
+    let acquiredIdentity;
+    try {
+      writeStored(fd, stored);
+      acquiredIdentity = identity(fd);
+    } catch (err2) {
+      closeSync2(fd);
+      try {
+        unlinkSync2(path);
+      } catch {
+      }
+      throw new Error(`cannot initialize lock ${path}: ${err2.message}`);
+    }
+    closeSync2(fd);
+    const installedIdentity = currentIdentity(path);
+    if (installedIdentity === null || !sameIdentity(installedIdentity, acquiredIdentity)) {
+      takeover = void 0;
+      atMs = clock();
+      continue;
+    }
+    let released = false;
+    const acquiredTakeover = takeover ?? null;
+    return {
+      path,
+      ownerToken: token,
+      takeover: acquiredTakeover,
+      recordExecPgid(pgid) {
+        if (released) return;
+        const fd2 = openSync2(path, "r+");
+        try {
+          if (!sameIdentity(identity(fd2), acquiredIdentity)) {
+            throw new Error(`cannot record exec pgid on ${path}: ownership was lost`);
+          }
+          const parsed = parseStored(readFileSync3(fd2, "utf8"));
+          if (parsed === null || parsed.stored.ownerToken !== token) {
+            throw new Error(`cannot record exec pgid on ${path}: ownership was lost`);
+          }
+          parsed.stored.execPgid = pgid;
+          writeStored(fd2, parsed.stored);
+        } finally {
+          closeSync2(fd2);
+        }
+      },
+      heartbeat() {
+        if (released) return;
+        let heartbeatFd;
+        try {
+          heartbeatFd = openSync2(path, "r+");
+        } catch (err2) {
+          throw new Error(`cannot heartbeat lock ${path}: ${err2.message}`);
+        }
+        try {
+          if (!sameIdentity(identity(heartbeatFd), acquiredIdentity)) {
+            throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
+          }
+          const parsed = parseStored(readFileSync3(heartbeatFd, "utf8"));
+          if (parsed === null || parsed.stored.ownerToken !== token) {
+            throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
+          }
+          parsed.stored.beatAtMs = clock();
+          writeStored(heartbeatFd, parsed.stored);
+        } finally {
+          closeSync2(heartbeatFd);
+        }
+      },
+      release() {
+        if (released) return;
+        let contents;
+        try {
+          contents = readFileSync3(path, "utf8");
+        } catch (err2) {
+          if (errorCode(err2) === "ENOENT") {
+            released = true;
+            return;
+          }
+          throw new Error(`cannot release lock ${path}: ${err2.message}`);
+        }
+        const parsed = parseStored(contents);
+        if (parsed === null || parsed.stored.ownerToken !== token) {
+          released = true;
+          return;
+        }
+        try {
+          unlinkSync2(path);
+          released = true;
+        } catch (err2) {
+          if (errorCode(err2) === "ENOENT") released = true;
+          else throw new Error(`cannot release lock ${path}: ${err2.message}`);
+        }
+      }
+    };
+  }
+}
+
+// src/app/gateConfig.ts
+import { lstatSync, readFileSync as readFileSync4 } from "node:fs";
+import { join as join3 } from "node:path";
+var KEYS = /* @__PURE__ */ new Set([
+  "mode",
+  "integration_branch",
+  "gate",
+  "clean_gate",
+  "clean_triggers",
+  "reset",
+  "lock_wait_minutes",
+  "env",
+  "gate_wall_minutes"
+]);
+function gateYamlPath(paths) {
+  return join3(paths.root, "gate.yaml");
+}
+function invalid(problem) {
+  throw new Error(`invalid gate.yaml: ${problem}`);
+}
+function commandList(value, key) {
+  if (!Array.isArray(value)) invalid(`${key} must be an array of argv arrays`);
+  return value.map((command, commandIndex) => {
+    if (!Array.isArray(command) || command.length === 0) {
+      invalid(`${key}[${commandIndex}] must be a non-empty argv array`);
+    }
+    return command.map((arg, argIndex) => {
+      if (typeof arg !== "string" || arg.length === 0) {
+        invalid(`${key}[${commandIndex}][${argIndex}] must be a non-empty string`);
+      }
+      return arg;
+    });
+  });
+}
+function stringList(value, key) {
+  if (!Array.isArray(value)) invalid(`${key} must be an array of non-empty strings`);
+  return value.map((item, index) => {
+    if (typeof item !== "string" || item.length === 0) {
+      invalid(`${key}[${index}] must be a non-empty string`);
+    }
+    return item;
+  });
+}
+function own(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+function loadGateConfig(paths) {
+  const path = gateYamlPath(paths);
+  let text2;
+  try {
+    text2 = readFileSync4(path, "utf8");
+  } catch (err2) {
+    if (err2.code === "ENOENT") {
+      try {
+        lstatSync(path);
+      } catch (statErr) {
+        if (statErr.code === "ENOENT") return { mode: "worktree" };
+      }
+    }
+    throw new Error(`gate.yaml is unreadable at ${path}: ${err2.message}`);
+  }
+  let raw;
+  try {
+    raw = load(text2, { schema: JSON_SCHEMA });
+  } catch (err2) {
+    throw new Error(`gate.yaml parse error: ${err2.message}`);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    invalid("top level must be a mapping");
+  }
+  const object = raw;
+  for (const key of Object.keys(object)) {
+    if (!KEYS.has(key)) invalid(`unknown top-level key "${key}"`);
+  }
+  const modeValue = object.mode;
+  if (modeValue !== "worktree" && modeValue !== "queue") {
+    invalid('mode must be "worktree" or "queue"');
+  }
+  const mode = modeValue;
+  const config = { mode };
+  if (own(object, "integration_branch")) {
+    if (typeof object.integration_branch !== "string" || object.integration_branch.length === 0) {
+      invalid("integration_branch must be a non-empty string");
+    }
+    config.integration_branch = object.integration_branch;
+  }
+  if (own(object, "gate")) config.gate = commandList(object.gate, "gate");
+  if (own(object, "clean_gate")) {
+    config.clean_gate = commandList(object.clean_gate, "clean_gate");
+  }
+  if (own(object, "clean_triggers")) {
+    config.clean_triggers = stringList(object.clean_triggers, "clean_triggers");
+  }
+  if (own(object, "reset")) config.reset = commandList(object.reset, "reset");
+  if (own(object, "lock_wait_minutes")) {
+    const value = object.lock_wait_minutes;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      invalid("lock_wait_minutes must be a non-negative finite number");
+    }
+    config.lock_wait_minutes = value;
+  }
+  if (own(object, "env")) config.env = stringList(object.env, "env");
+  if (own(object, "gate_wall_minutes")) {
+    const value = object.gate_wall_minutes;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      invalid("gate_wall_minutes must be a positive finite number");
+    }
+    config.gate_wall_minutes = value;
+  }
+  if (mode === "queue") {
+    if (config.integration_branch === void 0) {
+      invalid('integration_branch is required when mode is "queue"');
+    }
+    if (config.gate === void 0) invalid('gate is required when mode is "queue"');
+    if (config.gate.length === 0) invalid("gate must contain at least one argv array in queue mode");
+  }
+  return config;
+}
+function selectGate(config, changes) {
+  const triggers = config.clean_triggers ?? [];
+  const useClean = config.clean_gate !== void 0 && changes.some(
+    (entry) => entry.status === "D" || matchAny(entry.path, triggers) || entry.oldPath !== void 0 && matchAny(entry.oldPath, triggers)
+  );
+  if (useClean) return { level: "clean", commands: config.clean_gate };
+  if (config.gate !== void 0 && config.gate.length > 0) return { level: "task", commands: config.gate };
+  return null;
 }
 
 // src/io/quota.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3, readdirSync, statSync as statSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync5, readdirSync, statSync as statSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 function walkJsonl(dir) {
   let out2 = [];
   let entries;
@@ -10167,10 +10763,10 @@ function walkJsonl(dir) {
     return out2;
   }
   for (const name of entries) {
-    const p = join3(dir, name);
+    const p = join4(dir, name);
     let s;
     try {
-      s = statSync2(p);
+      s = statSync3(p);
     } catch {
       continue;
     }
@@ -10195,7 +10791,7 @@ function readCodexQuota(sessionsDir) {
   if (newest === void 0) return null;
   let lines;
   try {
-    lines = readFileSync3(newest, "utf8").split("\n");
+    lines = readFileSync5(newest, "utf8").split("\n");
   } catch {
     return null;
   }
@@ -10228,7 +10824,7 @@ function readClaudeQuota(usageJsonPath) {
   if (!existsSync4(usageJsonPath)) return null;
   let o;
   try {
-    o = JSON.parse(readFileSync3(usageJsonPath, "utf8"));
+    o = JSON.parse(readFileSync5(usageJsonPath, "utf8"));
   } catch {
     return null;
   }
@@ -10242,33 +10838,18 @@ function readClaudeQuota(usageJsonPath) {
 }
 
 // src/io/supervisor.ts
-import { spawn } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync3, openSync as openSync2, statSync as statSync3, writeFileSync } from "node:fs";
-import { dirname as dirname4, join as join4 } from "node:path";
-
-// src/io/signals.ts
-function killProcessGroup(pgid, signal) {
-  if (!Number.isInteger(pgid) || pgid <= 1) return false;
-  try {
-    process.kill(-pgid, signal);
-    return true;
-  } catch (err2) {
-    const code = err2.code;
-    if (code === "ESRCH" || code === "EPERM") return false;
-    throw err2;
-  }
-}
-
-// src/io/supervisor.ts
-function activitySignal(logPath, watchDir) {
+import { spawn as spawn2 } from "node:child_process";
+import { closeSync as closeSync3, mkdirSync as mkdirSync3, openSync as openSync3, statSync as statSync4, writeFileSync } from "node:fs";
+import { dirname as dirname4 } from "node:path";
+function activitySignal(logPath, watchPaths) {
   let sig = 0;
   try {
-    sig += statSync3(logPath).size;
+    sig += statSync4(logPath).size;
   } catch {
   }
-  for (const p of [watchDir, join4(watchDir, ".git")]) {
+  for (const p of watchPaths) {
     try {
-      sig += Math.floor(statSync3(p).mtimeMs);
+      sig += Math.floor(statSync4(p).mtimeMs);
     } catch {
     }
   }
@@ -10278,22 +10859,22 @@ function superviseWorker(spec) {
   const heartbeatIntervalMs = spec.heartbeatIntervalMs ?? 2e4;
   const pollIntervalMs = spec.pollIntervalMs ?? 1e3;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 1e4;
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     mkdirSync3(dirname4(spec.logPath), { recursive: true });
     mkdirSync3(dirname4(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
-    const logFd = openSync2(spec.logPath, "a");
+    const logFd = openSync3(spec.logPath, "a");
     let timedOut = false;
     let stalled = false;
     let settled = false;
     let lastActivity = startedAtMs;
-    let lastSignal = activitySignal(spec.logPath, spec.watchDir);
+    let lastSignal = activitySignal(spec.logPath, spec.watchPaths);
     const timers = [];
     const clearAll = () => {
       for (const t of timers) clearInterval(t);
       for (const t of timers) clearTimeout(t);
     };
-    const child = spawn(spec.argv[0], spec.argv.slice(1), {
+    const child = spawn2(spec.argv[0], spec.argv.slice(1), {
       cwd: spec.cwd,
       env: spec.env,
       detached: true,
@@ -10305,7 +10886,7 @@ function superviseWorker(spec) {
       settled = true;
       clearAll();
       try {
-        closeSync2(logFd);
+        closeSync3(logFd);
       } catch {
       }
       const exitClass = classifyExit({
@@ -10316,7 +10897,7 @@ function superviseWorker(spec) {
         exitCode: o.rc,
         signal: o.signal
       });
-      resolve5({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
+      resolve6({ ...o, exitClass, startedAtMs, endedAtMs: Date.now() });
     };
     child.on("error", (err2) => {
       finish({ rc: null, signal: null, timedOut: false, stalled: false, spawnError: err2.message });
@@ -10351,7 +10932,7 @@ function superviseWorker(spec) {
       );
       timers.push(
         setInterval(() => {
-          const sig = activitySignal(spec.logPath, spec.watchDir);
+          const sig = activitySignal(spec.logPath, spec.watchPaths);
           if (sig !== lastSignal) {
             lastSignal = sig;
             lastActivity = Date.now();
@@ -10521,7 +11102,7 @@ function codexLauncher(worker) {
         "exec",
         buildPrompt(ctx),
         "-C",
-        ctx.worktreeDir,
+        ctx.workDir,
         "-s",
         "workspace-write",
         "--skip-git-repo-check",
@@ -10538,8 +11119,8 @@ function codexLauncher(worker) {
     // directory comes from the spawn (`superviseWorker` sets cwd), making `-C` redundant
     // anyway, and the sandbox is expressed as a config override -- verified honoured, the
     // run header reports the mode it was given.
-    buildResumeArgv(worktreeDir, sessionId, feedback) {
-      void worktreeDir;
+    buildResumeArgv(workDir, sessionId, feedback) {
+      void workDir;
       const argv = [
         bin,
         "exec",
@@ -10579,11 +11160,11 @@ function claudeLauncher(worker) {
         "--strict-mcp-config",
         // no MCP servers: do not inherit the user's own
         "--tools",
-        verifyCommands.length > 0 ? "Read,Edit,Write,Bash" : "Read,Edit,Write",
+        "Read,Edit,Write,Bash",
         "--add-dir",
-        ctx.worktreeDir
+        ctx.workDir
       ];
-      if (verifyCommands.length > 0) argv.push("--allowedTools", ...bashGrants(verifyCommands));
+      argv.push("--allowedTools", ...bashGrants(verifyCommands));
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
@@ -10591,7 +11172,7 @@ function claudeLauncher(worker) {
     // `claude --resume <session-id> -p <feedback>` continues that session with its
     // context retained. The session-id continuity guard in `router resume` verifies
     // it re-attached.
-    buildResumeArgv(worktreeDir, sessionId, feedback, task) {
+    buildResumeArgv(workDir, sessionId, feedback, task) {
       const verifyCommands = task === void 0 ? [] : gateCommands(task);
       const argv = [
         bin,
@@ -10607,11 +11188,11 @@ function claudeLauncher(worker) {
         "--strict-mcp-config",
         // no MCP servers: do not inherit the user's own
         "--tools",
-        verifyCommands.length > 0 ? "Read,Edit,Write,Bash" : "Read,Edit,Write",
+        "Read,Edit,Write,Bash",
         "--add-dir",
-        worktreeDir
+        workDir
       ];
-      if (verifyCommands.length > 0) argv.push("--allowedTools", ...bashGrants(verifyCommands));
+      argv.push("--allowedTools", ...bashGrants(verifyCommands));
       if (model !== void 0) argv.push("--model", model);
       if (effort !== void 0) argv.push("--effort", effort);
       return argv;
@@ -10621,6 +11202,14 @@ function claudeLauncher(worker) {
 function gateCommands(task) {
   return (task.verify ?? []).filter((command) => command.length > 0).map((command) => command.join(" "));
 }
+var GIT_GRANTS = [
+  "Bash(git add:*)",
+  "Bash(git commit:*)",
+  "Bash(git status:*)",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git rev-parse:*)"
+];
 function bashGrants(verifyCommands) {
   const grants = /* @__PURE__ */ new Set();
   for (const command of verifyCommands) {
@@ -10628,6 +11217,7 @@ function bashGrants(verifyCommands) {
     const prefix = command.split(" ").slice(0, 2).join(" ");
     if (prefix !== "" && prefix !== command) grants.add(`Bash(${prefix}:*)`);
   }
+  for (const grant of GIT_GRANTS) grants.add(grant);
   return [...grants];
 }
 function makeLauncher(worker) {
@@ -10660,10 +11250,19 @@ the plan yourself -- report CONTRACT_CONFLICT with the evidence you found.
 internal steps, implement it, write tests for what you changed, ${gateStep}, then check your
 own diff against the scope below before finishing.
 
+COMMIT AS YOU GO. One commit per functional unit, each with its own tests -- a unit being
+something a human can review as one thing. The unit is not the smallest possible change and
+not the whole task: adding a storage access method is file IO, then the storage format, then
+the storage architecture, one commit each; splitting the file IO alone into ten commits is
+as wrong as squashing all three into one. Do NOT wait for green to commit -- the gate runs
+once at the end, so an intermediate commit that does not build yet is expected and fine.
+You must leave NOTHING uncommitted: an uncommitted file is invisible to every gate, so it
+fails the run rather than slipping through. Use only \`git add\` and \`git commit\`; you have
+no permission to checkout, reset, rebase, or move branches, and must not try.
+
 Constraints:
 - Change ONLY files matching: ${scope}
 - Do not touch tests except to make them pass legitimately.
-- Leave changes in the working tree; the orchestrator will commit them.
 - Do NOT set up the environment to make a check run: no installing dependencies, no
   creating directories, no editing configuration. If a check cannot run here, say so in
   the report -- an honest "did not run" is useful, a claimed pass that never ran is not.
@@ -10694,8 +11293,8 @@ deserves a closer review than usual. Report all three honestly; they are read, n
 }
 
 // src/app/modelConfig.ts
-import { readFileSync as readFileSync4 } from "node:fs";
-import { join as join5 } from "node:path";
+import { readFileSync as readFileSync6 } from "node:fs";
+import { join as join6 } from "node:path";
 var DEFAULT_MODEL_CONFIG = {
   codex: {
     weak: { model: "gpt-5.6-terra", effort: "medium" },
@@ -10720,7 +11319,7 @@ var DEFAULT_MODEL_CONFIG = {
   ]
 };
 function modelsYamlPath(paths) {
-  return join5(paths.root, "models.yaml");
+  return join6(paths.root, "models.yaml");
 }
 function isSpec(v) {
   return typeof v === "object" && v !== null && typeof v.model === "string";
@@ -10732,7 +11331,7 @@ function loadModelConfig(paths) {
   const cfg = cloneDefault();
   let raw;
   try {
-    raw = load(readFileSync4(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync6(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -10763,7 +11362,7 @@ function tierWorkers(cfg, tier) {
 }
 
 // src/app/taskLoad.ts
-import { readFileSync as readFileSync5 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 
 // src/domain/validate.ts
 var import_ajv = __toESM(require_ajv(), 1);
@@ -10950,10 +11549,10 @@ var TaskContractError = class extends Error {
   }
 };
 function loadTask(paths, id) {
-  const taskYamlText = readFileSync5(paths.taskYaml(id), "utf8");
+  const taskYamlText = readFileSync7(paths.taskYaml(id), "utf8");
   let contractMdText = "";
   try {
-    contractMdText = readFileSync5(paths.contractMd(id), "utf8");
+    contractMdText = readFileSync7(paths.contractMd(id), "utf8");
   } catch {
     contractMdText = "";
   }
@@ -10970,9 +11569,365 @@ function loadTask(paths, id) {
   return { task: r.value, taskYamlText, contractMdText };
 }
 
+// src/app/runStatus.ts
+import { readFileSync as readFileSync8 } from "node:fs";
+import { basename, isAbsolute, relative, resolve as resolve2, sep } from "node:path";
+var ACTIVITY_THROTTLE_MS = 2e3;
+var LOG_POLL_MS = 250;
+var SUBCOMMAND_PROGRAMS = /* @__PURE__ */ new Set([
+  "cargo",
+  "docker",
+  "git",
+  "gh",
+  "glab",
+  "go",
+  "npm",
+  "npx",
+  "pnpm",
+  "router",
+  "rustup",
+  "swift",
+  "yarn"
+]);
+var TIMING_KEY = {
+  worktree: "t_worktree",
+  // preparation: rescue + branch. Name kept; see note below.
+  executor_starting: "t_launch",
+  executor_working: "t_exec",
+  gating: "t_gate",
+  verify: "t_verify"
+};
+var RunStatusWriter = class {
+  path;
+  workDir;
+  clock;
+  activityThrottleMs;
+  logPollMs;
+  onWrite;
+  durationsMs = {
+    t_worktree: 0,
+    t_launch: 0,
+    t_exec: 0,
+    t_gate: 0,
+    t_verify: 0
+  };
+  status;
+  phaseStartedMonoMs;
+  lastActivityWriteMonoMs = null;
+  pendingActivity = false;
+  stallMs = null;
+  logPath = null;
+  logKind = null;
+  logCharsRead = 0;
+  logTimer = null;
+  terminalWritten = false;
+  constructor(opts) {
+    this.path = opts.path;
+    this.workDir = resolve2(opts.workDir);
+    this.clock = opts.clock;
+    this.activityThrottleMs = opts.activityThrottleMs ?? ACTIVITY_THROTTLE_MS;
+    this.logPollMs = opts.logPollMs ?? LOG_POLL_MS;
+    this.onWrite = opts.onWrite;
+    const now = this.clock.nowIso();
+    this.phaseStartedMonoMs = this.clock.monotonicMs();
+    this.status = {
+      phase: "queued",
+      started_at: now,
+      phase_started_at: now,
+      budget_minutes: opts.budgetMinutes,
+      last_output_at: null,
+      stall_deadline: null
+    };
+    this.write();
+  }
+  transition(phase, stallMs) {
+    if (this.terminalWritten) return;
+    this.accountCurrentPhase();
+    const now = this.clock.nowIso();
+    this.status = {
+      phase,
+      started_at: this.status.started_at,
+      phase_started_at: now,
+      budget_minutes: this.status.budget_minutes,
+      last_output_at: null,
+      stall_deadline: phase === "executor_starting" || phase === "executor_working" ? deadline(now, stallMs ?? this.stallMs) : null,
+      ...this.status.recent_action !== void 0 ? { recent_action: this.status.recent_action } : {}
+    };
+    this.phaseStartedMonoMs = this.clock.monotonicMs();
+    this.pendingActivity = false;
+    this.stallMs = stallMs ?? this.stallMs;
+    this.write();
+  }
+  executorStarting(stallMs) {
+    this.stopLogTail();
+    this.stallMs = stallMs;
+    this.transition("executor_starting", stallMs);
+  }
+  executorWorking(logPath, kind, initialLogChars = 0) {
+    this.transition("executor_working", this.stallMs ?? void 0);
+    this.logPath = logPath;
+    this.logKind = kind;
+    this.logCharsRead = initialLogChars;
+    this.pollLog();
+    this.logTimer = setInterval(() => this.pollLog(), this.logPollMs);
+    this.logTimer.unref();
+  }
+  finishExecutor() {
+    this.pollLog();
+    this.stopLogTail();
+  }
+  /** Record a complete executor stream line. Exposed so redaction/throttling are unit-testable. */
+  noteOutput(line, kind) {
+    if (this.terminalWritten || this.status.phase !== "executor_working") return;
+    const now = this.clock.nowIso();
+    this.status.last_output_at = now;
+    this.status.stall_deadline = deadline(now, this.stallMs);
+    if (kind === "claude") {
+      const action = recentClaudeAction(line, this.workDir);
+      if (action !== void 0) this.status.recent_action = action;
+    } else if (kind === "codex") {
+      const action = recentCodexAction(line);
+      if (action !== void 0) this.status.recent_action = action;
+    }
+    this.pendingActivity = true;
+    const monoNow = this.clock.monotonicMs();
+    if (this.lastActivityWriteMonoMs === null || monoNow - this.lastActivityWriteMonoMs >= this.activityThrottleMs) {
+      this.writeActivity(monoNow);
+    }
+  }
+  terminal(terminalState) {
+    if (!this.terminalWritten) {
+      this.finishExecutor();
+      this.accountCurrentPhase();
+      this.status.stall_deadline = null;
+      this.status.terminal_state = terminalState;
+      this.terminalWritten = true;
+      this.pendingActivity = false;
+      this.write();
+    } else if (this.status.terminal_state !== terminalState) {
+      this.status.terminal_state = terminalState;
+      this.write();
+    }
+    return this.timings();
+  }
+  timings() {
+    return {
+      t_worktree: seconds(this.durationsMs.t_worktree),
+      t_launch: seconds(this.durationsMs.t_launch),
+      t_exec: seconds(this.durationsMs.t_exec),
+      t_gate: seconds(this.durationsMs.t_gate),
+      t_verify: seconds(this.durationsMs.t_verify)
+    };
+  }
+  accountCurrentPhase() {
+    const key = TIMING_KEY[this.status.phase];
+    const now = this.clock.monotonicMs();
+    if (key !== void 0) this.durationsMs[key] += Math.max(0, now - this.phaseStartedMonoMs);
+    this.phaseStartedMonoMs = now;
+  }
+  writeActivity(monoNow) {
+    if (!this.pendingActivity) return;
+    this.write();
+    this.pendingActivity = false;
+    this.lastActivityWriteMonoMs = monoNow;
+  }
+  pollLog() {
+    this.flushActivityIfDue();
+    if (this.logPath === null || this.logKind === null) return;
+    let text2;
+    try {
+      text2 = readFileSync8(this.logPath, "utf8");
+    } catch {
+      return;
+    }
+    if (text2.length < this.logCharsRead) this.logCharsRead = 0;
+    const appended = text2.slice(this.logCharsRead);
+    const lastNewline = appended.lastIndexOf("\n");
+    if (lastNewline < 0) return;
+    this.logCharsRead += lastNewline + 1;
+    for (const line of appended.slice(0, lastNewline).split("\n")) {
+      if (line.trim() !== "") this.noteOutput(line, this.logKind);
+    }
+  }
+  flushActivityIfDue() {
+    if (!this.pendingActivity || this.lastActivityWriteMonoMs === null) return;
+    const monoNow = this.clock.monotonicMs();
+    if (monoNow - this.lastActivityWriteMonoMs >= this.activityThrottleMs) {
+      this.writeActivity(monoNow);
+    }
+  }
+  stopLogTail() {
+    if (this.logTimer !== null) clearInterval(this.logTimer);
+    this.logTimer = null;
+    this.logPath = null;
+    this.logKind = null;
+    this.logCharsRead = 0;
+  }
+  write() {
+    writeJsonAtomic(this.path, this.status);
+    this.onWrite?.({ ...this.status });
+  }
+};
+var RUN_PHASES = /* @__PURE__ */ new Set([
+  "queued",
+  "worktree",
+  "executor_starting",
+  "executor_working",
+  "gating",
+  "verify"
+]);
+var TERMINAL_STATES = /* @__PURE__ */ new Set([
+  "succeeded",
+  "failed",
+  "stalled",
+  "timed_out",
+  "cancelled"
+]);
+function readRunStatus(path) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync8(path, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || Array.isArray(parsed)) return null;
+  if (typeof parsed.phase !== "string" || !RUN_PHASES.has(parsed.phase)) return null;
+  if (typeof parsed.started_at !== "string" || !Number.isFinite(Date.parse(parsed.started_at))) return null;
+  const terminal = parsed.terminal_state;
+  if (terminal !== void 0 && (typeof terminal !== "string" || !TERMINAL_STATES.has(terminal))) return null;
+  return parsed;
+}
+function terminalStateFor(exitClass, verifierPassed) {
+  if (exitClass === "stalled") return "stalled";
+  if (exitClass === "timeout") return "timed_out";
+  if (exitClass === "killed") return "cancelled";
+  return exitClass === "ok" && verifierPassed ? "succeeded" : "failed";
+}
+function recentClaudeAction(line, workDir) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return void 0;
+  }
+  const tools = [];
+  collectToolUses(event, tools);
+  let recent;
+  for (const tool of tools) {
+    const name = tool.name;
+    const input = isRecord(tool.input) ? tool.input : {};
+    if (name === "Read" || name === "Edit" || name === "Write") {
+      const rawPath = typeof input.file_path === "string" ? input.file_path : input.path;
+      if (typeof rawPath !== "string") continue;
+      const repoPath = repoRelativePath(rawPath, workDir);
+      if (repoPath !== void 0) recent = `${name}: ${repoPath}`;
+    } else if (name === "Bash" && typeof input.command === "string") {
+      const tokens = bashTokens(input.command);
+      recent = tokens.length === 0 ? "Bash:" : `Bash: ${tokens.join(" ")}`;
+    }
+  }
+  return recent;
+}
+function recentCodexAction(line) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return void 0;
+  }
+  if (!isRecord(event) || event.type !== "item.started" && event.type !== "item.completed") {
+    return void 0;
+  }
+  const item = event.item;
+  if (!isRecord(item) || item.type !== "command_execution" || typeof item.command !== "string") {
+    return void 0;
+  }
+  const command = unwrapShellCommand(item.command);
+  if (command === void 0) return void 0;
+  const tokens = bashTokens(command);
+  return tokens.length === 0 ? "Bash:" : `Bash: ${tokens.join(" ")}`;
+}
+function collectToolUses(value, found) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectToolUses(item, found);
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (value.type === "tool_use" && typeof value.name === "string") found.push(value);
+  for (const child of Object.values(value)) collectToolUses(child, found);
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function repoRelativePath(rawPath, workDir) {
+  const root = resolve2(workDir);
+  const absolute = isAbsolute(rawPath) ? resolve2(rawPath) : resolve2(root, rawPath);
+  const rel = relative(root, absolute);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return void 0;
+  return rel.split(sep).join("/");
+}
+function bashTokens(command) {
+  const raw = command.trim().split(/\s+/u).filter(Boolean);
+  const programAt = raw.findIndex((token) => !token.includes("=") && !isShellOperator(token));
+  if (programAt < 0) return [];
+  const program = raw[programAt];
+  if (!safeToken(program)) return [];
+  const tokens = [program];
+  const subcommand = raw[programAt + 1];
+  if (subcommand !== void 0 && SUBCOMMAND_PROGRAMS.has(basename(program)) && !subcommand.startsWith("-") && safeToken(subcommand) && !isShellOperator(subcommand)) {
+    tokens.push(subcommand);
+  }
+  return tokens;
+}
+function unwrapShellCommand(command) {
+  const match = /^(\S+)[ \t]+(-lc|-c)[ \t]+([\s\S]+)$/u.exec(command.trim());
+  if (match === null) return void 0;
+  const shell = basename(match[1]);
+  const option = match[2];
+  if (!((shell === "zsh" || shell === "bash") && option === "-lc") && !(shell === "sh" && option === "-c")) {
+    return void 0;
+  }
+  return unwrapQuotedShellWord(match[3]);
+}
+function unwrapQuotedShellWord(word) {
+  const quote = word[0];
+  if (quote !== '"' && quote !== "'" || word.length < 2) return void 0;
+  let unwrapped = "";
+  for (let index = 1; index < word.length; index += 1) {
+    const character = word[index];
+    if (character === quote) return index === word.length - 1 ? unwrapped : void 0;
+    if (quote === '"' && character === "\\") {
+      const escaped = word[index + 1];
+      if (escaped === void 0 || escaped === "\n") return void 0;
+      if (escaped === '"' || escaped === "\\" || escaped === "$" || escaped === "`") {
+        unwrapped += escaped;
+      } else {
+        unwrapped += `\\${escaped}`;
+      }
+      index += 1;
+    } else {
+      unwrapped += character;
+    }
+  }
+  return void 0;
+}
+function safeToken(token) {
+  return /^[A-Za-z0-9_./:@%+,-]+$/u.test(token) && !token.includes("=");
+}
+function isShellOperator(token) {
+  return token === "&&" || token === "||" || token === ";" || token === "|" || token === ">" || token === "<";
+}
+function deadline(nowIso, durationMs) {
+  if (durationMs == null) return null;
+  return new Date(Date.parse(nowIso) + durationMs).toISOString();
+}
+function seconds(ms) {
+  return Math.round(ms) / 1e3;
+}
+
 // src/app/taskContext.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync9 } from "node:fs";
 var TASK_CONTEXT_SOFT_LIMIT = 8e3;
 function contextError(taskId, message) {
   return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
@@ -10980,7 +11935,7 @@ function contextError(taskId, message) {
 function loadTaskContext(paths, task) {
   const path = paths.taskContext(task.id);
   if (!existsSync6(path)) return null;
-  const text2 = readFileSync6(path, "utf8");
+  const text2 = readFileSync9(path, "utf8");
   const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
   if (frontmatter === null) {
     throw contextError(task.id, "missing YAML frontmatter (expected a leading --- fenced block)");
@@ -11033,7 +11988,7 @@ function loadTaskContext(paths, task) {
 // src/app/verifier.ts
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join6 } from "node:path";
+import { join as join7 } from "node:path";
 
 // src/core/scope.ts
 function pathsToCheck(entry) {
@@ -11173,6 +12128,7 @@ function runCommand(argv, opts) {
 // src/app/verifier.ts
 var DEFAULT_TEST_GLOBS = ["test/**", "tests/**", "**/*.test.*", "**/*_test.*"];
 var DEFAULT_MAX_CHANGED_LINES = 400;
+var DEFAULT_BUILD_TIMEOUT_MS = 90 * 60 * 1e3;
 function fail(id, detail, rc) {
   return rc !== void 0 ? { id, ok: false, detail, rc } : { id, ok: false, detail };
 }
@@ -11181,22 +12137,23 @@ function pass(id, detail) {
 }
 function verifyTask(req) {
   const checks = [];
-  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  const changes = collectDiff(req.workDir, req.baseSha, req.head);
   if (req.mode === "probe") {
-    if (changes.length === 0) {
+    const touched = changes.length + uncommittedSourceFiles(req.workDir, req.uncommittedExclude ?? []).length;
+    if (touched === 0) {
       checks.push(pass("probe_no_diff"));
       return { result: "PASSED", checks };
     }
-    const files = `${changes.length} file${changes.length === 1 ? "" : "s"}`;
+    const files = `${touched} file${touched === 1 ? "" : "s"}`;
     checks.push(fail("probe_no_diff", `probe wrote ${files}; expected no diff`));
     return { result: "FAILED", checks };
   }
-  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
+  const patch = rawDiff(req.workDir, req.baseSha, req.head);
   if (patch.trim() === "") {
     checks.push(fail("diff_applies", "diff is empty - executor produced no committed change"));
     return { result: "FAILED", checks };
   }
-  const tmpBase = mkdtempSync(join6(tmpdir(), "router-verify-base-"));
+  const tmpBase = mkdtempSync(join7(tmpdir(), "router-verify-base-"));
   let applies;
   try {
     worktreeAddDetached(req.repoRoot, tmpBase, req.baseSha);
@@ -11234,7 +12191,7 @@ function verifyTask(req) {
     const ext = extensionOf(c.path);
     if (ext === "") continue;
     const base = c.path.slice(c.path.lastIndexOf("/") + 1);
-    const siblingModes = listDirFileModes(req.worktreeDir, req.baseSha, dirOf(c.path)).filter((s) => s.name !== base && s.name.endsWith(ext)).map((s) => s.mode);
+    const siblingModes = listDirFileModes(req.workDir, req.baseSha, dirOf(c.path)).filter((s) => s.name !== base && s.name.endsWith(ext)).map((s) => s.mode);
     execCandidates.push({ path: c.path, newMode: c.newMode, siblingModes });
   }
   const execViolations = findExecBitViolations(execCandidates);
@@ -11244,21 +12201,44 @@ function verifyTask(req) {
     return { result: "FAILED", checks, changed_lines: verdict.changedLines };
   }
   checks.push(pass("exec_bit"));
-  for (const [i, argv] of req.verify.entries()) {
+  const gateEnv = req.gateEnv ?? req.env;
+  const limitMs = req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
+  for (const [i, argv] of (req.gate?.reset ?? []).entries()) {
     if (argv.length === 0) continue;
-    const r = runCommand(argv, {
-      cwd: req.worktreeDir,
-      env: req.env,
-      ...req.buildTimeoutMs !== void 0 ? { timeoutMs: req.buildTimeoutMs } : {}
-    });
-    const label = req.verify.length > 1 ? `verify[${i}]` : "verify";
+    const r = runCommand(argv, { cwd: req.workDir, env: gateEnv, timeoutMs: limitMs });
+    const label = (req.gate?.reset ?? []).length > 1 ? `reset[${i}]` : "reset";
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: "FAILED", checks, changed_lines: verdict.changedLines };
     }
     if (r.timedOut) {
-      checks.push(fail(label, "timed out"));
+      checks.push(fail(label, `timed out after ${Math.round(limitMs / 1e3)}s: ${argv.join(" ")}`));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines, timed_out: true };
+    }
+    if (r.rc !== 0) {
+      checks.push(fail(label, `${argv.join(" ")} (rc ${r.rc})`, r.rc ?? void 0));
       return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    checks.push(pass(label, `${argv.join(" ")} (rc 0)`));
+  }
+  const selected = req.gate === void 0 ? null : selectGate(req.gate, changes);
+  const commands = selected?.commands ?? req.verify;
+  const prefix = selected === null ? "verify" : `gate:${selected.level}`;
+  for (const [i, argv] of commands.entries()) {
+    if (argv.length === 0) continue;
+    const r = runCommand(argv, {
+      cwd: req.workDir,
+      env: selected === null ? req.env : gateEnv,
+      timeoutMs: limitMs
+    });
+    const label = commands.length > 1 ? `${prefix}[${i}]` : prefix;
+    if (r.spawnError !== null) {
+      checks.push(fail(label, `spawn error: ${r.spawnError}`));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines };
+    }
+    if (r.timedOut) {
+      checks.push(fail(label, `timed out after ${Math.round(limitMs / 1e3)}s: ${argv.join(" ")}`));
+      return { result: "FAILED", checks, changed_lines: verdict.changedLines, timed_out: true };
     }
     if (r.rc !== 0) {
       checks.push(fail(label, `${argv.join(" ")} (rc ${r.rc})`, r.rc ?? void 0));
@@ -11270,14 +12250,15 @@ function verifyTask(req) {
 }
 
 // src/app/dispatch.ts
-var RUN = runId(1);
+var RUN_LABEL = runId(1);
 var STALL_MINUTES_DEFAULT = 20;
+var ROUTER_STATE_EXCLUDE = [".router"];
 function quotaFor(paths, kind) {
   if (kind === "codex") {
-    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join7(homedir(), ".codex", "sessions");
+    const dir = process.env.ROUTER_CODEX_SESSIONS_DIR ?? join8(homedir(), ".codex", "sessions");
     return readCodexQuota(dir);
   }
-  return readClaudeQuota(join7(paths.root, "usage.json"));
+  return readClaudeQuota(join8(paths.root, "usage.json"));
 }
 function orderByQuota(paths, workers) {
   const quotas = workers.map((w) => quotaFor(paths, w.kind)).filter((q) => q !== null);
@@ -11295,63 +12276,94 @@ function workerRecord(used, model) {
 }
 function prepareRun(deps, id) {
   const { paths } = deps;
-  const baseSha = resolveCommit(paths.repoRoot, "HEAD");
   const { task, contractMdText } = loadTask(paths, id);
-  const context = loadTaskContext(paths, task);
-  if (context !== null && context.base_sha !== baseSha) {
-    throw new Error(
-      `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", but dispatch base is "${baseSha}"; regenerate the task context for this revision`
+  const workDir = paths.repoRoot;
+  const status = new RunStatusWriter({
+    path: paths.runStatus(id),
+    workDir,
+    budgetMinutes: task.max_wall_minutes,
+    clock: deps.clock
+  });
+  try {
+    status.transition("worktree");
+    const branch = taskBranch(id);
+    if (currentBranch(paths.repoRoot) === branch) {
+      throw new Error(
+        `already on ${branch}; that branch belongs to a previous dispatch of ${id}. Merge or delete it, or use \`router resume ${id}\` to continue that session.`
+      );
+    }
+    const dirtySubmodules = submoduleDirty(paths.repoRoot, ROUTER_STATE_EXCLUDE);
+    const rescue = rescueCommit(
+      paths.repoRoot,
+      `router: rescue uncommitted work before ${id}`,
+      ROUTER_STATE_EXCLUDE
     );
+    const baseSha = resolveCommit(paths.repoRoot, "HEAD");
+    const context = loadTaskContext(paths, task);
+    if (context !== null && context.base_sha !== baseSha) {
+      throw new Error(
+        `TASK_CONTEXT.md base_sha mismatch for task ${id}: context describes "${context.base_sha}", but dispatch base is "${baseSha}"; regenerate the task context for this revision`
+      );
+    }
+    const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
+    createBranchStrict(paths.repoRoot, branch);
+    return {
+      id,
+      task,
+      contractMdText,
+      workDir,
+      branch,
+      baseSha,
+      context,
+      workers,
+      logPath: paths.workerLog(id),
+      status,
+      rescue,
+      dirtySubmodules
+    };
+  } catch (error) {
+    status.terminal("failed");
+    throw error;
   }
-  const workers = task.worker ? [task.worker] : tierWorkers(loadModelConfig(paths), task.tier ?? "weak");
-  const worktreeDir = paths.worktree(id, RUN);
-  const branch = runBranch(id, RUN);
-  worktreeRemove(paths.repoRoot, worktreeDir);
-  deleteBranch(paths.repoRoot, branch);
-  worktreeAdd(paths.repoRoot, worktreeDir, branch, baseSha);
-  return {
-    id,
-    task,
-    contractMdText,
-    worktreeDir,
-    branch,
-    baseSha,
-    context,
-    workers,
-    logPath: paths.workerLog(id, RUN)
-  };
 }
-async function runPrepared(deps, prep) {
+async function runPreparedObserved(deps, prep, gateConfig) {
   const { paths } = deps;
-  const { id, task, contractMdText, worktreeDir, baseSha, context, workers, logPath } = prep;
-  if (task.mode === "probe") rmSync2(paths.diffPatch(id, RUN), { force: true });
+  const { id, task, contractMdText, workDir, branch, baseSha, context, workers, logPath } = prep;
+  const refPath = branchRefPath(workDir, branch);
+  if (task.mode === "probe") rmSync2(paths.diffPatch(id), { force: true });
   const verifyEnv = buildWorkerEnv(process.env);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
   let exitClass = "task_failed";
   let outcome = { rc: null, timedOut: false, stalled: false, startedAtMs: 0, endedAtMs: 0 };
   let switches = 0;
+  const discarded = [];
   for (let i = 0; i < order.length; i++) {
     used = order[i];
     if (i > 0) writeFileSync2(logPath, "");
     const launcher2 = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+    const stallMs = (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4;
+    const initialLogChars = safeRead(logPath).length;
+    prep.status.executorStarting(stallMs);
     const o = await superviseWorker({
       argv: launcher2.buildArgv({
         task,
-        worktreeDir,
+        workDir,
         contractMdText,
         planExists: false,
         taskContext: context
       }),
-      cwd: worktreeDir,
+      cwd: workDir,
       env: executorEnv,
       logPath,
-      heartbeatPath: paths.heartbeat(id, RUN),
-      watchDir: worktreeDir,
+      heartbeatPath: paths.heartbeat(id),
+      watchPaths: [refPath],
       maxWallMs: task.max_wall_minutes * 6e4,
-      stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4
+      stallMs,
+      onPgid: () => prep.status.executorWorking(logPath, used.kind, initialLogChars)
     });
+    prep.status.finishExecutor();
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -11362,7 +12374,14 @@ async function runPrepared(deps, prep) {
     }
     if ((exitClass === "quota_exhausted" || exitClass === "env_error") && i < order.length - 1) {
       switches += 1;
-      resetHard(worktreeDir, baseSha);
+      assertTaskIdentity(workDir, { branch, baseSha });
+      const salvage = rescueCommit(
+        workDir,
+        `router: salvage ${id} before executor switch`,
+        ROUTER_STATE_EXCLUDE
+      );
+      if (salvage !== null) discarded.push(salvage.sha);
+      resetHardTracked(workDir, baseSha);
       continue;
     }
     break;
@@ -11372,12 +12391,31 @@ async function runPrepared(deps, prep) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const conflict = detectContractConflict(parsed.finalMessage);
   if (conflict) exitClass = "contract_conflict";
-  if (exitClass === "ok") commitAll(worktreeDir, `router: ${id} ${RUN}`);
+  let closeout;
+  if (exitClass === "ok" && task.mode !== "probe") {
+    prep.status.transition("gating");
+    try {
+      assertTaskIdentity(workDir, { branch, baseSha });
+      const leftover = uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE);
+      if (leftover.length > 0) {
+        closeout = {
+          ok: false,
+          reason: "uncommitted source files remain; the executor did not commit its last unit",
+          files: leftover
+        };
+        exitClass = "task_failed";
+      } else {
+        closeout = { ok: true };
+      }
+    } catch (error) {
+      closeout = { ok: false, reason: error.message, files: [] };
+      exitClass = "task_failed";
+    }
+  }
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== "ok" && exitClass !== "contract_conflict" && detectModelMismatch(finalLog);
   const result2 = {
-    run_id: RUN,
     task_id: id,
     attempt_number: 1,
     exit_class: exitClass,
@@ -11390,6 +12428,11 @@ async function runPrepared(deps, prep) {
     wall_seconds: Math.round((outcome.endedAtMs - outcome.startedAtMs) / 1e3),
     worker: workerRecord(used, model),
     base_sha: baseSha,
+    branch,
+    ...prep.rescue !== null ? { rescue_sha: prep.rescue.sha } : {},
+    ...discarded.length > 0 ? { discarded_shas: discarded } : {},
+    ...closeout !== void 0 ? { closeout } : {},
+    ...prep.dirtySubmodules.length > 0 ? { dirty_submodules: prep.dirtySubmodules } : {},
     ...context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {},
     ...switches > 0 ? { executor_switches: switches } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
@@ -11399,19 +12442,22 @@ async function runPrepared(deps, prep) {
     ...costUsd !== null ? { cost_usd: costUsd } : {},
     ...parsed.sessionId ? { session_id: parsed.sessionId } : {}
   };
-  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  const delivery = persistDelivery(paths, id, task, parsed.finalMessage);
   if (delivery !== void 0) result2.delivery = delivery;
-  if (conflict) rmSync2(paths.diffPatch(id, RUN), { force: true });
-  if (exitClass !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
+  if (conflict) rmSync2(paths.diffPatch(id), { force: true });
+  if (exitClass !== "ok" && uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE).length > 0) {
+    result2.uncommitted_changes = true;
+  }
   if (exitClass === "ok") {
     if (task.mode !== "probe") {
-      const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-      writeFileSync2(paths.diffPatch(id, RUN), patch);
+      const patch = rawDiff(workDir, baseSha, "HEAD");
+      writeFileSync2(paths.diffPatch(id), patch);
       result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     }
+    prep.status.transition("verify");
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
-      worktreeDir,
+      workDir,
       baseSha,
       head: "HEAD",
       ...task.mode !== void 0 ? { mode: task.mode } : {},
@@ -11419,59 +12465,101 @@ async function runPrepared(deps, prep) {
       ...task.forbidden_globs !== void 0 ? { forbiddenGlobs: task.forbidden_globs } : {},
       ...task.max_changed_lines !== void 0 ? { maxChangedLines: task.max_changed_lines } : {},
       verify: task.verify ?? [],
-      env: verifyEnv
+      env: verifyEnv,
+      uncommittedExclude: ROUTER_STATE_EXCLUDE,
+      // The project's own build/test commands and reset, when it declares them. Without this
+      // the flow only ever ran `task.verify`, so `clean_triggers` was documented and dead --
+      // and a warm checkout could pass a diff on objects left from an earlier build.
+      ...gateConfig !== void 0 ? { gate: gateConfig } : {},
+      ...gateConfig !== void 0 ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}
     });
-    attachEffectiveRisk(result2, task, worktreeDir, baseSha);
+    attachEffectiveRisk(result2, task, workDir, baseSha);
   }
-  writeResult(paths, id, RUN, result2);
-  appendMetric2(deps, result2, task, context);
+  const phaseTimings = prep.status.terminal(
+    terminalStateFor(result2.exit_class, result2.verifier?.result === "PASSED")
+  );
+  writeResult(paths, id, result2);
+  appendMetric2(deps, result2, task, context, phaseTimings);
   return result2;
 }
+async function runPrepared(deps, prep, gateConfig) {
+  try {
+    return await runPreparedObserved(deps, prep, gateConfig);
+  } catch (error) {
+    prep.status.terminal("failed");
+    throw error;
+  }
+}
+var CheckoutBusyError = class extends Error {
+  holderPid;
+  holderBeatAtMs;
+  constructor(message, holderPid, holderBeatAtMs) {
+    super(message);
+    this.name = "CheckoutBusyError";
+    this.holderPid = holderPid;
+    this.holderBeatAtMs = holderBeatAtMs;
+  }
+};
 async function dispatchTask(deps, id) {
-  return runPrepared(deps, prepareRun(deps, id));
+  const { paths } = deps;
+  const gateConfig = loadGateConfig(paths);
+  const lock = acquireLock(paths.gateLock(), {
+    waitMs: (gateConfig.lock_wait_minutes ?? 0) * 6e4
+  });
+  if ("blocked" in lock) {
+    const held = lock.holder;
+    throw new CheckoutBusyError(
+      `the checkout is held by pid ${held?.pid ?? "unknown"}` + (held ? `, last active ${new Date(held.beatAtMs).toISOString()}` : "") + `; router runs one task at a time`,
+      held?.pid ?? null,
+      held?.beatAtMs ?? null
+    );
+  }
+  const beater = startHeartbeat(lock.path, lock.ownerToken);
+  try {
+    const prep = prepareRun(deps, id);
+    const result2 = await runPrepared(deps, prep, gateConfig);
+    return result2;
+  } finally {
+    beater.stop();
+    lock.release();
+  }
 }
-function resolvePoolSize(count, maxParallel) {
-  const requested = Math.max(1, Math.floor(maxParallel ?? Math.min(count, 4)));
-  return Math.min(count, requested);
-}
-async function dispatchTasks(deps, ids, maxParallel) {
+async function dispatchTasks(deps, ids) {
   if (ids.length === 0) throw new Error("cannot dispatch an empty task list");
   const seen = /* @__PURE__ */ new Set();
   for (const id of ids) {
     if (seen.has(id)) throw new Error(`duplicate task id: ${id}`);
     seen.add(id);
   }
-  const prepared = ids.map((id) => prepareRun(deps, id));
-  const results = new Array(ids.length);
+  const results = [];
   const faults = [];
-  const poolSize = resolvePoolSize(ids.length, maxParallel);
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < prepared.length) {
-      const index = cursor++;
-      try {
-        results[index] = await runPrepared(deps, prepared[index]);
-      } catch (e) {
-        faults.push({ id: ids[index], message: e instanceof Error ? e.message : String(e) });
-      }
+  for (const id of ids) {
+    try {
+      results.push(await dispatchTask(deps, id));
+    } catch (e) {
+      faults.push({ id, message: e instanceof Error ? e.message : String(e) });
+      break;
     }
-  };
-  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  }
   if (faults.length > 0) {
-    faults.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
     throw new Error(`dispatch runs failed: ${faults.map((f) => `${f.id}: ${f.message}`).join("; ")}`);
   }
   return results;
 }
 async function resumeTask(deps, id, feedback) {
   const { paths } = deps;
-  const prev = readResult(paths, id, RUN);
+  const prev = readResult(paths, id);
   if (prev === null) throw new Error(`no prior dispatch for ${id}; run \`router dispatch ${id}\` first`);
   const priorSession = prev.session_id ?? null;
   if (!priorSession) throw new Error(`prior run for ${id} has no session id; resume unavailable -- re-dispatch instead`);
-  const worktreeDir = paths.worktree(id, RUN);
-  if (!existsSync7(worktreeDir)) throw new Error(`worktree for ${id} is gone; resume unavailable -- re-dispatch instead`);
-  const baseSha = prev.base_sha ?? resolveCommit(worktreeDir, "HEAD");
+  const workDir = paths.repoRoot;
+  const branch = prev.branch ?? taskBranch(id);
+  if (!branchExists(workDir, branch)) {
+    throw new Error(`branch ${branch} for ${id} is gone; resume unavailable -- re-dispatch instead`);
+  }
+  const baseSha = prev.base_sha ?? resolveCommit(workDir, branch);
+  assertTaskIdentity(workDir, { branch, baseSha });
+  const refPath = branchRefPath(workDir, branch);
   const { task } = loadTask(paths, id);
   const used = {
     kind: prev.worker.kind,
@@ -11479,17 +12567,17 @@ async function resumeTask(deps, id, feedback) {
     ...prev.worker.effort ? { effort: prev.worker.effort } : {}
   };
   const launcher = makeLauncher(used);
-  const logPath = paths.workerLog(id, RUN);
+  const logPath = paths.workerLog(id);
   writeFileSync2(logPath, "");
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
   const o = await superviseWorker({
-    argv: launcher.buildResumeArgv(worktreeDir, priorSession, feedback, task),
-    cwd: worktreeDir,
+    argv: launcher.buildResumeArgv(workDir, priorSession, feedback, task),
+    cwd: workDir,
     env: executorEnv,
     logPath,
-    heartbeatPath: paths.heartbeat(id, RUN),
-    watchDir: worktreeDir,
+    heartbeatPath: paths.heartbeat(id),
+    watchPaths: [refPath],
     maxWallMs: task.max_wall_minutes * 6e4,
     stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4
   });
@@ -11503,7 +12591,6 @@ async function resumeTask(deps, id, feedback) {
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== "ok" && !conflict && detectModelMismatch(log);
   const result2 = {
-    run_id: RUN,
     task_id: id,
     attempt_number: prev.attempt_number + 1,
     exit_class: conflict ? "contract_conflict" : mismatch ? "task_failed" : exitClass,
@@ -11516,6 +12603,7 @@ async function resumeTask(deps, id, feedback) {
     wall_seconds: Math.round((o.endedAtMs - o.startedAtMs) / 1e3),
     worker: workerRecord(used, model),
     base_sha: baseSha,
+    branch,
     resumed: true,
     session_id: newSession ?? priorSession,
     ...mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {},
@@ -11525,18 +12613,32 @@ async function resumeTask(deps, id, feedback) {
     ...parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {},
     ...costUsd !== null ? { cost_usd: costUsd } : {}
   };
-  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  const delivery = persistDelivery(paths, id, task, parsed.finalMessage);
   if (delivery !== void 0) result2.delivery = delivery;
-  if (conflict) rmSync2(paths.diffPatch(id, RUN), { force: true });
-  if (result2.exit_class !== "ok" && worktreeDirty(worktreeDir)) result2.uncommitted_changes = true;
+  if (conflict) rmSync2(paths.diffPatch(id), { force: true });
+  if (result2.exit_class !== "ok" && uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE).length > 0) {
+    result2.uncommitted_changes = true;
+  }
   if (!conflict && !mismatch && exitClass === "ok") {
-    commitAll(worktreeDir, `router: ${id} ${RUN} (resume)`);
-    const patch = rawDiff(worktreeDir, baseSha, "HEAD");
-    writeFileSync2(paths.diffPatch(id, RUN), patch);
+    const leftover = uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE);
+    if (leftover.length > 0) {
+      result2.exit_class = "task_failed";
+      result2.closeout = {
+        ok: false,
+        reason: "uncommitted source files remain after resume; the executor did not commit its last unit",
+        files: leftover
+      };
+      writeResult(paths, id, result2);
+      appendMetric2(deps, result2, task, null);
+      return result2;
+    }
+    result2.closeout = { ok: true };
+    const patch = rawDiff(workDir, baseSha, "HEAD");
+    writeFileSync2(paths.diffPatch(id), patch);
     result2.diff_sha = createHash2("sha256").update(patch).digest("hex");
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
-      worktreeDir,
+      workDir,
       baseSha,
       head: "HEAD",
       allowedGlobs: task.allowed_globs,
@@ -11545,22 +12647,22 @@ async function resumeTask(deps, id, feedback) {
       verify: task.verify ?? [],
       env: verifyEnv
     });
-    attachEffectiveRisk(result2, task, worktreeDir, baseSha);
+    attachEffectiveRisk(result2, task, workDir, baseSha);
   }
-  writeResult(paths, id, RUN, result2);
+  writeResult(paths, id, result2);
   appendMetric2(deps, result2, task, null);
   return result2;
 }
 function safeRead(path) {
   try {
-    return readFileSync7(path, "utf8");
+    return readFileSync10(path, "utf8");
   } catch {
     return "";
   }
 }
-function persistDelivery(paths, id, run, task, finalMessage) {
+function persistDelivery(paths, id, task, finalMessage) {
   if (finalMessage == null || finalMessage.length === 0) return void 0;
-  const path = paths.delivery(id, run);
+  const path = paths.delivery(id);
   try {
     writeFileSync2(path, finalMessage);
   } catch (e) {
@@ -11589,9 +12691,9 @@ function deliveryHeaderMismatches(header, taskId, planRevision2) {
   }
   return errors;
 }
-function attachEffectiveRisk(result2, task, worktreeDir, baseSha) {
+function attachEffectiveRisk(result2, task, workDir, baseSha) {
   if (result2.verifier?.result !== "PASSED") return;
-  const changes = collectDiff(worktreeDir, baseSha, "HEAD");
+  const changes = collectDiff(workDir, baseSha, "HEAD");
   const changedPaths = changes.flatMap(
     (change) => change.oldPath === void 0 ? [change.path] : [change.oldPath, change.path]
   );
@@ -11603,7 +12705,7 @@ function attachEffectiveRisk(result2, task, worktreeDir, baseSha) {
   result2.risk = assessed.risk;
   result2.risk_raised_by = assessed.raisedBy;
 }
-function appendMetric2(deps, result2, task, context) {
+function appendMetric2(deps, result2, task, context, phaseTimings) {
   const metric = {
     ts: deps.clock.nowIso(),
     task_id: result2.task_id,
@@ -11616,7 +12718,7 @@ function appendMetric2(deps, result2, task, context) {
       context_base_sha: context.base_sha
     } : {},
     role: "executor",
-    run_id: result2.run_id,
+    run_id: RUN_LABEL,
     attempt_number: 1,
     model: result2.worker.model ?? null,
     executor: result2.worker.kind,
@@ -11632,408 +12734,22 @@ function appendMetric2(deps, result2, task, context) {
     tokens_output: result2.tokens?.output ?? null,
     cost_usd: result2.cost_usd ?? null,
     wall_seconds: result2.wall_seconds,
+    ...phaseTimings ?? {},
     escalated: false,
     env_error: result2.env_error
   };
   appendMetric(deps.paths, metric);
 }
 
-// src/app/gateConfig.ts
-import { lstatSync, readFileSync as readFileSync8 } from "node:fs";
-import { join as join8 } from "node:path";
-var KEYS = /* @__PURE__ */ new Set([
-  "mode",
-  "integration_branch",
-  "gate",
-  "clean_gate",
-  "clean_triggers",
-  "reset",
-  "lock_wait_minutes",
-  "env",
-  "gate_wall_minutes"
-]);
-function gateYamlPath(paths) {
-  return join8(paths.root, "gate.yaml");
-}
-function invalid(problem) {
-  throw new Error(`invalid gate.yaml: ${problem}`);
-}
-function commandList(value, key) {
-  if (!Array.isArray(value)) invalid(`${key} must be an array of argv arrays`);
-  return value.map((command, commandIndex) => {
-    if (!Array.isArray(command) || command.length === 0) {
-      invalid(`${key}[${commandIndex}] must be a non-empty argv array`);
-    }
-    return command.map((arg, argIndex) => {
-      if (typeof arg !== "string" || arg.length === 0) {
-        invalid(`${key}[${commandIndex}][${argIndex}] must be a non-empty string`);
-      }
-      return arg;
-    });
-  });
-}
-function stringList(value, key) {
-  if (!Array.isArray(value)) invalid(`${key} must be an array of non-empty strings`);
-  return value.map((item, index) => {
-    if (typeof item !== "string" || item.length === 0) {
-      invalid(`${key}[${index}] must be a non-empty string`);
-    }
-    return item;
-  });
-}
-function own(object, key) {
-  return Object.prototype.hasOwnProperty.call(object, key);
-}
-function loadGateConfig(paths) {
-  const path = gateYamlPath(paths);
-  let text2;
-  try {
-    text2 = readFileSync8(path, "utf8");
-  } catch (err2) {
-    if (err2.code === "ENOENT") {
-      try {
-        lstatSync(path);
-      } catch (statErr) {
-        if (statErr.code === "ENOENT") return { mode: "worktree" };
-      }
-    }
-    throw new Error(`gate.yaml is unreadable at ${path}: ${err2.message}`);
-  }
-  let raw;
-  try {
-    raw = load(text2, { schema: JSON_SCHEMA });
-  } catch (err2) {
-    throw new Error(`gate.yaml parse error: ${err2.message}`);
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    invalid("top level must be a mapping");
-  }
-  const object = raw;
-  for (const key of Object.keys(object)) {
-    if (!KEYS.has(key)) invalid(`unknown top-level key "${key}"`);
-  }
-  const modeValue = object.mode;
-  if (modeValue !== "worktree" && modeValue !== "queue") {
-    invalid('mode must be "worktree" or "queue"');
-  }
-  const mode = modeValue;
-  const config = { mode };
-  if (own(object, "integration_branch")) {
-    if (typeof object.integration_branch !== "string" || object.integration_branch.length === 0) {
-      invalid("integration_branch must be a non-empty string");
-    }
-    config.integration_branch = object.integration_branch;
-  }
-  if (own(object, "gate")) config.gate = commandList(object.gate, "gate");
-  if (own(object, "clean_gate")) {
-    config.clean_gate = commandList(object.clean_gate, "clean_gate");
-  }
-  if (own(object, "clean_triggers")) {
-    config.clean_triggers = stringList(object.clean_triggers, "clean_triggers");
-  }
-  if (own(object, "reset")) config.reset = commandList(object.reset, "reset");
-  if (own(object, "lock_wait_minutes")) {
-    const value = object.lock_wait_minutes;
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-      invalid("lock_wait_minutes must be a non-negative finite number");
-    }
-    config.lock_wait_minutes = value;
-  }
-  if (own(object, "env")) config.env = stringList(object.env, "env");
-  if (own(object, "gate_wall_minutes")) {
-    const value = object.gate_wall_minutes;
-    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-      invalid("gate_wall_minutes must be a positive finite number");
-    }
-    config.gate_wall_minutes = value;
-  }
-  if (mode === "queue") {
-    if (config.integration_branch === void 0) {
-      invalid('integration_branch is required when mode is "queue"');
-    }
-    if (config.gate === void 0) invalid('gate is required when mode is "queue"');
-    if (config.gate.length === 0) invalid("gate must contain at least one argv array in queue mode");
-  }
-  return config;
-}
-
 // src/app/gateQueue.ts
 import { writeFileSync as writeFileSync3 } from "node:fs";
-
-// src/io/lock.ts
-import {
-  closeSync as closeSync3,
-  fstatSync,
-  fsyncSync as fsyncSync2,
-  ftruncateSync,
-  openSync as openSync3,
-  readFileSync as readFileSync9,
-  statSync as statSync4,
-  unlinkSync as unlinkSync2,
-  writeSync as writeSync2
-} from "node:fs";
-var DEFAULT_STALE_MS = 9e4;
-var DEFAULT_POLL_MS = 100;
-var ownerCounter = 0;
-function ownerToken() {
-  ownerCounter += 1;
-  return `${process.pid}-${ownerCounter}-${process.hrtime.bigint()}`;
-}
-function errorCode(err2) {
-  return err2.code;
-}
-function parseStored(text2) {
-  let value;
-  try {
-    value = JSON.parse(text2);
-  } catch {
-    return null;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const object = value;
-  if (!Number.isInteger(object.pid) || object.pid <= 0) return null;
-  if (typeof object.startedAtMs !== "number" || !Number.isFinite(object.startedAtMs)) return null;
-  if (typeof object.beatAtMs !== "number" || !Number.isFinite(object.beatAtMs)) return null;
-  if (object.label !== void 0 && typeof object.label !== "string") return null;
-  const info = {
-    pid: object.pid,
-    startedAtMs: object.startedAtMs,
-    beatAtMs: object.beatAtMs
-  };
-  if (typeof object.label === "string") info.label = object.label;
-  return { info, stored: value };
-}
-function readForAcquire(path) {
-  let text2;
-  try {
-    text2 = readFileSync9(path, "utf8");
-  } catch (err2) {
-    if (errorCode(err2) === "ENOENT") return { kind: "missing" };
-    throw new Error(`cannot read lock ${path}: ${err2.message}`);
-  }
-  const parsed = parseStored(text2);
-  if (parsed === null) return { kind: "corrupt" };
-  return { kind: "valid", ...parsed };
-}
-function readLock(path) {
-  try {
-    const parsed = parseStored(readFileSync9(path, "utf8"));
-    return parsed?.info ?? null;
-  } catch {
-    return null;
-  }
-}
-function pidIsGone(pid) {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (err2) {
-    return errorCode(err2) === "ESRCH";
-  }
-}
-function staleReason(read, atMs, staleMs) {
-  if (read.kind === "corrupt") return "corrupt";
-  if (atMs - read.info.beatAtMs > staleMs) return "stale-heartbeat";
-  if (pidIsGone(read.info.pid)) return "dead-pid";
-  return null;
-}
-function identity(fd) {
-  const stat = fstatSync(fd, { bigint: true });
-  return { dev: stat.dev, ino: stat.ino };
-}
-function sameIdentity(a, b) {
-  return a.dev === b.dev && a.ino === b.ino;
-}
-function currentIdentity(path) {
-  try {
-    const stat = statSync4(path, { bigint: true });
-    return { dev: stat.dev, ino: stat.ino };
-  } catch (err2) {
-    if (errorCode(err2) === "ENOENT") return null;
-    throw err2;
-  }
-}
-function writeStored(fd, value) {
-  const data = Buffer.from(`${JSON.stringify(value)}
-`);
-  let offset = 0;
-  while (offset < data.length) {
-    const written = writeSync2(fd, data, offset, data.length - offset, offset);
-    if (written === 0) throw new Error("lock write made no progress");
-    offset += written;
-  }
-  ftruncateSync(fd, data.length);
-  fsyncSync2(fd);
-}
-function sleepSync(ms) {
-  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function assertOption(name, value, allowZero) {
-  if (!Number.isFinite(value) || (allowZero ? value < 0 : value <= 0)) {
-    throw new Error(`${name} must be ${allowZero ? "a non-negative" : "a positive"} finite number`);
-  }
-}
-function acquireLock(path, opts) {
-  const staleMs = opts.staleMs ?? DEFAULT_STALE_MS;
-  const pollMs = opts.pollMs ?? DEFAULT_POLL_MS;
-  assertOption("waitMs", opts.waitMs, true);
-  assertOption("staleMs", staleMs, true);
-  assertOption("pollMs", pollMs, false);
-  const clock = opts.now ?? Date.now;
-  const usesRealClock = opts.now === void 0;
-  const waitingStartedAt = clock();
-  let atMs = waitingStartedAt;
-  let takeover;
-  for (; ; ) {
-    const token = ownerToken();
-    let fd;
-    try {
-      fd = openSync3(path, "wx");
-    } catch (err2) {
-      if (errorCode(err2) !== "EEXIST") {
-        throw new Error(`cannot acquire lock ${path}: ${err2.message}`);
-      }
-      const holderRead = readForAcquire(path);
-      if (holderRead.kind === "missing") {
-        atMs = clock();
-        continue;
-      }
-      const reason = staleReason(holderRead, atMs, staleMs);
-      if (reason !== null) {
-        const confirmed = readForAcquire(path);
-        if (confirmed.kind === "missing") {
-          takeover = void 0;
-          atMs = clock();
-          continue;
-        }
-        const confirmedReason = staleReason(confirmed, atMs, staleMs);
-        if (confirmedReason === null) {
-          takeover = void 0;
-          atMs = clock();
-          continue;
-        }
-        let removed = false;
-        try {
-          unlinkSync2(path);
-          removed = true;
-        } catch (unlinkErr) {
-          if (errorCode(unlinkErr) !== "ENOENT") {
-            throw new Error(`cannot reclaim stale lock ${path}: ${unlinkErr.message}`);
-          }
-        }
-        if (removed) {
-          takeover = {
-            atMs,
-            reason: confirmedReason,
-            holder: confirmed.kind === "valid" ? confirmed.info : null
-          };
-        } else {
-          takeover = void 0;
-        }
-        atMs = clock();
-        continue;
-      }
-      takeover = void 0;
-      if (atMs - waitingStartedAt >= opts.waitMs) {
-        return {
-          blocked: true,
-          holder: holderRead.kind === "valid" ? holderRead.info : readLock(path)
-        };
-      }
-      if (usesRealClock) {
-        sleepSync(Math.min(pollMs, opts.waitMs - (atMs - waitingStartedAt)));
-      }
-      atMs = clock();
-      continue;
-    }
-    const stored = {
-      pid: process.pid,
-      startedAtMs: atMs,
-      beatAtMs: atMs,
-      ownerToken: token
-    };
-    if (takeover !== void 0) stored.takeover = takeover;
-    let acquiredIdentity;
-    try {
-      writeStored(fd, stored);
-      acquiredIdentity = identity(fd);
-    } catch (err2) {
-      closeSync3(fd);
-      try {
-        unlinkSync2(path);
-      } catch {
-      }
-      throw new Error(`cannot initialize lock ${path}: ${err2.message}`);
-    }
-    closeSync3(fd);
-    const installedIdentity = currentIdentity(path);
-    if (installedIdentity === null || !sameIdentity(installedIdentity, acquiredIdentity)) {
-      takeover = void 0;
-      atMs = clock();
-      continue;
-    }
-    let released = false;
-    return {
-      path,
-      heartbeat() {
-        if (released) return;
-        let heartbeatFd;
-        try {
-          heartbeatFd = openSync3(path, "r+");
-        } catch (err2) {
-          throw new Error(`cannot heartbeat lock ${path}: ${err2.message}`);
-        }
-        try {
-          if (!sameIdentity(identity(heartbeatFd), acquiredIdentity)) {
-            throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
-          }
-          const parsed = parseStored(readFileSync9(heartbeatFd, "utf8"));
-          if (parsed === null || parsed.stored.ownerToken !== token) {
-            throw new Error(`cannot heartbeat lock ${path}: ownership was lost`);
-          }
-          parsed.stored.beatAtMs = clock();
-          writeStored(heartbeatFd, parsed.stored);
-        } finally {
-          closeSync3(heartbeatFd);
-        }
-      },
-      release() {
-        if (released) return;
-        let contents;
-        try {
-          contents = readFileSync9(path, "utf8");
-        } catch (err2) {
-          if (errorCode(err2) === "ENOENT") {
-            released = true;
-            return;
-          }
-          throw new Error(`cannot release lock ${path}: ${err2.message}`);
-        }
-        const parsed = parseStored(contents);
-        if (parsed === null || parsed.stored.ownerToken !== token) {
-          released = true;
-          return;
-        }
-        try {
-          unlinkSync2(path);
-          released = true;
-        } catch (err2) {
-          if (errorCode(err2) === "ENOENT") released = true;
-          else throw new Error(`cannot release lock ${path}: ${err2.message}`);
-        }
-      }
-    };
-  }
-}
-
-// src/app/gateQueue.ts
-var RUN2 = runId(1);
+import { join as join9 } from "node:path";
 var LOCK_WAIT_MINUTES_DEFAULT = 60;
 var GATE_WALL_MINUTES_DEFAULT = 180;
 var LOCK_HEARTBEAT_MS = 2e4;
-function persistGate(paths, taskId, run, result2, gate2) {
+function persistGate(paths, taskId, result2, gate2) {
   result2.gate = gate2;
-  writeResult(paths, taskId, run, result2);
+  writeResult(paths, taskId, result2);
   return gate2;
 }
 async function runQueueGate(deps, taskId) {
@@ -12042,8 +12758,7 @@ async function runQueueGate(deps, taskId) {
   if (config.mode !== "queue") {
     throw new Error('runQueueGate requires gate mode "queue"');
   }
-  const run = RUN2;
-  const result2 = readResult(paths, taskId, run);
+  const result2 = readResult(paths, taskId);
   if (result2 === null) return { ok: false, reason: "result_missing" };
   if (result2.exit_class === "contract_conflict") {
     return { ok: false, reason: "contract_conflict" };
@@ -12051,8 +12766,8 @@ async function runQueueGate(deps, taskId) {
   if (result2.verifier?.result !== "PASSED") {
     return { ok: false, reason: "verifier_not_passed" };
   }
-  const taskBranch = runBranch(taskId, run);
-  if (!branchExists(paths.repoRoot, taskBranch)) {
+  const branch = result2.branch ?? taskBranch(taskId);
+  if (!branchExists(paths.repoRoot, branch)) {
     return { ok: false, reason: "run_branch_missing" };
   }
   const acquired = acquireLock(paths.gateLock(), {
@@ -12072,25 +12787,24 @@ async function runQueueGate(deps, taskId) {
   let keepMerge = false;
   let currentPgid;
   let heartbeatError;
-  let heartbeatTimer;
+  let beater;
   const stopHeartbeat = () => {
-    if (heartbeatTimer !== void 0) clearInterval(heartbeatTimer);
-    heartbeatTimer = void 0;
+    beater?.stop();
+    beater = void 0;
   };
-  const startHeartbeat = () => {
-    heartbeatTimer = setInterval(() => {
+  const beginHeartbeat = () => {
+    beater = startHeartbeat(lock.path, lock.ownerToken, LOCK_HEARTBEAT_MS);
+  };
+  const assertStillOurs = () => {
+    if (heartbeatError !== void 0) return;
+    if (ownsLock(lock.path, lock.ownerToken)) return;
+    heartbeatError = new Error(`lost the gate lock ${lock.path} mid-gate; another holder took over`);
+    if (currentPgid !== void 0) {
       try {
-        lock.heartbeat();
-      } catch (err2) {
-        heartbeatError = err2 instanceof Error ? err2 : new Error(String(err2));
-        if (currentPgid !== void 0) {
-          try {
-            killProcessGroup(currentPgid, "SIGTERM");
-          } catch {
-          }
-        }
+        killProcessGroup(currentPgid, "SIGTERM");
+      } catch {
       }
-    }, LOCK_HEARTBEAT_MS);
+    }
   };
   const supervise = async (argv, logPath, maxWallMs, env) => {
     if (heartbeatError !== void 0) throw heartbeatError;
@@ -12100,8 +12814,8 @@ async function runQueueGate(deps, taskId) {
       cwd: paths.repoRoot,
       env,
       logPath,
-      heartbeatPath: paths.heartbeat(taskId, run),
-      watchDir: paths.repoRoot,
+      heartbeatPath: paths.heartbeat(taskId),
+      watchPaths: [paths.repoRoot, join9(paths.repoRoot, ".git")],
       maxWallMs,
       stallMs: maxWallMs,
       onPgid: (pgid) => {
@@ -12109,6 +12823,7 @@ async function runQueueGate(deps, taskId) {
       }
     });
     currentPgid = void 0;
+    assertStillOurs();
     if (heartbeatError !== void 0) throw heartbeatError;
     return outcome;
   };
@@ -12121,29 +12836,24 @@ async function runQueueGate(deps, taskId) {
     checkoutBranch(paths.repoRoot, config.integration_branch);
     baseSha = resolveCommit(paths.repoRoot, "HEAD");
     try {
-      mergeNoFF(paths.repoRoot, taskBranch);
+      mergeNoFF(paths.repoRoot, branch);
     } catch {
       mergeAbort(paths.repoRoot);
       resetHardTracked(paths.repoRoot, baseSha);
-      return persistGate(paths, taskId, run, result2, {
+      return persistGate(paths, taskId, result2, {
         ok: false,
         reason: "apply_conflict"
       });
     }
     mergeSha = resolveCommit(paths.repoRoot, "HEAD");
     const changes = collectDiff(paths.repoRoot, baseSha, "HEAD");
-    const useClean = config.clean_gate !== void 0 && (changes.some((entry) => entry.status === "D") || changes.some(
-      (entry) => matchAny(entry.path, config.clean_triggers ?? []) || entry.oldPath !== void 0 && matchAny(entry.oldPath, config.clean_triggers ?? [])
-    ));
-    const level = useClean ? "clean" : "task";
-    const commands = useClean ? config.clean_gate : config.gate;
-    if (commands.length === 0) {
-      throw new Error(`configured ${level === "clean" ? "clean_gate" : "gate"} has no commands`);
-    }
-    const gateLog = paths.gateLog(taskId, run);
+    const selected = selectGate(config, changes);
+    if (selected === null) throw new Error("configured gate has no commands");
+    const { level, commands } = selected;
+    const gateLog = paths.gateLog(taskId);
     const maxWallMs = (config.gate_wall_minutes ?? GATE_WALL_MINUTES_DEFAULT) * 6e4;
     const env = buildWorkerEnv(process.env, config.env ?? []);
-    startHeartbeat();
+    beginHeartbeat();
     try {
       const resetLog = `${gateLog}.reset`;
       for (const argv of config.reset ?? []) {
@@ -12151,7 +12861,7 @@ async function runQueueGate(deps, taskId) {
         if (resetOutcome.exitClass !== "ok") {
           writeFileSync3(gateLog, "", { flag: "a" });
           resetHardTracked(paths.repoRoot, baseSha);
-          return persistGate(paths, taskId, run, result2, {
+          return persistGate(paths, taskId, result2, {
             ok: false,
             reason: "reset_failed",
             level,
@@ -12170,7 +12880,7 @@ async function runQueueGate(deps, taskId) {
         const gateOutcome = await supervise(argv, gateLog, maxWallMs, env);
         if (gateOutcome.exitClass !== "ok") {
           resetHardTracked(paths.repoRoot, baseSha);
-          return persistGate(paths, taskId, run, result2, {
+          return persistGate(paths, taskId, result2, {
             ok: false,
             reason: "gate_failed",
             level,
@@ -12194,7 +12904,7 @@ async function runQueueGate(deps, taskId) {
       head_sha: mergeSha,
       log: gateLog
     };
-    persistGate(paths, taskId, run, result2, gate2);
+    persistGate(paths, taskId, result2, gate2);
     keepMerge = true;
     return gate2;
   } finally {
@@ -12226,7 +12936,7 @@ async function runQueueGate(deps, taskId) {
 // src/app/orchestratorUsage.ts
 import { readdirSync as readdirSync2, statSync as statSync5 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // src/core/pricing.ts
 var TABLE = [
@@ -12340,7 +13050,7 @@ function newestTranscript(projectsDir) {
   }
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
-    const path = join9(projectsDir, entry.name);
+    const path = join10(projectsDir, entry.name);
     let mtimeMs;
     try {
       mtimeMs = statSync5(path).mtimeMs;
@@ -12356,7 +13066,7 @@ function newestTranscript(projectsDir) {
 function resolveTranscript(paths, opts) {
   if (opts.transcriptPath !== void 0) return opts.transcriptPath;
   const projectKey = paths.repoRoot.replaceAll("/", "-");
-  const projectsDir = opts.projectsDir ?? join9(homedir2(), ".claude", "projects", projectKey);
+  const projectsDir = opts.projectsDir ?? join10(homedir2(), ".claude", "projects", projectKey);
   return newestTranscript(projectsDir);
 }
 function recordOrchestratorUsage(paths, clock, opts) {
@@ -12389,8 +13099,8 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync12, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
-import { resolve as resolve3 } from "node:path";
+import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync13, readdirSync as readdirSync4, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { resolve as resolve4 } from "node:path";
 
 // src/core/symbols.ts
 var MEMBER_NOISE = /^(TSA_GUARDED_BY|TSA_PT_GUARDED_BY|DECLARE_|__)/;
@@ -12503,21 +13213,21 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync3, readFileSync as readFileSync11, statSync as statSync6 } from "node:fs";
-import { relative, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync8, readdirSync as readdirSync3, readFileSync as readFileSync12, statSync as statSync6 } from "node:fs";
+import { relative as relative2, resolve as resolve3 } from "node:path";
 
 // src/io/treeSitter.ts
-import { existsSync as existsSync8, readFileSync as readFileSync10 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync11 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname as dirname5, join as join10 } from "node:path";
+import { dirname as dirname5, join as join11 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 var WTS_BASENAMES = ["web-tree-sitter", "tree-sitter"];
 function wtsRuntimeFile(dir, suffix) {
   for (const base of WTS_BASENAMES) {
-    const candidate = join10(dir, `${base}${suffix}`);
-    if (existsSync8(candidate)) return candidate;
+    const candidate = join11(dir, `${base}${suffix}`);
+    if (existsSync7(candidate)) return candidate;
   }
-  return join10(dir, `tree-sitter${suffix}`);
+  return join11(dir, `tree-sitter${suffix}`);
 }
 function locateRuntime() {
   try {
@@ -12532,9 +13242,9 @@ function locateRuntime() {
   } catch {
     const vendor = fileURLToPath(new URL("./vendor/", import.meta.url));
     return {
-      moduleHref: pathToFileURL(join10(vendor, "tree-sitter.js")).href,
-      tsWasm: join10(vendor, "tree-sitter.wasm"),
-      cppWasm: join10(vendor, "tree-sitter-cpp.wasm")
+      moduleHref: pathToFileURL(join11(vendor, "tree-sitter.js")).href,
+      tsWasm: join11(vendor, "tree-sitter.wasm"),
+      cppWasm: join11(vendor, "tree-sitter-cpp.wasm")
     };
   }
 }
@@ -12544,9 +13254,9 @@ async function getParser() {
     ready = (async () => {
       const rt = locateRuntime();
       const mod = await import(rt.moduleHref);
-      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync10(rt.tsWasm)) });
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync11(rt.tsWasm)) });
       const parser = new mod.Parser();
-      const cpp = await mod.Language.load(new Uint8Array(readFileSync10(rt.cppWasm)));
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync11(rt.cppWasm)));
       parser.setLanguage(cpp);
       return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
     })();
@@ -12626,7 +13336,7 @@ async function parseSymbols(src) {
 var SRC_RE = /\.(cpp|h|hpp|cc|cxx|hh)$/;
 var SKIP_DIR = /* @__PURE__ */ new Set([".git", "node_modules", ".router", "dist"]);
 function hashRoots(roots) {
-  const norm = roots.map((r) => resolve2(r)).sort();
+  const norm = roots.map((r) => resolve3(r)).sort();
   return createHash3("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
 }
 function walkFiles(root, acc) {
@@ -12643,19 +13353,19 @@ function walkFiles(root, acc) {
   if (!st.isDirectory()) return;
   for (const name of readdirSync3(root)) {
     if (SKIP_DIR.has(name)) continue;
-    walkFiles(resolve2(root, name), acc);
+    walkFiles(resolve3(root, name), acc);
   }
 }
 function loadRaw(cachePath) {
   try {
-    return JSON.parse(readFileSync11(cachePath, "utf8"));
+    return JSON.parse(readFileSync12(cachePath, "utf8"));
   } catch {
     return null;
   }
 }
 async function buildIndex(roots, cachePath, repoRoot, limits) {
   const files = [];
-  for (const r of roots) walkFiles(resolve2(r), files);
+  for (const r of roots) walkFiles(resolve3(r), files);
   if (files.length > limits.maxFiles) {
     return { files: files.length, symbols: 0, reparsed: 0, degraded: { reason: `scope too large: ${files.length} files > maxFiles ${limits.maxFiles}` } };
   }
@@ -12668,7 +13378,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
   let reparsed = 0;
   let bytes = 0;
   for (const abs of files) {
-    const rel = relative(repoRoot, abs);
+    const rel = relative2(repoRoot, abs);
     const st = statSync6(abs);
     const cached = prevByFile.get(rel);
     if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
@@ -12676,7 +13386,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
       symbols += cached.symbols.length;
       continue;
     }
-    const src = readFileSync11(abs, "utf8");
+    const src = readFileSync12(abs, "utf8");
     bytes += src.length;
     if (bytes > limits.maxBytes) {
       return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
@@ -12701,7 +13411,7 @@ async function refreshIndex(cachePath, repoRoot) {
   let reparsed = 0;
   let changed = false;
   for (const f of idx.files) {
-    const abs = resolve2(repoRoot, f.file);
+    const abs = resolve3(repoRoot, f.file);
     let st;
     try {
       st = statSync6(abs);
@@ -12713,14 +13423,14 @@ async function refreshIndex(cachePath, repoRoot) {
       out2.push(f);
       continue;
     }
-    const parsed = await parseSymbols(readFileSync11(abs, "utf8"));
+    const parsed = await parseSymbols(readFileSync12(abs, "utf8"));
     grammar = parsed.grammar;
     out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
     changed = true;
   }
   const refreshed = { grammar, files: out2 };
-  if (changed && existsSync9(cachePath)) writeJsonAtomic(cachePath, refreshed);
+  if (changed && existsSync8(cachePath)) writeJsonAtomic(cachePath, refreshed);
   return { index: refreshed, reparsed };
 }
 
@@ -12734,7 +13444,7 @@ function loadCodeIntelConfig(paths) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
   let raw;
   try {
-    raw = load(readFileSync12(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync13(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -12764,7 +13474,7 @@ function indexEnabled(cfg) {
 }
 function rootsFor(paths, cfg, dirs) {
   const chosen = dirs.length > 0 ? dirs : cfg.index.scope;
-  return chosen.map((d) => resolve3(paths.repoRoot, d));
+  return chosen.map((d) => resolve4(paths.repoRoot, d));
 }
 async function runIndex(paths, cfg, dirs) {
   const gate2 = indexEnabled(cfg);
@@ -12784,12 +13494,12 @@ async function runQuery(paths, cfg, sub, args) {
   let cache2;
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
-  } else if (existsSync10(paths.symbolLatest)) {
-    cache2 = paths.symbolCache(readFileSync12(paths.symbolLatest, "utf8").trim());
+  } else if (existsSync9(paths.symbolLatest)) {
+    cache2 = paths.symbolCache(readFileSync13(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
-  if (!existsSync10(cache2)) {
+  if (!existsSync9(cache2)) {
     return { degraded: true, reason: "no symbol index yet; run `router symbol index [dirs]` first; using rg" };
   }
   let index;
@@ -12874,7 +13584,12 @@ function buildUsageReport(paths, nowIso, opts = {}) {
       inputTokensRecorded: r.tokens_input,
       wallSecondsRecorded: typeof r.wall_seconds === "number" ? r.wall_seconds : null,
       savingsUsd,
-      optimized: savingsUsd === null ? null : savingsUsd > 0
+      optimized: savingsUsd === null ? null : savingsUsd > 0,
+      tWorktree: r.t_worktree,
+      tLaunch: r.t_launch,
+      tExec: r.t_exec,
+      tGate: r.t_gate,
+      tVerify: r.t_verify
     });
   }
   rows.sort((a, b) => a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0);
@@ -12966,6 +13681,11 @@ function buildRoutingReport(rows) {
     const conflict = group.flatMap((row) => typeof row.conflict === "boolean" ? [row.conflict] : []);
     const wall = group.flatMap((row) => row.wallSecondsRecorded == null ? [] : [row.wallSecondsRecorded]);
     const input = group.flatMap((row) => row.inputTokensRecorded == null ? [] : [row.inputTokensRecorded]);
+    const worktree = group.flatMap((row) => row.tWorktree === void 0 ? [] : [row.tWorktree]);
+    const launch = group.flatMap((row) => row.tLaunch === void 0 ? [] : [row.tLaunch]);
+    const exec = group.flatMap((row) => row.tExec === void 0 ? [] : [row.tExec]);
+    const gate2 = group.flatMap((row) => row.tGate === void 0 ? [] : [row.tGate]);
+    const verify = group.flatMap((row) => row.tVerify === void 0 ? [] : [row.tVerify]);
     const insufficientData = group.length < ROUTING_MINIMUM_RUNS;
     return {
       executor: group[0].executor,
@@ -12982,7 +13702,17 @@ function buildRoutingReport(rows) {
       medianWallSeconds: insufficientData ? null : median(wall),
       medianWallSamples: insufficientData ? 0 : wall.length,
       medianInputTokens: insufficientData ? null : median(input),
-      medianInputSamples: insufficientData ? 0 : input.length
+      medianInputSamples: insufficientData ? 0 : input.length,
+      medianWorktreeSeconds: insufficientData ? null : median(worktree),
+      medianWorktreeSamples: insufficientData ? 0 : worktree.length,
+      medianLaunchSeconds: insufficientData ? null : median(launch),
+      medianLaunchSamples: insufficientData ? 0 : launch.length,
+      medianExecSeconds: insufficientData ? null : median(exec),
+      medianExecSamples: insufficientData ? 0 : exec.length,
+      medianGateSeconds: insufficientData ? null : median(gate2),
+      medianGateSamples: insufficientData ? 0 : gate2.length,
+      medianVerifySeconds: insufficientData ? null : median(verify),
+      medianVerifySamples: insufficientData ? 0 : verify.length
     };
   });
   groups.sort((a, b) => a.executor.localeCompare(b.executor) || String(a.tier).localeCompare(String(b.tier)) || String(a.effort).localeCompare(String(b.effort)));
@@ -13069,8 +13799,8 @@ function fmtTokens(n) {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return String(n);
 }
-function fmtWall(seconds) {
-  return seconds < 60 ? `${Math.round(seconds)}s` : `${(seconds / 60).toFixed(1)}m`;
+function fmtWall(seconds2) {
+  return seconds2 < 60 ? `${Math.round(seconds2)}s` : `${(seconds2 / 60).toFixed(1)}m`;
 }
 function fmtCost(costUsd, source) {
   if (costUsd === null) return "tokens";
@@ -13162,6 +13892,9 @@ function routingRate(label, value, samples) {
 function routingMedian(label, value, samples, format) {
   return value === null ? `${label} unavailable` : `${label} ${format(value)} (n=${samples})`;
 }
+function routingPhaseMedian(label, value, samples) {
+  return `${label} ${value === null ? "\u2014" : `${value}s`} (n=${samples})`;
+}
 function renderRouting(report) {
   const lines = ["Router routing evidence"];
   if (report.groups.length === 0) {
@@ -13177,6 +13910,15 @@ function renderRouting(report) {
     }
     lines.push(
       pad(label, 36) + pad(String(group.runs), 6) + pad(routingRate("first-pass", group.firstPassRate, group.firstPassSamples), 23) + pad(routingRate("re-dispatch", group.reDispatchRate, group.reDispatchSamples), 23) + pad(routingRate("conflict", group.conflictRate, group.conflictSamples), 23) + pad(routingMedian("wall", group.medianWallSeconds, group.medianWallSamples, fmtWall), 21) + routingMedian("input", group.medianInputTokens, group.medianInputSamples, fmtTokens)
+    );
+    lines.push(
+      "  phases: " + [
+        routingPhaseMedian("worktree", group.medianWorktreeSeconds, group.medianWorktreeSamples),
+        routingPhaseMedian("launch", group.medianLaunchSeconds, group.medianLaunchSamples),
+        routingPhaseMedian("exec", group.medianExecSeconds, group.medianExecSamples),
+        routingPhaseMedian("gate", group.medianGateSeconds, group.medianGateSamples),
+        routingPhaseMedian("verify", group.medianVerifySeconds, group.medianVerifySamples)
+      ].join(" \xB7 ")
     );
   }
   if (!report.groups.some((group) => !group.insufficientData)) {
@@ -13235,15 +13977,21 @@ var CliError = class extends Error {
 
 // src/cli/commands.ts
 function depsFor(ctx) {
+  if ((process.env[EXECUTOR_SANDBOX_ENV] ?? "") !== "") {
+    throw new CliError(
+      `refusing to touch router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). Orchestration state belongs to the dispatching session; work through files, git and your gate.`,
+      2
+    );
+  }
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const found = explicit ?? findRouterDir(ctx.cwd);
-  const rd = found ?? join11(ctx.cwd, ROUTER_DIR);
+  const rd = found ?? join12(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
-  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
-    if (!existsSync11(d)) mkdirSync5(d, { recursive: true });
+  for (const d of [paths.root, paths.tasksDir]) {
+    if (!existsSync10(d)) mkdirSync5(d, { recursive: true });
   }
-  const gi = join11(paths.root, ".gitignore");
-  if (!existsSync11(gi)) writeFileSync5(gi, "*\n");
+  const gi = join12(paths.root, ".gitignore");
+  if (!existsSync10(gi)) writeFileSync5(gi, "*\n");
   return { paths, clock: systemClock };
 }
 function requireId(ctx) {
@@ -13262,7 +14010,7 @@ function requireIds(ctx) {
   }
   return ids;
 }
-var RUN3 = runId(1);
+var RUN = runId(1);
 var pad2 = (s, n) => s.length >= n ? s : s + " ".repeat(n - s.length);
 function taskTemplate(id, title) {
   return dump(
@@ -13334,8 +14082,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync5(paths.taskDir(id), { recursive: true });
-  if (!existsSync11(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync11(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync10(paths.taskYaml(id))) writeFileSync5(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync10(paths.contractMd(id))) writeFileSync5(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -13346,10 +14094,8 @@ var newTask = (ctx) => {
 var dispatch = async (ctx) => {
   const deps = depsFor(ctx);
   const ids = requireIds(ctx);
-  const maxParallelText = flagStr(ctx.args.flags, "max-parallel");
-  const maxParallel = maxParallelText === void 0 ? void 0 : Number(maxParallelText);
-  if (maxParallel !== void 0 && (!Number.isInteger(maxParallel) || maxParallel < 1)) {
-    throw new CliError("--max-parallel must be an integer >= 1", 2);
+  if (flagStr(ctx.args.flags, "max-parallel") !== void 0) {
+    throw new CliError("--max-parallel was removed; router dispatches one task at a time", 2);
   }
   if (ids.length === 1) {
     const id = ids[0];
@@ -13358,14 +14104,12 @@ var dispatch = async (ctx) => {
     emit(ctx.json, dispatchOutput(id, result2), () => dispatchLine(id, result2));
     return v === "PASSED" ? 0 : 1;
   }
-  const results = await dispatchTasks(deps, ids, maxParallel);
-  const parallel = resolvePoolSize(ids.length, maxParallel);
+  const results = await dispatchTasks(deps, ids);
   const passed = results.filter((result2) => result2.verifier?.result === "PASSED").length;
   emit(
     ctx.json,
     {
       ok: passed === results.length,
-      parallel,
       results: results.map((result2, index) => dispatchOutput(ids[index], result2, false))
     },
     () => [...results.map((result2, index) => dispatchLine(ids[index], result2)), `${passed}/${results.length} PASSED`].join("\n")
@@ -13394,28 +14138,42 @@ function dispatchOutput(id, result2, includeOk = true) {
     model_mismatch: result2.model_mismatch ?? false,
     delivery: result2.delivery?.path ?? null,
     delivery_header: result2.delivery?.header_error ?? (result2.delivery?.header ? "ok" : "missing"),
-    uncommitted_changes: result2.uncommitted_changes ?? false
+    uncommitted_changes: result2.uncommitted_changes ?? false,
+    branch: result2.branch ?? null,
+    rescue_sha: result2.rescue_sha ?? null,
+    discarded_shas: result2.discarded_shas ?? [],
+    closeout: result2.closeout ?? null,
+    dirty_submodules: result2.dirty_submodules ?? []
   };
 }
 function dispatchLine(id, result2) {
   const v = result2.verifier?.result ?? "FAILED";
   const who = `${result2.worker.kind}${result2.worker.model ? `/${result2.worker.model}` : ""}`;
   const sw = result2.executor_switches ? `, switched ${result2.executor_switches}x` : "";
+  const where = result2.branch ? `
+You are now on branch ${result2.branch}.` : "";
+  const rescued = result2.rescue_sha ? `
+Your uncommitted work was committed first as ${result2.rescue_sha.slice(0, 12)} (undo with: git reset --soft ${result2.rescue_sha.slice(0, 12)}~1).` : "";
+  const salvaged = result2.discarded_shas && result2.discarded_shas.length > 0 ? `
+Salvaged before an executor switch, unreachable but recoverable: ${result2.discarded_shas.map((sha) => sha.slice(0, 12)).join(", ")}` : "";
+  const submodules = result2.dirty_submodules && result2.dirty_submodules.length > 0 ? `
+NOTE: ${result2.dirty_submodules.length} submodule(s) have uncommitted content. That lives in another repository, so it was neither rescued nor reset.` : "";
+  const closeout = result2.closeout && !result2.closeout.ok ? `
+CLOSING INVARIANT FAILED: ${result2.closeout.reason}` + (result2.closeout.files.length > 0 ? `
+  ${result2.closeout.files.join("\n  ")}` : "") : "";
   if (result2.conflict === true || result2.exit_class === "contract_conflict") {
-    const report2 = result2.delivery?.path ?? `.router/tasks/${id}/runs/${result2.run_id}/DELIVERY.md`;
-    const recoverable2 = result2.uncommitted_changes ? `
-NOTE: the uncommitted worktree remains available at .router/worktrees/${id}/${result2.run_id}` : "";
-    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing committed or verified; the plan needs revising; report: ${report2}${recoverable2}`;
+    const report2 = result2.delivery?.path ?? `.router/tasks/${id}/DELIVERY.md`;
+    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing verified; the plan needs revising; report: ${report2}${where}${rescued}`;
   }
   const next = v === "PASSED" ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
   const warn = result2.model_mismatch ? `
 WARNING: ${result2.worker.kind} rejected model '${result2.worker.model ?? "?"}' -- your model config may be stale (provider updated its lineup, or your plan lacks this tier). Edit .router/models.yaml; nothing was changed automatically.` : "";
   const report = result2.delivery ? ` report: ${result2.delivery.path}${result2.delivery.header_error ? ` [delivery_header: ${result2.delivery.header_error}]` : ""}` : "";
   const recoverable = result2.uncommitted_changes ? `
-NOTE: this run did not commit, but its worktree still holds changes -- the work is recoverable: git -C .router/worktrees/${id}/${result2.run_id} status` : "";
+NOTE: this run left uncommitted changes in your checkout -- inspect with: git status` : "";
   const raisedRisk = result2.risk_raised_by && result2.risk_raised_by.length > 0 ? `
 RISK RAISED to ${result2.risk}: ${result2.risk_raised_by.join(", ")}` : "";
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}${raisedRisk}`;
+  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`;
 }
 var resume = async (ctx) => {
   const deps = depsFor(ctx);
@@ -13452,15 +14210,21 @@ var land = (ctx) => {
   const ids = requireIds(ctx);
   const landed = [];
   for (const id of ids) {
-    const result2 = readResult(paths, id, RUN3);
+    const result2 = readResult(paths, id);
     const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(", ")}` : "";
     if (result2 === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
     if (result2.conflict === true || result2.exit_class === "contract_conflict") {
-      const report = result2.delivery?.path ?? paths.delivery(id, RUN3);
+      const report = result2.delivery?.path ?? paths.delivery(id);
       throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
     }
     if (result2.verifier?.result !== "PASSED") throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
-    const branch = runBranch(id, RUN3);
+    const branch = result2.branch ?? taskBranch(id);
+    if (currentBranch(paths.repoRoot) === branch) {
+      throw new CliError(
+        `${id}: you are on ${branch}, the branch to be landed. Check out the branch you want to merge INTO first, then re-run \`router land ${id}\`${prior}`,
+        1
+      );
+    }
     try {
       mergeNoFF(paths.repoRoot, branch);
     } catch (e) {
@@ -13468,13 +14232,8 @@ var land = (ctx) => {
       throw new CliError(`merge failed (aborted, tree restored): ${e.message}${prior}`, 1);
     }
     const mergeCommit = resolveCommit(paths.repoRoot, "HEAD");
-    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN3));
-    try {
-      rmdirSync(dirname6(paths.worktree(id, RUN3)));
-    } catch {
-    }
     deleteBranch(paths.repoRoot, branch);
-    writeResult(paths, id, RUN3, { ...result2, merge_commit: mergeCommit });
+    writeResult(paths, id, { ...result2, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
   emit(
@@ -13522,12 +14281,12 @@ var gate = async (ctx) => {
 var result = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
-  const run = flagStr(ctx.args.flags, "run") ?? RUN3;
-  const res = readResult(paths, id, run);
+  const run = flagStr(ctx.args.flags, "run") ?? RUN;
+  const res = readResult(paths, id);
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync13(paths.workerLog(id, run), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync14(paths.workerLog(id), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -13539,43 +14298,56 @@ ${tail}`;
   });
   return 0;
 };
+function statusLabel(res, live, nowMs) {
+  if (res !== null) return res.verifier?.result ?? res.exit_class;
+  if (live === null) return "none";
+  if (live.terminal_state !== void 0) return live.terminal_state;
+  const minutes = Math.max(0, Math.floor((nowMs - Date.parse(live.started_at)) / 6e4));
+  return `${live.phase} ${minutes}m`;
+}
 var list = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const ids = existsSync11(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const { paths, clock } = depsFor(ctx);
+  const nowMs = Date.parse(clock.nowIso());
+  const ids = existsSync10(paths.tasksDir) ? readdirSync5(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync13(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync14(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
-    const res = readResult(paths, id, RUN3);
-    const status = res === null ? "none" : res.verifier?.result ?? res.exit_class;
-    const worktree = existsSync11(paths.worktree(id, RUN3));
+    const res = readResult(paths, id);
+    const live = readRunStatus(paths.runStatus(id));
+    const status = statusLabel(res, live, nowMs);
+    const branch = res?.branch ?? taskBranch(id);
+    const branchLive = branchExists(paths.repoRoot, branch);
     const risk = res?.risk ?? "-";
     const report = res?.delivery ? "yes" : "-";
-    return { id, title, status, worktree, risk, report };
+    return { id, title, status, branch: branchLive ? branch : null, risk, report, live };
   });
+  const statusWidth = Math.max(10, ...rows.map((r) => r.status.length + 1));
   emit(ctx.json, { ok: true, tasks: rows }, () => {
     if (rows.length === 0) return "No tasks in .router/tasks.";
     const lines = [
       `Tasks (${rows.length}):`,
-      pad2("id", 22) + pad2("status", 10) + pad2("worktree", 10) + pad2("risk", 10) + pad2("report", 10) + "title"
+      pad2("id", 22) + pad2("status", statusWidth) + pad2("branch", 10) + pad2("risk", 10) + pad2("report", 10) + "title"
     ];
     for (const r of rows)
       lines.push(
-        pad2(r.id, 22) + pad2(String(r.status), 10) + pad2(r.worktree ? "present" : "-", 10) + pad2(r.risk, 10) + pad2(r.report, 10) + r.title
+        pad2(r.id, 22) + pad2(String(r.status), statusWidth) + pad2(r.branch !== null ? "present" : "-", 10) + pad2(r.risk, 10) + pad2(r.report, 10) + r.title
       );
-    const leftover = rows.filter((r) => r.worktree).length;
+    const leftover = rows.filter((r) => r.branch !== null).length;
     if (leftover > 0)
       lines.push(`
-${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+${leftover} task branch(es) still present. \`router land <id>\` merges and deletes one; \`git branch -D <branch>\` discards it.`);
     return lines.join("\n");
   });
   return 0;
 };
-var PLAN_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-function planRevision(text2) {
-  const match = PLAN_FRONTMATTER_RE.exec(text2);
+var DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+var DESIGN_STATUSES = /* @__PURE__ */ new Set(["design_draft", "design_approved"]);
+var PLAN_STATUSES = /* @__PURE__ */ new Set(["plan_draft", "plan_approved", "executing", "done"]);
+function documentFrontmatter(text2) {
+  const match = DOCUMENT_FRONTMATTER_RE.exec(text2);
   if (match === null) return null;
   let parsed;
   try {
@@ -13584,8 +14356,17 @@ function planRevision(text2) {
     return null;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-  const rev = parsed.plan_revision;
-  return typeof rev === "string" || typeof rev === "number" ? String(rev) : null;
+  return parsed;
+}
+function scalarText(value) {
+  return typeof value === "string" || typeof value === "number" ? String(value) : null;
+}
+function planRevision(frontmatter) {
+  return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
+}
+function documentStage(frontmatter, allowed) {
+  const status = frontmatter?.status;
+  return typeof status === "string" && allowed.has(status) ? status : null;
 }
 function highestCritiqueRound(entries) {
   let max = null;
@@ -13598,15 +14379,27 @@ function highestCritiqueRound(entries) {
   return max;
 }
 var plans = (ctx) => {
-  const { paths } = depsFor(ctx);
-  const plansRoot = join11(paths.root, "plans");
-  const ids = existsSync11(plansRoot) ? readdirSync5(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const explicit = flagStr(ctx.args.flags, "router-dir");
+  const paths = routerPaths(explicit ?? findRouterDir(ctx.cwd) ?? join12(ctx.cwd, ROUTER_DIR));
+  const plansRoot = join12(paths.root, "plans");
+  const ids = existsSync10(plansRoot) ? readdirSync5(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
-    let revision = null;
+    let planFrontmatter = null;
+    let hasPlan = true;
     try {
-      revision = planRevision(readFileSync13(paths.planMd(id), "utf8"));
+      planFrontmatter = documentFrontmatter(readFileSync14(paths.planMd(id), "utf8"));
+    } catch (error) {
+      if (error.code === "ENOENT") hasPlan = false;
+    }
+    let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
+    let designRevision = null;
+    let designFrontmatter = null;
+    try {
+      designFrontmatter = documentFrontmatter(readFileSync14(join12(paths.planDir(id), "DESIGN.md"), "utf8"));
+      designRevision = scalarText(designFrontmatter?.revision);
     } catch {
     }
+    if (!hasPlan) stage = documentStage(designFrontmatter, DESIGN_STATUSES);
     let critiqueRound = null;
     try {
       critiqueRound = highestCritiqueRound(readdirSync5(paths.planDir(id)));
@@ -13614,21 +14407,30 @@ var plans = (ctx) => {
     }
     return {
       id,
-      plan_revision: revision,
+      plan_revision: planRevision(planFrontmatter),
+      design_revision: designRevision,
+      stage,
       critique_round: critiqueRound,
-      decisions: existsSync11(paths.specDecisions(id)),
+      decisions: existsSync10(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null
     };
   });
   emit(ctx.json, { ok: true, plans: rows }, () => {
     if (rows.length === 0) return "No plans in .router/plans.";
+    const width = (header, floor, values) => Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
+    const idWidth = width("id", 24, rows.map((r) => r.id));
+    const revisionWidth = width("revision", 12, rows.map((r) => r.plan_revision ?? "unknown"));
+    const designWidth = width("design", 8, rows.map((r) => r.design_revision ?? "-"));
+    const stageWidth = width("stage", 8, rows.map((r) => r.stage ?? "-"));
+    const critiqueWidth = width("critique", 10, rows.map((r) => r.critique_round === null ? "-" : String(r.critique_round)));
+    const decisionsWidth = width("decisions", 12, rows.map((r) => r.decisions ? "yes" : "-"));
     const lines = [
       `Plans (${rows.length}):`,
-      pad2("id", 24) + pad2("revision", 12) + pad2("critique", 10) + pad2("decisions", 12) + "locked"
+      pad2("id", idWidth) + pad2("design", designWidth) + pad2("revision", revisionWidth) + pad2("stage", stageWidth) + pad2("critique", critiqueWidth) + pad2("decisions", decisionsWidth) + "locked"
     ];
     for (const r of rows)
       lines.push(
-        pad2(r.id, 24) + pad2(r.plan_revision ?? "unknown", 12) + pad2(r.critique_round === null ? "-" : String(r.critique_round), 10) + pad2(r.decisions ? "yes" : "-", 12) + (r.locked ? "yes" : "-")
+        pad2(r.id, idWidth) + pad2(r.design_revision ?? "-", designWidth) + pad2(r.plan_revision ?? "unknown", revisionWidth) + pad2(r.stage ?? "-", stageWidth) + pad2(r.critique_round === null ? "-" : String(r.critique_round), critiqueWidth) + pad2(r.decisions ? "yes" : "-", decisionsWidth) + (r.locked ? "yes" : "-")
       );
     return lines.join("\n");
   });
@@ -13706,13 +14508,13 @@ var orchestratorUsage = (ctx) => {
   return 0;
 };
 var setupStatusline = (ctx) => {
-  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join11(homedir3(), ".claude", "settings.json");
-  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve4(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
+  const settingsPath = flagStr(ctx.args.flags, "settings") ?? join12(homedir3(), ".claude", "settings.json");
+  const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve5(dirname6(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync11(settingsPath)) {
+  if (existsSync10(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync13(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync14(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }
@@ -13725,7 +14527,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync11(statuslinePath);
+  const missing = !existsSync10(statuslinePath);
   emit(
     ctx.json,
     {
@@ -13758,7 +14560,7 @@ var models = (ctx) => {
   emit(ctx.json, { ok: true, models: cfg }, () => {
     const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
     const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
-    const src = existsSync11(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    const src = existsSync10(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
     return `model tiers (${src}):
 ${tier("codex")}
 ${tier("claude")}
@@ -13820,7 +14622,7 @@ var doctor = async (ctx) => {
   } catch (e) {
     wasmDetail = e.message;
   }
-  const cacheWritable = existsSync11(paths.root);
+  const cacheWritable = existsSync10(paths.root);
   emit(
     ctx.json,
     {
@@ -13869,13 +14671,13 @@ function helpText() {
 Usage: router <command> [options]
 
   new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)
-  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs
+  dispatch <id...>       run tasks one at a time on quota-picked executors to verified diffs
   resume <id> --feedback continue the prior executor session with feedback (no cold restart)
   land <id...>           merge PASSED dispatch diffs sequentially
   gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)
   result <id>            show the verifier report + log tail
-  list                   list tasks with last status + whether a worktree remains
-  plans                  list .router/plans/<id> artifacts: revision, critique round, decisions, lock
+  list                   list tasks with last status + whether the task branch remains
+  plans                  list .router/plans/<id> artifacts: revision, stage, critique round, decisions, lock
   usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches
   orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript
   models                 print the resolved model-tier config (default + .router/models.yaml)
@@ -13884,7 +14686,7 @@ Usage: router <command> [options]
   setup-statusline       wire claude-quota reads into Claude Code's statusLine
   init                   optional; router auto-creates .router/ on first use
 
-Flags: --json, --all, --routing, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run
+Flags: --json, --all, --routing, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run
 `;
 }
 

@@ -80,14 +80,14 @@ test('resume replaces DELIVERY.md with the resumed executor final message', () =
   try {
     router(dir, ['new', 'delivery-valid'], env);
     assert.equal(router(dir, ['dispatch', 'delivery-valid', '--json'], env).code, 0);
-    const delivery = join(dir, '.router', 'tasks', 'delivery-valid', 'runs', 'run-001', 'DELIVERY.md');
+    const delivery = join(dir, '.router', 'tasks', 'delivery-valid', 'DELIVERY.md');
     assert.match(readFileSync(delivery, 'utf8'), /^Delivery report/);
 
     const resumed = router(dir, ['resume', 'delivery-valid', '--feedback', 'finish', '--json'], env);
     assert.equal(resumed.code, 0, resumed.out);
     assert.match(readFileSync(delivery, 'utf8'), /^Resumed delivery/);
     const result = JSON.parse(
-      readFileSync(join(dir, '.router', 'tasks', 'delivery-valid', 'runs', 'run-001', 'result.json'), 'utf8'),
+      readFileSync(join(dir, '.router', 'tasks', 'delivery-valid', 'result.json'), 'utf8'),
     ) as { delivery: { header: { task: string }; header_error?: string } };
     assert.equal(result.delivery.header.task, 'delivery-valid');
     assert.equal(result.delivery.header_error, undefined);
@@ -142,11 +142,61 @@ test('a resume that reports no session id is not treated as re-attached', () => 
     assert.equal(out.session_mismatch, true);
     // Nothing may be committed under a continuity claim nothing supports.
     const result = JSON.parse(
-      readFileSync(join(dir, '.router', 'tasks', 'silent', 'runs', 'run-001', 'result.json'), 'utf8'),
+      readFileSync(join(dir, '.router', 'tasks', 'silent', 'result.json'), 'utf8'),
     ) as Record<string, unknown>;
     assert.equal(result.resume_session_mismatch, true);
     assert.equal(result.resume_reported_session, null);
     assert.equal(result.verifier, undefined);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Resume's precondition changed with the execution model. It used to be "the worktree directory
+// still exists"; the work lives in git now, so it is "the branch still exists, and we are on it".
+// Both halves are refusals rather than silent corrections: a cold restart dressed up as a resume
+// throws away the context that made resuming worth doing, and resuming on the wrong branch
+// verifies a diff that has nothing to do with the task.
+test('resume refuses when the task branch is gone rather than restarting cold', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = baseEnv(dir);
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(router(dir, ['dispatch', 'demo', '--json'], env).code, 0);
+
+    fx.git(dir, ['checkout', '-q', 'main']);
+    fx.git(dir, ['branch', '-D', 'router/demo']);
+    const r = router(dir, ['resume', 'demo', '--feedback', 'try again'], env);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /branch router\/demo for demo is gone; resume unavailable/);
+    assert.match(r.out, /re-dispatch instead/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Fault-injection case 8e.
+test('resume refuses from the wrong branch instead of continuing there (8e)', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = baseEnv(dir);
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(router(dir, ['dispatch', 'demo', '--json'], env).code, 0);
+
+    // The user wandered off mid-task -- impossible to notice under the worktree model, ordinary
+    // here, and destructive if resume just carried on.
+    fx.git(dir, ['checkout', '-q', 'main']);
+    const r = router(dir, ['resume', 'demo', '--feedback', 'try again'], env);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /on branch main, but task requires router\/demo/);
+    // Nothing ran: no new commit on either branch.
+    assert.equal(fx.git(dir, ['branch', '--show-current']).trim(), 'main');
   } finally {
     fx.cleanup(dir);
   }

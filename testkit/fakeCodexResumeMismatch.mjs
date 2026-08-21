@@ -6,6 +6,7 @@
 // it was asked to resume -- simulating an executor that did NOT re-attach to the
 // prior session. Used to test `router resume`'s fail-loud continuity guard.
 import { writeFileSync } from 'node:fs';
+import { commitUnit } from './fakeCommit.mjs';
 
 const argv = process.argv.slice(2);
 const isResume = argv[0] === 'exec' && argv[1] === 'resume';
@@ -17,6 +18,9 @@ writeFileSync(
     ? 'export const x = 3; // edited by fake codex (wrong session)\n'
     : 'export const x = 2; // edited by fake codex\n',
 );
+// Committed either way: the point of this fake is the session id, and the run must otherwise
+// look normal so the continuity guard is what fails rather than the closing invariant.
+commitUnit(isResume ? 'fake: follow-up under a different session' : 'fake: unit a', ['src/a.ts']);
 
 process.stdout.write(JSON.stringify({ type: 'thread.started', model: 'fake-model-1', thread_id: sid }) + '\n');
 process.stdout.write(

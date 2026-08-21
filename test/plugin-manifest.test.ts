@@ -76,3 +76,139 @@ test('hooks.json wires the PreToolUse guard and the guard script exists', () => 
   assert.ok(existsSync(fileURLToPath(new URL('../hooks/guard-router-state.mjs', import.meta.url))));
   void root;
 });
+
+// --- The command surface after the v2 restructure (acceptance 6.2) ---------------------
+//
+// Asserted here rather than left to review, because a command file is the whole implementation
+// of a command: if `brainstorm.md` is missing, the stage does not exist, and nothing else fails.
+
+const COMMANDS = new URL('../commands/', import.meta.url);
+const commandFiles = (): string[] => readdirSync(COMMANDS).filter((f) => f.endsWith('.md'));
+
+test('the six flow commands all exist', () => {
+  const present = new Set(commandFiles());
+  for (const stage of ['brainstorm', 'design', 'design-review', 'workplan', 'go', 'review']) {
+    assert.ok(present.has(`${stage}.md`), `missing /router:${stage}`);
+  }
+});
+
+// These four existed only to drive parallel orchestration or to be a deprecated predecessor.
+// The MECHANISM survives where it is still needed -- `router dispatch` is still the CLI verb go
+// uses, and the queue gate's lock and clean-gate selection moved into the dispatch flow -- but
+// none of them is a thing the user is asked to choose any more.
+test('dispatch, gate, land and spec are no longer slash commands', () => {
+  const present = new Set(commandFiles());
+  for (const gone of ['dispatch.md', 'gate.md', 'land.md', 'spec.md']) {
+    assert.ok(!present.has(gone), `${gone} should have been removed`);
+  }
+});
+
+test('plan is a stub that names its replacement, and workplan carries the content', () => {
+  const stub = readFileSync(new URL('plan.md', COMMANDS), 'utf8');
+  assert.match(stub, /\/router:workplan/);
+  assert.match(frontmatter(stub).description ?? '', /renamed/i);
+  // Short enough that nobody mistakes it for the real thing.
+  assert.ok(stub.split('\n').length < 15, 'the alias should be a stub, not a copy');
+
+  const real = readFileSync(new URL('workplan.md', COMMANDS), 'utf8');
+  assert.match(real, /WORKPLAN\.md/);
+  assert.match(real, /Verification matrix/i);
+});
+
+// go.md was 379 lines with a single `##` heading, 64 of them describing concurrent dispatch.
+// Both are gone: the concurrency because the feature is, the bulk because contract-authoring
+// detail moved to references/ where it can be read when it is needed.
+test('go.md carries the flow, not the contract-authoring detail', () => {
+  const body = readFileSync(new URL('go.md', COMMANDS), 'utf8');
+  assert.doesNotMatch(body, /--max-parallel/);
+  assert.doesNotMatch(body, /CONCURRENTLY/);
+  assert.doesNotMatch(body, /run independent packages/i);
+  // The detail it used to inline now lives one reference away.
+  assert.match(body, /references\/task-contract\.md/);
+  assert.doesNotMatch(body, /allowed_globs`: the smallest scope/);
+  assert.ok(body.split('\n').length < 280, `go.md is ${body.split('\n').length} lines`);
+});
+
+// The three-way contradiction the design review found: go.md said TASK_CONTEXT.md is not
+// written, go.md also said to write it, and work-package.md said by default. One answer now.
+test('TASK_CONTEXT.md has one answer across the whole repository', () => {
+  const files = [
+    readFileSync(new URL('go.md', COMMANDS), 'utf8'),
+    readFileSync(new URL('../references/task-contract.md', import.meta.url), 'utf8'),
+    readFileSync(new URL('../references/work-package.md', import.meta.url), 'utf8'),
+  ];
+  for (const body of files) {
+    for (const line of body.split('\n')) {
+      if (!line.includes('TASK_CONTEXT')) continue;
+      assert.doesNotMatch(line, /written \*\*by default\*\*|Also write `TASK_CONTEXT/, line);
+    }
+  }
+  const combined = files.join('\n');
+  assert.match(combined, /`TASK_CONTEXT\.md` is \*\*not\*\* written|`TASK_CONTEXT\.md` is not written/);
+});
+
+test('design-review asks its reviewer what it could not follow', () => {
+  const body = readFileSync(new URL('design-review.md', COMMANDS), 'utf8');
+  assert.match(body, /Where I could not follow this document/);
+  assert.match(body, /curse of knowledge/);
+});
+
+// Acceptance 6.4: the four mechanisms plus the decomposition judgement. Each is a rule the
+// stage stops being useful without, so each is pinned.
+test('brainstorm declares its four mechanisms and the decomposition judgement', () => {
+  const body = readFileSync(new URL('brainstorm.md', COMMANDS), 'utf8');
+  assert.match(body, /strongest reason this is not worth building/);
+  assert.match(body, /Killing an idea with a documented reason is a successful\noutcome/);
+  assert.match(body, /at least one alternative they did not raise/);
+  assert.match(body, /Compare against how others solve it/);
+  assert.match(body, /one feature or several/);
+  assert.match(body, /BRAINSTORM\.md/);
+  // And it must NOT quietly become a design document.
+  assert.match(body, /Do not do design's job here/);
+});
+
+// --- The writing skill (acceptance 6.5-23) --------------------------------------------
+//
+// Two-level loading is the whole design: the rule list is short enough to stay resident, and the
+// detail sits behind it so a document-authoring turn does not pay for four files it will not read.
+
+test('the writing skill loads in two levels and declares no mechanical lint', () => {
+  const skill = readFileSync(new URL('../skills/writing/SKILL.md', import.meta.url), 'utf8');
+  const fm = frontmatter(skill);
+  assert.equal(fm.name, 'writing');
+  assert.ok((fm.description ?? '').length > 40, 'the description is what decides when it loads');
+
+  // Level one stays short enough to be worth keeping resident.
+  assert.ok(skill.split('\n').length < 140, `SKILL.md is ${skill.split('\n').length} lines`);
+
+  // Level two exists and is referenced from level one, or it will never be read.
+  const refs = readdirSync(new URL('../skills/writing/references/', import.meta.url));
+  assert.ok(refs.length >= 3, `expected detail files, found ${refs.join(',')}`);
+  for (const ref of refs) assert.match(skill, new RegExp(`references/${ref.replace('.', '\\.')}`));
+
+  // Both failure directions, not just the one this project is prone to.
+  assert.match(skill, /\*\*Obscure\.\*\*/);
+  assert.match(skill, /\*\*Padded\.\*\*/);
+  // And the deliberate absence of a linter, with its reason.
+  assert.match(skill, /There is no linter, and adding one would be a mistake/);
+  assert.match(skill, /curse of knowledge/);
+  // The subagent delegation for a tight context.
+  assert.match(skill, /Do not skip the revision pass — delegate it/);
+});
+
+// The glossary is the source rule 6 points at, and the two ambiguous words are the reason it
+// exists: an ambiguous term is worse than an undefined one, because the reader does not know they
+// have misunderstood.
+test('the glossary splits the two words that were doing several jobs', () => {
+  const g = readFileSync(new URL('../references/glossary.md', import.meta.url), 'utf8');
+  for (const name of ['environment-free gate', 'scope gate', 'project gate']) {
+    assert.match(g, new RegExp(name.replace(/[-]/g, '.')), `glossary must name "${name}"`);
+  }
+  assert.match(g, /detached process/);
+  assert.match(g, /detached HEAD/);
+  // The reviewer's confusion list, and the words that no longer name anything.
+  for (const term of ['work package', 'functional unit', 'base_sha', 'rescue commit', 'probe', 'floor check', 'slug']) {
+    assert.match(g, new RegExp(term.replace(/[_]/g, '.')), `glossary must define "${term}"`);
+  }
+  assert.match(g, /## Retired words/);
+});

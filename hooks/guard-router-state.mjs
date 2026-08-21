@@ -49,6 +49,11 @@ if (!inRouter) process.exit(0);
 // them; only real state files elsewhere under .router/ (e.g. .router/tasks/**)
 // are protected. Without this, dispatch fails because the worktree itself lives
 // under .router/, so every executor Write to its own checkout is blocked.
+//
+// DEAD while the branch execution model is in use: executors work in the repository root now,
+// so nothing writes under .router/worktrees/ and this branch is never taken. Kept for the
+// rollback window (see DEPRECATIONS.md) rather than deleted, because deleting it would silently
+// break the fallback it exists for.
 if (target.startsWith('.router/worktrees/') || target.includes('/.router/worktrees/')) process.exit(0);
 
 const ROOT_EDITABLE = new Set(['gate.yaml', 'models.yaml', 'policy.yaml']);

@@ -6,7 +6,11 @@ import { dirname, join, resolve } from 'node:path';
 import { ROUTER_DIR } from '../domain/constants.ts';
 
 // All layout knowledge for a target project's `.router/` tree lives here.
-// Returns absolute paths; run-NNN formatting is centralized in runId().
+//
+// A run's files sit directly in `tasks/<id>/`. They used to sit in `tasks/<id>/runs/run-001/`,
+// which was a directory level over a constant: dispatch has been one attempt per task since
+// the synchronous model landed, so the run dimension only ever held `run-001`. The old path
+// stays readable (see legacyResultJson) so upgrading does not lose a task's history.
 
 export interface RouterPaths {
   readonly root: string; // absolute path to the .router dir
@@ -22,7 +26,17 @@ export interface RouterPaths {
    * from disk cannot silently be handed a different one. `plan_id` is schema-constrained to a
    * path-safe shape for exactly this reason. */
   planDir(planId: string): string;
+  /**
+   * The work plan: `WORKPLAN.md`, or `PLAN.md` when that is the one on disk.
+   *
+   * The document was renamed because "plan" and "design" both described planning and neither
+   * name said which. Resolution is by existence rather than by a version flag: a plan written
+   * before the rename must stay readable to `router plans` and to the go gate, and a machine
+   * whose plugin build is a day behind must not see the work vanish.
+   */
   planMd(planId: string): string;
+  /** Where a new work plan is written, regardless of what is already on disk. */
+  workplanMd(planId: string): string;
   specCritique(planId: string, round: number): string;
   specDecisions(planId: string): string;
   specLock(planId: string): string;
@@ -32,30 +46,60 @@ export interface RouterPaths {
   contractMd(id: string): string;
   taskContext(id: string): string;
   runsDir(id: string): string;
-  heartbeat(id: string, runId: string): string;
-  resultJson(id: string, runId: string): string;
-  diffPatch(id: string, runId: string): string;
-  delivery(id: string, runId: string): string;
-  workerLog(id: string, runId: string): string;
-  gateLog(id: string, runId: string): string;
+  heartbeat(id: string): string;
+  runStatus(id: string): string;
+  resultJson(id: string): string;
+  diffPatch(id: string): string;
+  delivery(id: string): string;
+  workerLog(id: string): string;
+  gateLog(id: string): string;
+  /**
+   * Where a pre-fold run wrote the same file: `tasks/<id>/runs/run-001/...`.
+   *
+   * Read-only, and kept only so records written before the fold are still readable -- a task
+   * whose history silently disappears at upgrade is worse than an extra lookup.
+   */
+  legacyResultJson(id: string): string;
+  /** @deprecated no worktree is created for an executor; see DEPRECATIONS.md. */
   worktree(id: string, runId: string): string;
 }
 
-/** Zero-padded run id, e.g. runId(1) === "run-001". */
+/** Zero-padded run id, e.g. runId(1) === "run-001". @deprecated the run dimension is folded. */
 export function runId(n: number): string {
   return `run-${String(n).padStart(3, '0')}`;
 }
 
-/** Branch name for a run, e.g. "router/<id>/run-001". */
+/**
+ * Branch name for a run, e.g. "router/<id>/run-001".
+ *
+ * @deprecated The run segment named a constant; use taskBranch(). Kept for the rollback window
+ * in DEPRECATIONS.md.
+ */
 export function runBranch(id: string, run: string): string {
   return `router/${id}/${run}`;
+}
+
+/**
+ * The branch a task is developed on, e.g. "router/<id>".
+ *
+ * No run segment: `dispatch` has been one attempt per task since the sync model landed, so the
+ * run dimension was a naming layer over a constant. The `router/` prefix is load-bearing rather
+ * than decorative -- destructive steps assert the current branch starts with it before they
+ * are allowed to reset anything, which is what keeps a reset off the user's own branch.
+ */
+export function taskBranch(id: string): string {
+  return `router/${id}`;
+}
+
+/** Path to a branch's loose ref file. Reading its mtime is a cheap liveness probe. */
+export function branchRefPath(repoRoot: string, branch: string): string {
+  return join(repoRoot, '.git', 'refs', 'heads', ...branch.split('/'));
 }
 
 export function routerPaths(routerDir: string): RouterPaths {
   const root = resolve(routerDir);
   const tasksDir = join(root, 'tasks');
   const taskDir = (id: string) => join(tasksDir, id);
-  const runDir = (id: string, run: string) => join(taskDir(id), 'runs', run);
   return {
     root,
     repoRoot: dirname(root),
@@ -66,7 +110,11 @@ export function routerPaths(routerDir: string): RouterPaths {
     symbolLatest: join(root, 'symbols', 'latest'),
     gateLock: () => join(root, 'gate.lock'),
     planDir: (planId) => join(root, 'plans', planId),
-    planMd: (planId) => join(root, 'plans', planId, 'PLAN.md'),
+    planMd: (planId) => {
+      const workplan = join(root, 'plans', planId, 'WORKPLAN.md');
+      return existsSync(workplan) ? workplan : join(root, 'plans', planId, 'PLAN.md');
+    },
+    workplanMd: (planId) => join(root, 'plans', planId, 'WORKPLAN.md'),
     specCritique: (planId, round) => join(root, 'plans', planId, `critique-${round}.md`),
     specDecisions: (planId) => join(root, 'plans', planId, 'DECISIONS.md'),
     specLock: (planId) => join(root, 'plans', planId, 'spec.lock'),
@@ -76,12 +124,14 @@ export function routerPaths(routerDir: string): RouterPaths {
     contractMd: (id) => join(taskDir(id), 'TASK_CONTRACT.md'),
     taskContext: (id) => join(taskDir(id), 'TASK_CONTEXT.md'),
     runsDir: (id) => join(taskDir(id), 'runs'),
-    heartbeat: (id, run) => join(runDir(id, run), 'heartbeat'),
-    resultJson: (id, run) => join(runDir(id, run), 'result.json'),
-    diffPatch: (id, run) => join(runDir(id, run), 'diff.patch'),
-    delivery: (id, run) => join(runDir(id, run), 'DELIVERY.md'),
-    workerLog: (id, run) => join(runDir(id, run), 'logs', 'worker.log'),
-    gateLog: (id, run) => join(runDir(id, run), 'logs', 'gate.log'),
+    heartbeat: (id) => join(taskDir(id), 'heartbeat'),
+    runStatus: (id) => join(taskDir(id), 'status.json'),
+    resultJson: (id) => join(taskDir(id), 'result.json'),
+    diffPatch: (id) => join(taskDir(id), 'diff.patch'),
+    delivery: (id) => join(taskDir(id), 'DELIVERY.md'),
+    workerLog: (id) => join(taskDir(id), 'logs', 'worker.log'),
+    gateLog: (id) => join(taskDir(id), 'logs', 'gate.log'),
+    legacyResultJson: (id) => join(taskDir(id), 'runs', 'run-001', 'result.json'),
     worktree: (id, run) => join(root, 'worktrees', id, run),
   };
 }

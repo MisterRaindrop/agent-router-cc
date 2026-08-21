@@ -70,7 +70,7 @@ test('exec_bit gate rejects a script added without the executable bit', () => {
     assert.equal(d.code, 1, d.out);
     assert.equal(jsonLine(d.out).verifier, 'FAILED');
 
-    const result = JSON.parse(readFileSync(join(dir, '.router', 'tasks', 'demo', 'runs', 'run-001', 'result.json'), 'utf8'));
+    const result = JSON.parse(readFileSync(join(dir, '.router', 'tasks', 'demo', 'result.json'), 'utf8'));
     const check = result.verifier.checks.find((c: { id: string }) => c.id === 'exec_bit');
     assert.ok(check !== undefined, 'exec_bit check must be reported');
     assert.equal(check.ok, false);

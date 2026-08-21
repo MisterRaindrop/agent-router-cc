@@ -1,7 +1,7 @@
 {
   "name": "router",
-  "version": "0.8.5",
-  "description": "Routes coding subtasks to the cheapest capable model to save Opus tokens. The main session plans, reviews the whole diff and owns the pass/fail verdict; the router CLI owns the mechanism -- isolated worktrees, process supervision, concurrent dispatch, an exclusive-lock verification queue for projects whose build environment exists only once, and environment-free gates on every diff (scope, secrets, executable bit).",
+  "version": "0.10.0",
+  "description": "Routes coding subtasks to the cheapest capable model to save Opus tokens. The main session plans, reviews the whole diff and owns the pass/fail verdict; the router CLI owns the mechanism -- one task at a time on a dedicated branch in your own checkout, under an exclusive lock that rescues your uncommitted work before anything moves, process supervision, the project's own build gate with full-rebuild triggers, and environment-free gates on every diff (scope, secrets, executable bit).",
   "author": {
     "name": "The agent-router-cc Authors"
   }

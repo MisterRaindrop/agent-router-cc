@@ -8,6 +8,63 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-12
+
+The go-execution v2 groundwork: single-executor mode plus the shared observability
+substrate. Designed through the project's own design flow (two adversarial review
+rounds, twelve objections adjudicated one by one; records in the plan's DECISIONS.md).
+
+### Added
+
+- **`/router:go single`** — one strong executor takes the whole feature as a single
+  package while the main session stays planner/reviewer. Opus is the default and the
+  floor: the pin never silently downgrades; quota pressure fails loudly. With an
+  approved `PLAN.md`, the contract is a **verbatim copy** anchored by plan revision +
+  content sha256 (an immutable snapshot — zero re-authoring); without one, a ~40-line
+  compact template. `TASK_CONTEXT.md` is no longer written by default (measured: +21%
+  executor input, zero quality gain).
+- **Live run status**: every dispatch run writes an atomic `status.json` — a six-phase
+  state machine separate from five terminal states, elapsed vs budget, log-activity age,
+  stall countdown, and a `recent_action` under a strict redaction allowlist (tool +
+  repo-relative path, or Bash program + known subcommand; arguments, file contents and
+  environment values provably never persisted).
+- **Statusline live segment**: active runs render as
+  `router ▶ <id> <phase> <elapsed>/<budget> ·log <age>` (multi-run, stall countdown,
+  recent action), chained after the existing quota segment.
+- **Per-phase timings** (`t_worktree/t_launch/t_exec/t_gate/t_verify`) recorded on each
+  run's metrics row — the wall-clock baseline for the upcoming parallel work.
+- **Detached execution + listener protocol** in `go`: dispatch survives the session
+  (process-group detachment — measured: the harness kills tracked tasks by process
+  group; a `detached:true` child survives), a listener wakes the session at terminal
+  states, and a dead status channel falls back to the authoritative result files.
+
+- **`router list` shows the live phase** of a run still in flight (`executor_working 3m`)
+  instead of `none`; `--json` gains `live`. A malformed `status.json` degrades to the old
+  output rather than breaking a read-only view.
+- **`recent_action` for codex runs**, extracted from `command_execution` events (login-shell
+  wrapper unwrapped) under the same redaction allowlist as the claude path; model prose is
+  ignored outright.
+- **`router usage --routing` reports per-phase medians** (`worktree/launch/exec/gate/verify`)
+  with their sample counts. Rows lacking the fields are excluded from the median rather than
+  counted as zero, and a group with no timed rows renders `—`, never `0.0s`.
+- **`router plans` gains a `stage` column** (the furthest recognized document status) and
+  sizes its columns to the longest value.
+- CI now fails when the committed `dist/` bundle is not the build of the committed source.
+
+### Changed
+
+- Conversation-side progress is two-tier by design: statusline carries periodic status
+  (zero model turns); the conversation gets only terminal states and anomalies. An
+  opt-in periodic heartbeat exists and is documented as costing one model turn per beat.
+
+### Fixed
+
+- `router plans` reported **every** revision as `unknown`: it read the legacy
+  `plan_revision` key while the current flow writes `revision` (the legacy key is still
+  honored). Long plan ids also overflowed the id column and swallowed the next one.
+- `router plans` no longer creates `.router/` as a side effect of being run — browsing is
+  read-only.
+
 ## [0.8.5] - 2026-08-11
 
 Version bump note: `0.8.4` was bumped in-manifest during dependency updates but its
@@ -119,7 +176,8 @@ plugin sees an update at all.
   exclusive-lock verification queue, environment-free gates on the diff); the main
   session owns every judgment, including the pass/fail verdict.
 
-[Unreleased]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.3...v0.8.5
 [0.8.3]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/MisterRaindrop/agent-router-cc/compare/v0.8.1...v0.8.2
