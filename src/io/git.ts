@@ -316,3 +316,145 @@ export function branchExists(cwd: string, branch: string): boolean {
 export function deleteBranch(cwd: string, branch: string): void {
   tryGit(cwd, ['branch', '-D', branch]);
 }
+
+// ---------------------------------------------------------------------------
+// Branch-mode primitives (P2).
+//
+// The execution model moved out of a per-task worktree and into the user's own
+// checkout on a dedicated branch, which changes what "safe" means. In a worktree a
+// mistake could only destroy a throwaway directory; here every destructive step is
+// one directory away from the user's uncommitted work. These are the primitives the
+// dispatch flow is required to go through, and the reason each exists is the specific
+// way the old primitive was unsafe.
+// ---------------------------------------------------------------------------
+
+/** A task's identity assertion failed: we are not where the task record says we are. */
+export class TaskIdentityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaskIdentityError';
+  }
+}
+
+/**
+ * Create `branch` at HEAD and check it out. Refuses when the name is already taken.
+ *
+ * `checkoutBranch` silently checks out an existing same-named branch instead, which was
+ * harmless while each task owned a worktree and became a data-loss path once tasks share
+ * the user's checkout: a re-dispatch under a recycled task id would adopt a stale branch,
+ * and the retry path's `reset --hard` would then discard commits that belong to whatever
+ * ran there before. "The branch exists" also does not mean "the same task" -- identity is
+ * branch + base_sha + session, so the caller has to decide between resume and a new id.
+ */
+export function createBranchStrict(cwd: string, branch: string): void {
+  if (branchExists(cwd, branch)) {
+    throw new TaskIdentityError(
+      `branch ${branch} already exists; refusing to reuse it. Resume that task, or dispatch under a different task id.`,
+    );
+  }
+  git(cwd, ['checkout', '--quiet', '-b', branch, 'HEAD']);
+}
+
+/** The checked-out branch, or null when HEAD is detached (a Git detached head, not a detached process). */
+export function currentBranch(cwd: string): string | null {
+  const r = tryGit(cwd, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return r.ok ? r.stdout.trim() : null;
+}
+
+/** Whether `ancestor` is reachable from `descendant`. Unreadable refs report false. */
+export function isAncestor(cwd: string, ancestor: string, descendant: string): boolean {
+  return tryGit(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]).ok;
+}
+
+/**
+ * Porcelain entries whose dirt is submodule *content* rather than a tracked change of ours.
+ *
+ * Kept separate because it is neither the user's work (so rescuing it is impossible -- the
+ * changes live in another repository) nor a reason to refuse (measured on a real ClickHouse
+ * checkout: 107 of 110 porcelain entries were build residue inside `contrib/*`). The caller
+ * reports these on their own line instead of pretending the tree is clean or bailing out.
+ */
+export function submoduleDirty(cwd: string): string[] {
+  const all = tryGit(cwd, ['status', '--porcelain']);
+  if (!all.ok) return [];
+  const ignoring = new Set(
+    tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty']).stdout.split('\n'),
+  );
+  return all.stdout.split('\n').filter((line) => line !== '' && !ignoring.has(line));
+}
+
+/**
+ * Uncommitted work that the closing invariant forbids: tracked edits and non-ignored
+ * untracked files, excluding submodule content dirt. Returned as porcelain lines so the
+ * caller can name the files in its failure message.
+ *
+ * This is the check that replaces the old catch-all `commitAll`. Dropping that catch-all
+ * without adding this would let an executor forget its last file: the file never enters
+ * `base_sha..HEAD`, so every gate passes without ever seeing it, and the run reports success
+ * while unreviewed code sits in the user's checkout.
+ */
+export function uncommittedSourceFiles(cwd: string): string[] {
+  const r = tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty']);
+  if (!r.ok) return [];
+  return r.stdout.split('\n').filter((line) => line !== '');
+}
+
+/**
+ * Stage tracked edits plus non-ignored untracked files and commit them, returning the commit
+ * and the paths it captured. Returns null when there is nothing to rescue -- deliberately, so
+ * a clean checkout does not gain an empty commit.
+ *
+ * This is how the flow keeps its first Must NOT ("never lose the user's uncommitted work")
+ * before it starts moving branches around. `git stash` was rejected for the job: a stash is
+ * detached from the branch, and a pop that conflicts on the failure path leaves the user's
+ * changes suspended somewhere they have to be told about. A commit is on their branch,
+ * visible in `git log`, and undone with `reset --soft HEAD~1`.
+ *
+ * Carries its own committer identity via -c, so bookkeeping never depends on ambient git
+ * config -- fresh containers and CI images often have none.
+ */
+export function rescueCommit(cwd: string, message: string): { sha: string; files: string[] } | null {
+  const before = uncommittedSourceFiles(cwd);
+  if (before.length === 0) return null;
+  git(cwd, ['add', '-A']);
+  const staged = git(cwd, ['diff', '--cached', '--name-only', '-z']);
+  const files = splitNul(staged);
+  if (files.length === 0) return null; // e.g. only submodule content was dirty
+  git(cwd, [
+    '-c',
+    'user.name=router',
+    '-c',
+    'user.email=router@localhost',
+    'commit',
+    '-q',
+    '-m',
+    message,
+  ]);
+  return { sha: resolveCommit(cwd, 'HEAD'), files };
+}
+
+/**
+ * Assert we are exactly where the task record says before anything destructive runs.
+ *
+ * Two separate failures, both of which the old worktree model made impossible and the branch
+ * model makes reachable: the user checking out something else mid-run, and a same-named branch
+ * that belongs to a different task. Either one aimed at `reset --hard` destroys work that was
+ * never part of this task, so this throws rather than reporting.
+ */
+export function assertTaskIdentity(cwd: string, task: { branch: string; baseSha: string }): void {
+  const on = currentBranch(cwd);
+  if (on === null) {
+    throw new TaskIdentityError(
+      `HEAD is detached; task ${task.branch} requires its own branch to be checked out.`,
+    );
+  }
+  if (on !== task.branch) {
+    throw new TaskIdentityError(`on branch ${on}, but task requires ${task.branch}.`);
+  }
+  if (!isAncestor(cwd, task.baseSha, 'HEAD')) {
+    throw new TaskIdentityError(
+      `base_sha ${task.baseSha.slice(0, 12)} is not an ancestor of HEAD on ${task.branch}; ` +
+        `the branch was reset or rewritten outside this task.`,
+    );
+  }
+}
