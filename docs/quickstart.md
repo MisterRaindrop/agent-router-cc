@@ -21,18 +21,21 @@ Plan the change with Opus in normal conversation, then:
 /router:go
 ```
 
-(For a **large feature** — cross-module work, real approach trade-offs — you can opt into
-the design flow first: `/router:design` clarifies and researches, producing a `DESIGN.md`
-you approve section by section; `/router:design-review` optionally gets an independent
-adversarial second opinion where you adjudicate every objection; `/router:plan` turns the
-approved Design into a `PLAN.md` with the task breakdown, which `/router:go` then executes
-verbatim. Whether a change deserves that is your call — router never judges task size.)
+(For a **large feature** — cross-module work, real approach trade-offs — you can opt into the
+design flow first: `/router:brainstorm` questions the idea itself when the goal is not settled
+yet — comparing it with how other products solve the same problem, arguing the case against
+building it, and proposing the option you did not offer; `/router:design` clarifies and
+researches, producing a `DESIGN.md` you approve section by section; `/router:design-review`
+optionally gets an independent adversarial second opinion where you adjudicate every objection;
+`/router:workplan` turns the approved Design into a `WORKPLAN.md` with the task breakdown, which
+`/router:go` then executes verbatim. Whether a change deserves that is your call — router never
+judges task size.)
 
-(**`/router:go single`** hands the whole feature to one strong executor — Opus by default,
-explicitly overridable — while your session stays free: dispatch runs detached in the
-background, the statusline shows live phase/activity/stall-countdown for every run, and
-the session is woken only at terminal states. The plan, review, and merge verdict stay
-with the main session exactly as above.)
+(**One run, one package, one executor** — Opus by default, explicitly overridable — while your
+session stays free: dispatch runs detached in the background, the statusline shows live
+phase/activity/stall-countdown, and the session is woken only at terminal states. The executor
+works in *your* checkout on a `router/<task>` branch, so it can build; the plan, review and merge
+verdict stay with the main session.)
 
 Opus decomposes the plan you agreed on into tasks and drives them, pausing at three
 points:
@@ -54,22 +57,21 @@ points:
 `/router:go` drives these; you can also call them directly:
 
 ```
-/router:dispatch <id...> # run these tasks on quota-picked executors, concurrently, to
-                         #   verified diffs (one call, so the wall clock is the slowest one)
 /router:result <id>      # the per-check verifier report + log tail
 /router:resume <id>      # send a failure back to that task's own executor session
-/router:land <id...>     # merge PASSED dispatches into your branch
-/router:gate <id...>     # verify in your own checkout, one at a time, when the real gate
-                         #   needs Docker or a single build directory
+/router:list             # tasks, their last status, and whether the task branch is still there
 ```
 
-Or from a shell (same thing): `router dispatch <id>`, `router land <id>`.
+`dispatch`, `land` and `gate` are CLI subcommands rather than slash commands — `/router:go`
+drives them. From a shell: `router dispatch <id>`, `router land <id>`, `router gate <id>`.
 
-Claude executors run with worktree-scoped `Read`/`Edit`/`Write`, plus `Bash` limited to the
-task's `verify` command when it declares one, so they can prove their own work. The CLI
-applies environment-free gates to the diff (applies + scope + secrets + exec bit); the real
-build/tests are either that `verify` command or a `/router:gate` run in your own checkout, and
-the final full-chain verdict is always Opus's, in your actual environment.
+Claude executors get `Read`/`Edit`/`Write` plus a **`Bash` allowlist, not a shell**: the task's
+own `verify` command and a narrow set of git subcommands (`add`, `commit`, `status`, `diff`,
+`log`, `rev-parse`) so the executor can commit its own work one functional unit at a time.
+`checkout`, `reset`, `rebase`, branch deletion and `push` are unreachable, and a nested `router`
+invocation refuses outright so orchestration state cannot be touched. The CLI applies
+environment-free gates to the diff (applies + scope + secrets + exec bit) and runs the project's
+own build gate; the final full-chain verdict is always Opus's, in your actual environment.
 
 ## The task contract
 
@@ -96,9 +98,11 @@ binding. **If those cannot be written down, it is a decision rather than a task*
 keeps it instead of handing it off.
 
 `tier` and `risk` answer different questions: a mechanical change to an auth path is `weak`
-**and** `high`. Set `verify` to a fast self-contained gate if one runs inside a worktree --
-then the diff arrives already compiling and passing. If the real gate needs Docker or one
-shared build directory, leave `verify: []` and use `/router:gate` instead.
+**and** `high`. Set `verify` to the project's fast gate and the diff arrives already compiling
+and passing -- the executor works in your checkout, so it has the environment to run it. For a
+project whose build is expensive or configuration-heavy, put the commands in `.router/gate.yaml`
+instead (`gate`, `clean_gate`, `clean_triggers`, `reset`) and the dispatch flow runs them,
+escalating to the full rebuild when a trigger -- or any deletion -- appears in the diff.
 
 ## What each gate guarantees
 
@@ -113,7 +117,7 @@ A dispatched diff must clear the CLI's environment-free gates, in order:
 | `verify`       | optional: any `verify` command(s) exit 0 (skipped when `verify: []`) |
 
 These are the deterministic guarantees a cheap model can't fake. Each run also ends with a
-**delivery report** (`.router/tasks/<id>/runs/<run>/DELIVERY.md`) whose header states whether
+**delivery report** (`.router/tasks/<id>/DELIVERY.md`) whose header states whether
 the gate actually ran -- read it before the diff; `gate_ran: false` means unproven, whatever
 the prose says.
 

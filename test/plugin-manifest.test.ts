@@ -166,3 +166,49 @@ test('brainstorm declares its four mechanisms and the decomposition judgement', 
   // And it must NOT quietly become a design document.
   assert.match(body, /Do not do design's job here/);
 });
+
+// --- The writing skill (acceptance 6.5-23) --------------------------------------------
+//
+// Two-level loading is the whole design: the rule list is short enough to stay resident, and the
+// detail sits behind it so a document-authoring turn does not pay for four files it will not read.
+
+test('the writing skill loads in two levels and declares no mechanical lint', () => {
+  const skill = readFileSync(new URL('../skills/writing/SKILL.md', import.meta.url), 'utf8');
+  const fm = frontmatter(skill);
+  assert.equal(fm.name, 'writing');
+  assert.ok((fm.description ?? '').length > 40, 'the description is what decides when it loads');
+
+  // Level one stays short enough to be worth keeping resident.
+  assert.ok(skill.split('\n').length < 140, `SKILL.md is ${skill.split('\n').length} lines`);
+
+  // Level two exists and is referenced from level one, or it will never be read.
+  const refs = readdirSync(new URL('../skills/writing/references/', import.meta.url));
+  assert.ok(refs.length >= 3, `expected detail files, found ${refs.join(',')}`);
+  for (const ref of refs) assert.match(skill, new RegExp(`references/${ref.replace('.', '\\.')}`));
+
+  // Both failure directions, not just the one this project is prone to.
+  assert.match(skill, /\*\*Obscure\.\*\*/);
+  assert.match(skill, /\*\*Padded\.\*\*/);
+  // And the deliberate absence of a linter, with its reason.
+  assert.match(skill, /There is no linter, and adding one would be a mistake/);
+  assert.match(skill, /curse of knowledge/);
+  // The subagent delegation for a tight context.
+  assert.match(skill, /Do not skip the revision pass — delegate it/);
+});
+
+// The glossary is the source rule 6 points at, and the two ambiguous words are the reason it
+// exists: an ambiguous term is worse than an undefined one, because the reader does not know they
+// have misunderstood.
+test('the glossary splits the two words that were doing several jobs', () => {
+  const g = readFileSync(new URL('../references/glossary.md', import.meta.url), 'utf8');
+  for (const name of ['environment-free gate', 'scope gate', 'project gate']) {
+    assert.match(g, new RegExp(name.replace(/[-]/g, '.')), `glossary must name "${name}"`);
+  }
+  assert.match(g, /detached process/);
+  assert.match(g, /detached HEAD/);
+  // The reviewer's confusion list, and the words that no longer name anything.
+  for (const term of ['work package', 'functional unit', 'base_sha', 'rescue commit', 'probe', 'floor check', 'slug']) {
+    assert.match(g, new RegExp(term.replace(/[_]/g, '.')), `glossary must define "${term}"`);
+  }
+  assert.match(g, /## Retired words/);
+});

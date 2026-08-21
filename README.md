@@ -36,7 +36,7 @@ along exactly that line:
 | **Change scope**       | bounded only by the prompt         | enforced on the diff: allowed globs + changed-line cap         |
 | **Correctness**        | you check by hand                  | CLI gates the diff (scope + secrets + exec bit); Opus runs the build/tests in your real env |
 | **...and laziness**    | trust the model's word             | ...**plus** the main session reviews the diff for lazy/wrong work |
-| **Where edits land**   | your working tree, immediately     | an isolated worktree; your tree changes only on `land`         |
+| **Where edits land**   | your working tree, immediately     | a `router/<task>` branch in your own checkout; your branch changes only on `land` |
 | **Quota / rate limit** | the run stalls                     | balances codex vs claude by real remaining quota; 429 fallover |
 
 router **never auto-merges**. The gates decide PASS/FAIL; you decide land.
@@ -88,20 +88,22 @@ To update later: `/plugin marketplace update agent-router-cc`, update **router**
 
 ```
 everyday task:   plan with Opus in conversation  →  /router:go  →  /router:review (optional)
-                                                    packages, dispatch,    independent, strict
-                                                    gate, review, land     review of landed code
+                                                    one package, one       independent, strict
+                                                    executor, gate,        review of landed code
+                                                    review, land
 
 large feature (opt-in, YOUR call — router never judges task size):
-  /router:design        →  /router:design-review (opt.)  →  /router:plan       →  /router:go
-  clarify + research;      independent adversarial pass;     the how: steps,      executes the
-  a DESIGN.md you           every objection adjudicated       task breakdown,      approved plan
-  approve section           by you, nothing auto-applied      verification;        verbatim
-  by section                                                  you approve
+  /router:brainstorm  →  /router:design  →  /router:design-review (opt.)  →  /router:workplan  →  /router:go
+  question the idea;     clarify +          independent adversarial          the how: steps,      executes the
+  compare with how       research; a        pass; every objection            task breakdown,      approved plan
+  others solve it;       DESIGN.md you      adjudicated by you,              verification;        verbatim
+  argue the case         approve section    nothing auto-applied             you approve
+  against                by section
 ```
 
 `/router:go` pauses at exactly **three points** — nothing happens without you (when it
 executes a Plan approved via the design flow, the breakdown confirmation is skipped: you
-already approved that list at `/router:plan`):
+already approved that list at `/router:workplan`):
 
 1. **Confirm the task breakdown.** Every package is shown with its file scope and target
    model before anything runs.
@@ -109,11 +111,21 @@ already approved that list at `/router:plan`):
    with you directly instead of handing it to a cheap model.
 3. **Approve before merge.** Nothing lands in your branch without your say-so.
 
-In between, each *clear* package runs on the quota-picked executor in an isolated
-worktree — independent packages **concurrently**, so the wall clock is the slowest one,
-not the sum (measured: 26s + 31s ran as a 32s batch; 234s + 244s ran as 244s). At the end
-Opus runs a **mandatory acceptance pass**: full-chain CI in your real environment, reading
-the whole output itself, before reporting done.
+In between, the package runs on the quota-picked executor **in your own checkout**, on a
+branch called `router/<task-id>`. That is the point: a fresh `git worktree` has no
+dependencies, no build objects and no configure output, so a real project cannot compile in
+one — and the build has to happen in the main checkout anyway. The whole run holds an
+exclusive lock on the checkout, your uncommitted work is committed first (with the sha
+reported), and the executor commits **one functional unit at a time** so you can review it
+commit by commit.
+
+**One task at a time, by design.** Parallel dispatch was removed: measured, it cost almost
+nothing to run (0.26s of orchestration against 393s of executor time) and a great deal to
+supervise — and every result still needs reviewing one at a time, so review was the
+bottleneck the parallelism kept feeding.
+
+At the end Opus runs a **mandatory acceptance pass**: full-chain CI in your real
+environment, reading the whole output itself, before reporting done.
 
 ## 🗂️ Task contracts: tier and risk are different questions
 
@@ -178,23 +190,40 @@ cheap model cannot fake:
 
 `verify` answers a mechanical question — *did it run and pass* — never *is it right*.
 
-**The real gate** is a property of the project, declared once in `.router/gate.yaml`:
+**The real gate** is a property of the project, declared once in `.router/gate.yaml`. The
+executor works in your own checkout now, so it has the same build environment you do — warm
+dependencies, warm objects, a real configure result — and the gate runs there under the same
+exclusive lock the run already holds:
 
-- **`mode: worktree`** — build and tests run inside each run worktree; implementation and
-  verification are both fully parallel.
-- **`mode: queue`** — for the project whose environment exists **once** (one build
-  directory, a container bound to a fixed host path): executors write code in parallel but
-  don't build; `router gate` feeds commits one at a time into your own checkout under an
-  exclusive lock — refusing if tracked files are modified, verifying on the current
+| key | what it does |
+|---|---|
+| `gate` | the incremental build-and-test command |
+| `clean_gate` | the full-rebuild command |
+| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate` |
+| `reset` | run before verification, to clear state a previous build left behind |
+| `lock_wait_minutes` | how long to wait when another run holds the checkout |
+
+Any **deletion** in the diff forces `clean_gate` regardless of triggers: an incremental build
+keeps a stale object for a source file that no longer exists, and nothing tells it to drop it.
+`mode: queue` remains for a project that verifies on an integration branch — `router gate` feeds
+commits one at a time into your own checkout under an exclusive lock, refusing if tracked files
+are modified, verifying on the current
   integration head, keeping the build cache warm (never `git clean`), and restoring your
   branch. A gate that fails is re-run on the pre-merge head, so a project that was already
   red doesn't get blamed on the change.
 
-## ⚔️ The design flow — two documents, approved in order
+## ⚔️ The design flow — approved in order
 
-For a large feature — cross-module work, real approach trade-offs — the user opts in with
-`/router:design`. Exactly **two documents**, each yours to approve:
+For a large feature — cross-module work, real approach trade-offs — the user opts in. Every
+document is yours to approve:
 
+- **`/router:brainstorm` → `BRAINSTORM.md`** (optional first stage, for when the *goal* is not
+  settled yet). Every round owes you four things: a question about **why**, from an angle you
+  have not considered; a comparison with how other products actually solve this; the **strongest
+  argument against building it at all**; and at least one alternative you did not propose. Your
+  approach is the best one you have, not necessarily the best one there is. `status: rejected` is
+  a real outcome — a killed idea with a documented reason is this stage succeeding, and the
+  record is what stops it coming back in three months with nobody remembering why.
 - **`/router:design` → `DESIGN.md`** (why / what / what NOT / chosen approach / risks /
   acceptance criteria). One clarifying question at a time, interleaved with **code
   research** (symbol index, `file:line` evidence); 2–3 approaches with trade-offs and the
@@ -208,10 +237,18 @@ For a large feature — cross-module work, real approach trade-offs — the user
   closed. **Each objection is adjudicated by you** — accept / reject / discuss, recorded in
   `DECISIONS.md`; nothing touches the document before your verdict. Runs in the background,
   truncation-guarded, session resumed across rounds.
-- **`/router:plan` → `PLAN.md`** (how: steps, task breakdown, dependencies, verification
-  matrix, rollout) — derived only from an approved Design and bound to its revision: a
-  Design revision drops the Plan back to draft. You approve a summary; `/router:go` then
-  executes it verbatim. Everyday tasks skip all of this and use `/router:go` directly.
+- **`/router:workplan` → `WORKPLAN.md`** (how: steps, task breakdown, dependencies,
+  verification matrix, rollout) — derived only from an approved Design and bound to its
+  revision: a Design revision drops the work plan back to draft. You approve a summary;
+  `/router:go` then executes it verbatim. Everyday tasks skip all of this and use `/router:go`
+  directly.
+
+The task contract carries **both** the work plan and the Design, verbatim with their sha256s.
+They answer different questions: the plan says what to do and in what order, the Design says why
+it is built this way and which invariants may not break — and the second is what an executor can
+never recover by reading code. `BRAINSTORM.md` is deliberately excluded: it records the
+counter-evidence and the rejected directions, so handing it over would hand the executor a pile
+of ideas that were decided against.
 
 ## 🔍 `/router:review` — the last gate after green
 
@@ -235,18 +272,15 @@ go to lint/CI, not to the LLM.
 
 | command | what it does |
 |---|---|
-| `/router:go` | **top-level** — execute the plan you just agreed on (or an approved `PLAN.md`, verbatim); drives everything below |
-| `/router:go single` | one pinned executor takes the whole feature — **either family** (`claude`/opus or `codex`/gpt-5.6-sol), always at that family's `critical` capability unless you say otherwise, never silently downgraded; runs detached in the background — statusline shows live phase/activity, the session is woken at terminal states |
+| `/router:go` | **top-level** — execute the plan you just agreed on (or an approved `WORKPLAN.md`, verbatim). One package, one pinned executor, on a `router/<task>` branch in your own checkout; runs detached, statusline shows live phase and activity, the session is woken at terminal states |
+| `/router:brainstorm` | question an idea before designing it — compare it with how others solve it, argue the case against, propose the option you were not offered |
 | `/router:design` | opt-in for large features — clarify, research, draft a `DESIGN.md` you approve section by section |
-| `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied |
-| `/router:plan` | turn the approved Design into `PLAN.md` — steps, task breakdown, verification; you approve |
+| `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied. Also reports where an outside reader could not follow the document |
+| `/router:workplan` | turn the approved Design into `WORKPLAN.md` — steps, task breakdown, verification; you approve |
 | `/router:review` | strict, independent two-lens review of the landed code |
-| `/router:dispatch <id...>` | run tasks on quota-picked executors, concurrently, to gated diffs |
 | `/router:resume <id>` | send a failure back to that task's own executor session |
-| `/router:land <id...>` | merge PASSED dispatches into your working branch |
-| `/router:gate <id...>` | verify commits one at a time in your own checkout (queue mode) |
 | `/router:result <id>` | per-check verifier report and log tail for a run |
-| `/router:list` | tasks with their last status and whether a worktree remains |
+| `/router:list` | tasks with their last status and whether the task branch is still there |
 | `/router:models` | the resolved model-tier table (bundled default + overrides) |
 | `/router:usage` | cost vs an all-strongest-model baseline; `--routing` for routing evidence |
 | `/router:symbol` | out-of-context symbol index — locate code without reading whole files |
@@ -259,12 +293,32 @@ session. See also **[docs/quickstart.md](docs/quickstart.md)** and a runnable ta
 
 ## 🔒 Isolation & credentials
 
-- Executors run in fresh `git worktree`s under `.router/`, supervised with a wall timeout
-  and a stall watchdog; their output never enters the orchestrator's context, and no MCP
-  server from your session is inherited.
+The executor shares your checkout, so isolation is expressed in git and in permissions rather
+than in a separate directory:
+
+- **An exclusive lock on the checkout** for the whole run, taken *before the first write* and
+  held until the executor is dead. A second `/router:go` is turned away naming the holder, with
+  nothing changed. The lock's heartbeat runs in its own process, because verify commands block
+  the event loop and an in-process beat would go silent for exactly as long as the lock's
+  staleness window.
+- **Your uncommitted work is committed first**, with the file list and sha reported, before
+  anything moves. No `git stash` (a stash is detached from the branch, and a conflicting pop on
+  a failure path leaves your changes somewhere you have to be told about) and no `git clean`.
+- **Nothing destructive without asserting identity**: a reset only runs while the current branch
+  is exactly the task's branch and `base_sha` is still an ancestor of `HEAD`.
+- **Router never merges and never switches back.** The run ends telling you which branch you are
+  standing on.
+- Executors are supervised with a wall timeout and a stall watchdog; their output never enters
+  the orchestrator's context, and no MCP server from your session is inherited.
 - Codex uses its `workspace-write` sandbox. Claude runs in plain `acceptEdits` (never
-  `bypassPermissions`), and gets `Bash` **only** when the task declares a `verify`
-  command — the grant is that exact command plus its program+subcommand prefix, not a shell.
+  `bypassPermissions`). The `Bash` grant is an allowlist, not a shell: the task's own `verify`
+  command plus its program+subcommand prefix, and a narrow set of git subcommands
+  (`add`, `commit`, `status`, `diff`, `log`, `rev-parse`) so the executor can commit its own
+  work. `checkout`, `reset`, `rebase`, branch deletion and `push` are unreachable.
+- **An executor cannot touch `.router/`.** A nested `router` invocation refuses outright — a
+  reproduced failure, not a hypothetical: an executor given a task that changed `router new` ran
+  `router new --id smoke` to try its own work and wrote real orchestration state, invisible to
+  every gate because `.router/` is fully gitignored.
 - Executor CLIs receive only the login-session context needed for plan auth plus an
   explicitly configured provider key — never your full parent environment.
 - Every run ends with a delivery report (`gate_ran`, `scope_drift`, `escalate_review`); a
