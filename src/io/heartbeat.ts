@@ -37,9 +37,13 @@ export interface HeartbeatHandle {
 // parent check is the important one: a heartbeat that outlived its owner would keep a dead
 // holder's lock looking fresh forever, and nobody could ever reclaim it.
 //
-// Writes in place (no rename), so the lock keeps its inode and LockHandle's identity check
-// still holds. A reader that catches a torn write sees `corrupt`, which acquireLock already
-// re-reads and re-decides on before reclaiming anything.
+// Writes IN PLACE -- open 'r+', write, truncate -- for two reasons. The inode survives, so
+// LockHandle's identity check still holds; and there is no moment when the file is empty, which
+// `writeFileSync` would create by truncating on open. The narrowest window a reader can hit is
+// therefore a same-length mix of two timestamps rather than a zero-byte file.
+//
+// It still is a window. Readers must treat an unparseable lock as "re-read and decide again",
+// never as proof of staleness -- which is what acquireLock does before it reclaims anything.
 const CHILD_SOURCE = `
 const fs = require('node:fs');
 const [lockPath, token, intervalRaw, parentRaw] = process.argv.slice(1);
@@ -47,11 +51,24 @@ const interval = Number(intervalRaw);
 const parentPid = Number(parentRaw);
 function beat() {
   try { process.kill(parentPid, 0); } catch { process.exit(0); }
-  let stored;
-  try { stored = JSON.parse(fs.readFileSync(lockPath, 'utf8')); } catch { process.exit(0); }
-  if (stored === null || typeof stored !== 'object' || stored.ownerToken !== token) process.exit(0);
-  stored.beatAtMs = Date.now();
-  try { fs.writeFileSync(lockPath, JSON.stringify(stored) + '\\n'); } catch { process.exit(0); }
+  let fd;
+  try { fd = fs.openSync(lockPath, 'r+'); } catch { process.exit(0); }
+  try {
+    let stored;
+    try { stored = JSON.parse(fs.readFileSync(fd, 'utf8')); } catch { process.exit(0); }
+    if (stored === null || typeof stored !== 'object' || stored.ownerToken !== token) process.exit(0);
+    stored.beatAtMs = Date.now();
+    const data = Buffer.from(JSON.stringify(stored) + '\\n');
+    let offset = 0;
+    while (offset < data.length) {
+      const written = fs.writeSync(fd, data, offset, data.length - offset, offset);
+      if (written === 0) process.exit(0);
+      offset += written;
+    }
+    fs.ftruncateSync(fd, data.length);
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
 }
 beat();
 setInterval(beat, interval);

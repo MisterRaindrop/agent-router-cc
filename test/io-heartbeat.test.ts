@@ -19,8 +19,23 @@ function blockEventLoop(ms: number): void {
   spawnSync(process.execPath, ['-e', `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,${ms})`]);
 }
 
+/**
+ * The last beat, retrying past a torn read.
+ *
+ * The child writes in place rather than truncating, so the worst a reader sees is a same-length
+ * mix of two timestamps -- but that is still occasionally unparseable, and `readLock` reports
+ * unparseable as null by design. Retrying is what the production reader does too: acquireLock
+ * re-reads and re-decides before it reclaims anything, precisely so a transient torn read is
+ * never mistaken for a stale lock. A helper that dereferenced null here would make this suite
+ * flaky about a property the code already handles.
+ */
 function beatAt(path: string): number {
-  return readLock(path)!.beatAtMs;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const info = readLock(path);
+    if (info !== null) return info.beatAtMs;
+    blockEventLoop(5);
+  }
+  throw new Error(`lock at ${path} never parsed across 50 reads`);
 }
 
 async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
