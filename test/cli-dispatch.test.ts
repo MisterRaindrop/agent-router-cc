@@ -112,12 +112,17 @@ test('land refuses when there is no PASSED dispatch result', () => {
   }
 });
 
-test('dispatch rejects --max-parallel below one', () => {
+test('dispatch refuses --max-parallel, which no longer exists', () => {
   const dir = fx.initRepo();
   try {
+    router(dir, ['new', 'demo']);
     const d = router(dir, ['dispatch', 'demo', '--max-parallel', '0']);
-    assert.equal(d.code, 2, d.out);
-    assert.match(d.out, /--max-parallel must be an integer >= 1/);
+    assert.notEqual(d.code, 0);
+    assert.match(d.out, /--max-parallel was removed; router dispatches one task at a time/);
+    // Also refused for a value that used to be legal -- the flag is gone, not validated.
+    const two = router(dir, ['dispatch', 'demo', '--max-parallel', '2']);
+    assert.notEqual(two.code, 0);
+    assert.match(two.out, /--max-parallel was removed/);
   } finally {
     fx.cleanup(dir);
   }

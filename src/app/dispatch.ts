@@ -303,24 +303,19 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
 }
 
 /**
- * How many executor runs may be in flight for a batch of `count` tasks. The single
- * source of truth for the bound, so what a caller reports is what actually ran: an
- * explicit `--max-parallel 8` over two tasks is still a pool of two.
+ * Run a list of tasks ONE AT A TIME, in the given order.
+ *
+ * Concurrency is gone on purpose, and not because it cost anything to run: measured, the
+ * whole orchestration overhead was 0.26s against 393s of executor time. It cost the human.
+ * Several executors editing at once means tracking who changed what, in what order things
+ * merge, and whether merging them breaks each other -- and every result still needs reviewing
+ * one at a time, so the review, not the machine, was the bottleneck the parallelism fed.
+ *
+ * Each task is prepared immediately before it runs rather than all up front: under the branch
+ * model preparing a task takes the checkout, so preparing five would leave four tasks pointing
+ * at branches created from a HEAD that later tasks have already moved.
  */
-export function resolvePoolSize(count: number, maxParallel?: number): number {
-  const requested = Math.max(1, Math.floor(maxParallel ?? Math.min(count, 4)));
-  return Math.min(count, requested);
-}
-
-/**
- * Prepare every task serially, then supervise a bounded pool of executor runs.
- * Per-run faults are collected so no sibling process is orphaned by early rejection.
- */
-export async function dispatchTasks(
-  deps: DispatchDeps,
-  ids: readonly string[],
-  maxParallel?: number,
-): Promise<RunResult[]> {
+export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]): Promise<RunResult[]> {
   if (ids.length === 0) throw new Error('cannot dispatch an empty task list');
   const seen = new Set<string>();
   for (const id of ids) {
@@ -328,32 +323,17 @@ export async function dispatchTasks(
     seen.add(id);
   }
 
-  const prepared: PreparedRun[] = [];
-  try {
-    for (const id of ids) prepared.push(prepareRun(deps, id));
-  } catch (error) {
-    for (const prep of prepared) prep.status.terminal('cancelled');
-    throw error;
-  }
-  const results = new Array<RunResult>(ids.length);
+  const results: RunResult[] = [];
   const faults: { id: string; message: string }[] = [];
-  const poolSize = resolvePoolSize(ids.length, maxParallel);
-  let cursor = 0;
-
-  const worker = async (): Promise<void> => {
-    while (cursor < prepared.length) {
-      const index = cursor++;
-      try {
-        results[index] = await runPrepared(deps, prepared[index]!);
-      } catch (e) {
-        faults.push({ id: ids[index]!, message: e instanceof Error ? e.message : String(e) });
-      }
+  for (const id of ids) {
+    try {
+      results.push(await dispatchTask(deps, id));
+    } catch (e) {
+      faults.push({ id, message: e instanceof Error ? e.message : String(e) });
+      break; // serial: a failure means the checkout state is unknown, so do not start the next
     }
-  };
-
-  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  }
   if (faults.length > 0) {
-    faults.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
     throw new Error(`dispatch runs failed: ${faults.map((f) => `${f.id}: ${f.message}`).join('; ')}`);
   }
   return results;

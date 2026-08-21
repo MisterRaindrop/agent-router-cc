@@ -12,7 +12,7 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, resolvePoolSize, runPrepared } from '../src/app/dispatch.ts';
+import { dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
 
 const NODE = process.execPath;
 const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta.url));
@@ -266,14 +266,6 @@ test('prepareRun and runPrepared compose to the same dispatch result', async () 
   }
 });
 
-test('resolvePoolSize never exceeds the task count and never drops below one', () => {
-  assert.equal(resolvePoolSize(2), 2); // default caps at 4, so two tasks -> two
-  assert.equal(resolvePoolSize(9), 4);
-  assert.equal(resolvePoolSize(2, 8), 2); // a cap above the batch size is still the batch
-  assert.equal(resolvePoolSize(5, 2), 2);
-  assert.equal(resolvePoolSize(5, 0), 1); // a nonsensical cap still runs one at a time
-});
-
 test('dispatchTasks rejects duplicate ids before preparing worktrees', async () => {
   const { repo, paths, deps } = setup();
   try {
@@ -284,7 +276,7 @@ test('dispatchTasks rejects duplicate ids before preparing worktrees', async () 
   }
 });
 
-test('dispatchTasks with maxParallel 1 completes every task in input order', async () => {
+test('dispatchTasks completes every task in input order, one at a time', async () => {
   chmodSync(FAKE_SCOPED, 0o755);
   const { repo, paths, deps } = setup();
   const prev = process.env.ROUTER_CODEX_BIN;
@@ -293,9 +285,14 @@ test('dispatchTasks with maxParallel 1 completes every task in input order', asy
   try {
     stageScopedTask(paths, 'p1');
     stageScopedTask(paths, 'p2');
-    const results = await dispatchTasks(deps, ['p2', 'p1'], 1);
+    const results = await dispatchTasks(deps, ['p2', 'p1']);
     assert.deepEqual(results.map((result) => result.task_id), ['p2', 'p1']);
     assert.deepEqual(results.map((result) => result.verifier?.result), ['PASSED', 'PASSED']);
+    // Serial, not merely ordered: the second executor must not start before the first ended.
+    assert.ok(
+      Date.parse(results[1]!.started_at) >= Date.parse(results[0]!.ended_at),
+      `runs overlapped: ${results[0]!.started_at}..${results[0]!.ended_at} vs ${results[1]!.started_at}`,
+    );
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;

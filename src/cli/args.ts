@@ -25,7 +25,7 @@ const VALUE_FLAGS = new Set([
   'cost-usd',
   'wall',
   'model',
-  'max-parallel',
+  'max-parallel', // removed; still parsed so `dispatch` can reject it by name
   'keep-metrics',
   'settings',
   'statusline',

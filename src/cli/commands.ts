@@ -14,7 +14,7 @@ import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
-import { dispatchTask, dispatchTasks, resolvePoolSize, resumeTask } from '../app/dispatch.ts';
+import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
 import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
 import { runQueueGate } from '../app/gateQueue.ts';
 import { readLock } from '../io/lock.ts';
@@ -171,10 +171,10 @@ const newTask: Handler = (ctx) => {
 const dispatch: Handler = async (ctx) => {
   const deps = depsFor(ctx);
   const ids = requireIds(ctx);
-  const maxParallelText = flagStr(ctx.args.flags, 'max-parallel');
-  const maxParallel = maxParallelText === undefined ? undefined : Number(maxParallelText);
-  if (maxParallel !== undefined && (!Number.isInteger(maxParallel) || maxParallel < 1)) {
-    throw new CliError('--max-parallel must be an integer >= 1', 2);
+  // Rejected rather than ignored: silently accepting a flag that no longer does anything is
+  // how a caller ends up believing four executors ran when one did.
+  if (flagStr(ctx.args.flags, 'max-parallel') !== undefined) {
+    throw new CliError('--max-parallel was removed; router dispatches one task at a time', 2);
   }
   if (ids.length === 1) {
     const id = ids[0]!;
@@ -184,14 +184,12 @@ const dispatch: Handler = async (ctx) => {
     return v === 'PASSED' ? 0 : 1;
   }
 
-  const results = await dispatchTasks(deps, ids, maxParallel);
-  const parallel = resolvePoolSize(ids.length, maxParallel);
+  const results = await dispatchTasks(deps, ids);
   const passed = results.filter((result) => result.verifier?.result === 'PASSED').length;
   emit(
     ctx.json,
     {
       ok: passed === results.length,
-      parallel,
       results: results.map((result, index) => dispatchOutput(ids[index]!, result, false)),
     },
     () => [...results.map((result, index) => dispatchLine(ids[index]!, result)), `${passed}/${results.length} PASSED`].join('\n'),
@@ -849,7 +847,7 @@ export function helpText(): string {
     `router ${VERSION}\n\n` +
     `Usage: router <command> [options]\n\n` +
     `  new <id> [--title T]   author a task skeleton (edit allowed_globs + verify)\n` +
-    `  dispatch <id...>       run tasks concurrently on quota-picked executors to verified diffs\n` +
+    `  dispatch <id...>       run tasks one at a time on quota-picked executors to verified diffs\n` +
     `  resume <id> --feedback continue the prior executor session with feedback (no cold restart)\n` +
     `  land <id...>           merge PASSED dispatch diffs sequentially\n` +
     `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
@@ -863,6 +861,6 @@ export function helpText(): string {
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
-    `Flags: --json, --all, --routing, --limit, --id, --title, --run, --max-parallel <n>, --router-dir, --settings, --statusline, --dry-run\n`
+    `Flags: --json, --all, --routing, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`
   );
 }

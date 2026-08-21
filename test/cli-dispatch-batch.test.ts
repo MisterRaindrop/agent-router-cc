@@ -3,15 +3,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import * as fx from '../testkit/gitRepo.ts';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
-const FAKE_BARRIER = fileURLToPath(new URL('../testkit/fakeCodexBarrier.mjs', import.meta.url));
 const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const NODE = process.execPath;
 
@@ -56,26 +54,34 @@ ${apiKeyEnv ? `  api_key_env: ${apiKeyEnv}\n` : ''}verify: []
   );
 }
 
-test('batch dispatch overlaps executor runs and preserves input-ordered results', () => {
-  chmodSync(FAKE_BARRIER, 0o755);
+// Was 'batch dispatch overlaps executor runs'. Overlapping is exactly what was removed, so the
+// assertion is inverted: the runs must NOT overlap, proved from the recorded time windows rather
+// than from the absence of a flag.
+test('batch dispatch runs one task at a time, in input order', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
   const dir = setup();
-  const barrierDir = mkdtempSync(join(tmpdir(), 'router-barrier-'));
   try {
-    stageTask(dir, 'p1', 'ROUTER_TEST_BARRIER_DIR');
-    stageTask(dir, 'p2', 'ROUTER_TEST_BARRIER_DIR');
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
     const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
-      ROUTER_CODEX_BIN: FAKE_BARRIER,
+      ROUTER_CODEX_BIN: FAKE_SCOPED,
       ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
-      ROUTER_TEST_BARRIER_DIR: barrierDir,
     });
     assert.equal(d.code, 0, d.out);
     const out = JSON.parse(d.out) as {
       ok: boolean;
-      parallel: number;
+      parallel?: number;
       results: { id: string; verifier: string; delivery: string | null; delivery_header: string }[];
     };
     assert.equal(out.ok, true);
-    assert.equal(out.parallel, 2);
+    assert.equal(out.parallel, undefined, 'a pool size is still being reported');
+    const windows = ['p1', 'p2'].map((id) =>
+      JSON.parse(readFileSync(join(dir, '.router', 'tasks', id, 'runs', 'run-001', 'result.json'), 'utf8')),
+    );
+    assert.ok(
+      Date.parse(windows[1]!.started_at) >= Date.parse(windows[0]!.ended_at),
+      `runs overlapped: ${windows[0]!.started_at}..${windows[0]!.ended_at} vs ${windows[1]!.started_at}`,
+    );
     assert.deepEqual(out.results.map((result) => result.id), ['p1', 'p2']);
     assert.deepEqual(out.results.map((result) => result.verifier), ['PASSED', 'PASSED']);
     assert.deepEqual(out.results.map((result) => result.delivery), [null, null]);
@@ -89,7 +95,6 @@ test('batch dispatch overlaps executor runs and preserves input-ordered results'
     assert.equal(metrics.length, 2);
     assert.deepEqual(new Set(metrics.map((row: { task_id: string }) => row.task_id)), new Set(['p1', 'p2']));
   } finally {
-    rmSync(barrierDir, { recursive: true, force: true });
     fx.cleanup(dir);
   }
 });
@@ -116,20 +121,15 @@ test('batch dispatch keeps every task diff scoped to its own file', () => {
   }
 });
 
-// The reported pool has to be the pool that ran: asking for more parallelism than there
-// are tasks must not report a concurrency the batch never had.
-test('batch dispatch reports the pool it actually used, not the requested cap', () => {
-  chmodSync(FAKE_SCOPED, 0o755);
+// Rejected by name rather than ignored. Silently accepting a dead flag is how a caller ends up
+// believing four executors ran when one did -- and this flag used to mean exactly that.
+test('--max-parallel is refused, naming itself', () => {
   const dir = setup();
   try {
     stageTask(dir, 'p1');
-    stageTask(dir, 'p2');
-    const d = router(dir, ['dispatch', 'p1', 'p2', '--max-parallel', '8', '--json'], {
-      ROUTER_CODEX_BIN: FAKE_SCOPED,
-      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
-    });
-    assert.equal(d.code, 0, d.out);
-    assert.equal((JSON.parse(d.out) as { parallel: number }).parallel, 2);
+    const d = router(dir, ['dispatch', 'p1', '--max-parallel', '8']);
+    assert.notEqual(d.code, 0);
+    assert.match(d.out, /--max-parallel was removed; router dispatches one task at a time/);
   } finally {
     fx.cleanup(dir);
   }
