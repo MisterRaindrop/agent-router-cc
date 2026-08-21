@@ -22,6 +22,12 @@ export interface LockInfo {
 
 export interface LockHandle {
   path: string;
+  /**
+   * The token that proves this handle still owns the file. Exposed so the out-of-process
+   * heartbeat (io/heartbeat.ts) can apply the same ownership rule release() does: beat only
+   * while the file still names us, never merely because the path exists.
+   */
+  ownerToken: string;
   release(): void;
   heartbeat(): void;
 }
@@ -296,6 +302,7 @@ export function acquireLock(
     let released = false;
     return {
       path,
+      ownerToken: token,
       heartbeat(): void {
         if (released) return;
         let heartbeatFd: number;

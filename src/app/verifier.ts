@@ -26,6 +26,18 @@ import { runCommand } from '../io/proc.ts';
 const DEFAULT_TEST_GLOBS = ['test/**', 'tests/**', '**/*.test.*', '**/*_test.*'];
 const DEFAULT_MAX_CHANGED_LINES = 400;
 
+/**
+ * Hard ceiling on ONE verify command, applied whether or not the caller asked for a timeout.
+ *
+ * It used to be opt-in, which was survivable while verification ran in a throwaway worktree:
+ * a hung build wedged a directory nobody else wanted. Under the branch model the same hang
+ * holds the exclusive lock on the user's own checkout, so `go` would sit on it forever with no
+ * upper bound. 90 minutes is far above any real gate here (measured t_exec 393s for a whole
+ * executor session) and far below "forever"; a project that genuinely needs longer sets
+ * buildTimeoutMs explicitly.
+ */
+const DEFAULT_BUILD_TIMEOUT_MS = 90 * 60 * 1000;
+
 function fail(id: string, detail: string, rc?: number): VerifierCheck {
   return rc !== undefined ? { id, ok: false, detail, rc } : { id, ok: false, detail };
 }
@@ -131,7 +143,7 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
     const r = runCommand(argv, {
       cwd: req.worktreeDir,
       env: req.env,
-      ...(req.buildTimeoutMs !== undefined ? { timeoutMs: req.buildTimeoutMs } : {}),
+      timeoutMs: req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
     });
     const label = req.verify.length > 1 ? `verify[${i}]` : 'verify';
     if (r.spawnError !== null) {
@@ -139,8 +151,11 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
       return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
     }
     if (r.timedOut) {
-      checks.push(fail(label, 'timed out'));
-      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+      const limitMs = req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
+      checks.push(fail(label, `timed out after ${Math.round(limitMs / 1000)}s: ${argv.join(' ')}`));
+      // timed_out, not just FAILED: the command never returned a verdict, so this says nothing
+      // about the change itself. The caller reports it as unverified rather than as a defect.
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines, timed_out: true };
     }
     if (r.rc !== 0) {
       checks.push(fail(label, `${argv.join(' ')} (rc ${r.rc})`, r.rc ?? undefined));

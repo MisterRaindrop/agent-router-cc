@@ -154,6 +154,12 @@ export interface VerifierReport {
   result: 'PASSED' | 'FAILED';
   checks: VerifierCheck[];
   changed_lines?: number;
+  /**
+   * A verify command hit the hard timeout. Still a FAILED report -- nothing may land on it --
+   * but the distinction matters when reporting: a timeout proves nothing about the change,
+   * so it is `unverified` in assurance terms, not evidence that the code is broken.
+   */
+  timed_out?: boolean;
 }
 
 // -- Run result + metrics ------------------------------------------------------
