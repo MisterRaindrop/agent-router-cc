@@ -59,7 +59,12 @@ export function runId(n: number): string {
   return `run-${String(n).padStart(3, '0')}`;
 }
 
-/** Branch name for a run, e.g. "router/<id>/run-001". @deprecated use taskBranch(). */
+/**
+ * Branch name for a run, e.g. "router/<id>/run-001".
+ *
+ * @deprecated The run segment named a constant; use taskBranch(). Kept for the rollback window
+ * in DEPRECATIONS.md.
+ */
 export function runBranch(id: string, run: string): string {
   return `router/${id}/${run}`;
 }

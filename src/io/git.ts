@@ -231,7 +231,27 @@ export function applyCheck(cwd: string, patch: string): boolean {
   return tryGit(cwd, ['apply', '--check', '-'], patch).ok;
 }
 
+/**
+ * Create a per-task worktree on a new branch.
+ *
+ * @deprecated Executors work in the repository root on a `router/<id>` branch. Kept only for
+ * the rollback window in DEPRECATIONS.md, and guarded so it cannot be reached by accident: two
+ * live execution paths that behave differently is precisely the bug that is hard to find later.
+ * `worktreeAddDetached` is NOT deprecated -- the verifier's throwaway patch-check worktree is a
+ * different thing and stays.
+ */
 export function worktreeAdd(cwd: string, path: string, branch: string, base: string): void {
+  // An escape hatch rather than dead code, so "kept for one version" means something you can
+  // actually do: set ROUTER_ALLOW_WORKTREE_MODE=1. Refusing by default is the point -- a
+  // deprecated path that still runs silently gives you two execution models with different
+  // behaviour and no way to tell which one produced a result.
+  if (process.env.ROUTER_ALLOW_WORKTREE_MODE !== '1') {
+    throw new Error(
+      'worktreeAdd is deprecated: executors run in the repository root on a router/<id> branch. ' +
+        'Use createBranchStrict. To re-enable during the rollback window, set ' +
+        'ROUTER_ALLOW_WORKTREE_MODE=1 (see DEPRECATIONS.md).',
+    );
+  }
   git(cwd, ['worktree', 'add', '-b', branch, '--', path, base]);
 }
 

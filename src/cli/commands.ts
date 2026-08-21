@@ -72,7 +72,10 @@ function depsFor(ctx: Ctx): Deps {
   const found = explicit ?? findRouterDir(ctx.cwd);
   const rd = found ?? join(ctx.cwd, ROUTER_DIR);
   const paths = routerPaths(rd);
-  for (const d of [paths.root, paths.tasksDir, paths.worktreesDir]) {
+  // Not worktreesDir: nothing creates a per-task worktree any more, and scaffolding an empty
+  // directory that will stay empty is the kind of leftover that reads as "there are live runs
+  // in here". The deprecated path creates its own if it is ever re-enabled.
+  for (const d of [paths.root, paths.tasksDir]) {
     if (!existsSync(d)) mkdirSync(d, { recursive: true });
   }
   const gi = join(paths.root, '.gitignore');

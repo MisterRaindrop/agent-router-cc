@@ -25,6 +25,7 @@ import {
   TaskIdentityError,
   uncommittedSourceFiles,
   worktreeAdd,
+  worktreeAddDetached,
   worktreeRemove,
 } from '../src/io/git.ts';
 import type { DiffEntry } from '../src/domain/types.ts';
@@ -167,9 +168,11 @@ test('rawDiff + applyCheck: clean patch applies, garbage does not', () => {
     const patch = rawDiff(dir, base, head);
     assert.ok(patch.includes('two'));
 
-    // In a fresh worktree checked out at base, the patch applies cleanly.
+    // A throwaway detached checkout at base -- the same scratch space the verifier uses for
+    // exactly this question. It needs no branch, so it does not go through the deprecated
+    // per-task worktree helper.
     const wt = join(dir, '..', `wt-${Date.now()}`);
-    worktreeAdd(dir, wt, 'router/test/run-001', base);
+    worktreeAddDetached(dir, wt, base);
     try {
       assert.equal(applyCheck(wt, patch), true);
       assert.equal(applyCheck(wt, 'not a patch at all\n@@ bogus @@\n'), false);
@@ -220,18 +223,34 @@ test('mergeAbort restores the working tree after a conflict (#11)', async () => 
   }
 });
 
-test('worktreeAdd creates a branch; worktreeRemove cleans up', () => {
+// Was 'worktreeAdd creates a branch'. Per-task worktrees are deprecated and refused by
+// default -- the assertion is now that the refusal happens and names its escape hatch, because
+// a deprecated path that still runs silently leaves two execution models with different
+// behaviour and no way to tell which produced a result.
+test('worktreeAdd refuses by default and names its escape hatch', () => {
   const dir = fx.initRepo();
+  const previous = process.env.ROUTER_ALLOW_WORKTREE_MODE;
+  delete process.env.ROUTER_ALLOW_WORKTREE_MODE;
   try {
     fx.write(dir, 'a.txt', 'x\n');
     const base = fx.addCommit(dir, 'base');
     const wt = join(dir, '..', `wt2-${Date.now()}`);
-    worktreeAdd(dir, wt, 'router/t/run-001', base);
+    assert.throws(() => worktreeAdd(dir, wt, 'router/t', base), /deprecated/);
+    assert.throws(() => worktreeAdd(dir, wt, 'router/t', base), /ROUTER_ALLOW_WORKTREE_MODE=1/);
+    assert.equal(existsSync(wt), false);
+    assert.equal(branchExists(dir, 'router/t'), false);
+
+    // And the hatch actually works, so "kept for one version" is a thing you can do rather
+    // than a comment.
+    process.env.ROUTER_ALLOW_WORKTREE_MODE = '1';
+    worktreeAdd(dir, wt, 'router/t', base);
     assert.ok(existsSync(join(wt, 'a.txt')));
-    assert.equal(branchExists(dir, 'router/t/run-001'), true);
+    assert.equal(branchExists(dir, 'router/t'), true);
     worktreeRemove(dir, wt);
     assert.equal(existsSync(wt), false);
   } finally {
+    if (previous === undefined) delete process.env.ROUTER_ALLOW_WORKTREE_MODE;
+    else process.env.ROUTER_ALLOW_WORKTREE_MODE = previous;
     fx.cleanup(dir);
   }
 });
