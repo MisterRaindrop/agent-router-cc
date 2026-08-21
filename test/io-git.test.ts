@@ -456,3 +456,50 @@ test('submoduleDirty separates submodule content dirt from our own changes', () 
     fx.cleanup(outer);
   }
 });
+
+// A real dispatch found this, and it broke every project that gitignores `.router` -- which is
+// every project that has ever run router. `git add -A -- . ':(exclude,glob).router'` stages the
+// correct files and then exits 1, because naming a path in a pathspec makes it "explicitly
+// listed", and an explicitly listed ignored path is an error. `git status` has no such rule, so
+// the check deciding whether to rescue passed and the failure landed on the write.
+test('rescueCommit works when the excluded path is ALSO gitignored', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'a.txt', 'base\n');
+    fx.write(dir, '.gitignore', '.router/\n');
+    fx.addCommit(dir, 'base');
+
+    fx.write(dir, 'NOTES.md', 'work in progress\n');
+    fx.write(dir, '.router/result.json', '{"orchestration":"state"}\n');
+
+    const rescue = rescueCommit(dir, 'router: rescue', ['.router']);
+    assert.ok(rescue !== null, 'the rescue failed outright');
+    assert.deepEqual(rescue.files, ['NOTES.md']);
+    // Router's own state stayed out of the user's history either way.
+    assert.equal(fx.git(dir, ['ls-files', '.router']).trim(), '');
+    assert.deepEqual(uncommittedSourceFiles(dir, ['.router']), []);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The same, with `.router` NOT ignored: the exclusion has to do real work here, because nothing
+// else keeps orchestration state out of a commit made on the user's behalf.
+test('rescueCommit excludes router state even when nothing ignores it', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'a.txt', 'base\n');
+    fx.addCommit(dir, 'base');
+    fx.write(dir, 'NOTES.md', 'work in progress\n');
+    fx.write(dir, '.router/result.json', '{"orchestration":"state"}\n');
+
+    const rescue = rescueCommit(dir, 'router: rescue', ['.router']);
+    assert.ok(rescue !== null);
+    assert.deepEqual(rescue.files, ['NOTES.md']);
+    assert.equal(fx.git(dir, ['ls-files', '.router']).trim(), '');
+    // Still on disk, just not in the commit.
+    assert.ok(existsSync(join(dir, '.router', 'result.json')));
+  } finally {
+    fx.cleanup(dir);
+  }
+});

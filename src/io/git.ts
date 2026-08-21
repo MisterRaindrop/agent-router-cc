@@ -455,7 +455,22 @@ export function rescueCommit(
 ): { sha: string; files: string[] } | null {
   const before = uncommittedSourceFiles(cwd, exclude);
   if (before.length === 0) return null;
-  git(cwd, ['add', '-A', ...pathspec(exclude)]);
+  // Stage everything, then UNSTAGE the exclusions -- rather than handing `git add` an
+  // exclusion pathspec, which is what this used to do.
+  //
+  // Found by a real end-to-end dispatch, not by reasoning: `git add -A -- .
+  // ':(exclude,glob).router'` **exits 1** when `.router` is also matched by a .gitignore rule.
+  // Git staged exactly the right files and then failed anyway, because naming a path in a
+  // pathspec at all -- even to exclude it -- makes it "explicitly listed", and an explicitly
+  // listed ignored path is an error. So the dispatch aborted on every project that gitignores
+  // `.router`, which is every project that has ever run router. `git status` has no such rule,
+  // which is why the check that decides *whether* to rescue was unaffected and the failure
+  // landed on the write.
+  //
+  // Reset-after-add has neither problem: it exits 0 whether or not the path is ignored, stages
+  // the identical set, and is a no-op when nothing from the exclusions was staged.
+  git(cwd, ['add', '-A']);
+  for (const path of exclude) tryGit(cwd, ['reset', '-q', '--', path]);
   const staged = git(cwd, ['diff', '--cached', '--name-only', '-z']);
   const files = splitNul(staged);
   if (files.length === 0) return null; // e.g. only submodule content was dirty

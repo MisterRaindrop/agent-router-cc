@@ -895,7 +895,7 @@ export function helpText(): string {
     `  land <id...>           merge PASSED dispatch diffs sequentially\n` +
     `  gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)\n` +
     `  result <id>            show the verifier report + log tail\n` +
-    `  list                   list tasks with last status + whether a worktree remains\n` +
+    `  list                   list tasks with last status + whether the task branch remains\n` +
     `  plans                  list .router/plans/<id> artifacts: revision, stage, critique round, decisions, lock\n` +
     `  usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches\n` +
     `  orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript\n` +

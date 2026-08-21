@@ -9925,7 +9925,8 @@ function uncommittedSourceFiles(cwd, exclude = []) {
 function rescueCommit(cwd, message, exclude = []) {
   const before = uncommittedSourceFiles(cwd, exclude);
   if (before.length === 0) return null;
-  git(cwd, ["add", "-A", ...pathspec(exclude)]);
+  git(cwd, ["add", "-A"]);
+  for (const path of exclude) tryGit(cwd, ["reset", "-q", "--", path]);
   const staged = git(cwd, ["diff", "--cached", "--name-only", "-z"]);
   const files = splitNul(staged);
   if (files.length === 0) return null;
@@ -14675,7 +14676,7 @@ Usage: router <command> [options]
   land <id...>           merge PASSED dispatch diffs sequentially
   gate <id...> [--status] verify dispatched commits in the real checkout (serial queue)
   result <id>            show the verifier report + log tail
-  list                   list tasks with last status + whether a worktree remains
+  list                   list tasks with last status + whether the task branch remains
   plans                  list .router/plans/<id> artifacts: revision, stage, critique round, decisions, lock
   usage [--all] [--routing] token/cost usage, or routing evidence from recent dispatches
   orchestrator-usage --plan <id> --since <iso>  record main-model usage from a Claude transcript
