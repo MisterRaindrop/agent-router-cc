@@ -9,6 +9,7 @@ import { dump, load, JSON_SCHEMA } from 'js-yaml';
 import { ROUTER_DIR, VERSION } from '../domain/constants.ts';
 import type { RunResult, RunStatus } from '../domain/types.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
+import { EXECUTOR_SANDBOX_ENV } from '../io/env.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
 import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
 import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
@@ -46,7 +47,27 @@ interface Deps {
 
 // Auto-scaffold: no `init` needed. If no .router is found up-tree, create one at the
 // cwd; `.router/` is fully gitignored so router state never pollutes the repo.
+//
+// Except from inside an executor, where every path through here is refused. This is the
+// enforcement for "the executor must not write real orchestration state", and it has to live
+// in the CLI because nothing else can reach it: the guard-router-state hook inspects
+// Write/Edit file paths, so it sees neither a Bash invocation nor codex at all.
+//
+// The reachable case, reproduced before this check existed: give an executor a task that
+// changes `router new`, and it runs `router new --id smoke` to try its own work. Under the
+// branch model its cwd IS the repo root, so `.router/` resolves to the real state directory
+// and `.router/tasks/smoke/` gets written. `.router/.gitignore` is `*`, so no gate ever sees
+// it. Refusing the whole verb -- read and write -- is deliberate: the CLI is the
+// orchestrator's instrument, the executor works through files, git and its own gate, and one
+// rule cannot be half-bypassed the way an allowlist of safe verbs could be.
 function depsFor(ctx: Ctx): Deps {
+  if ((process.env[EXECUTOR_SANDBOX_ENV] ?? '') !== '') {
+    throw new CliError(
+      `refusing to touch router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). ` +
+        `Orchestration state belongs to the dispatching session; work through files, git and your gate.`,
+      2,
+    );
+  }
   const explicit = flagStr(ctx.args.flags, 'router-dir');
   const found = explicit ?? findRouterDir(ctx.cwd);
   const rd = found ?? join(ctx.cwd, ROUTER_DIR);

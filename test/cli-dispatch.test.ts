@@ -336,3 +336,47 @@ test('dispatch --json reports verifier null when the gate never ran', () => {
     fx.cleanup(dir);
   }
 });
+
+// Fault-injection case 8h. This was a CONFIRMED reproduction before the guard existed, not a
+// hypothetical: an executor given a task that changes `router new` ran `router new --id smoke`
+// to try its own work, and under the branch model its cwd is the repo root, so it wrote the
+// real `.router/tasks/smoke/`. `.router/.gitignore` is `*`, so no gate would ever have seen it.
+test('an executor cannot touch real router state (8h)', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  try {
+    // The orchestrator scaffolds real state, exactly as a live run would have.
+    assert.equal(router(dir, ['new', 'real-task', '--title', 'Real']).code, 0);
+    assert.ok(existsSync(join(dir, '.router/tasks/real-task/task.yaml')));
+
+    const sandboxed = { ROUTER_EXECUTOR_SANDBOX: '1' };
+    const smoke = router(dir, ['new', 'smoke', '--title', 'Smoke'], sandboxed);
+    assert.notEqual(smoke.code, 0);
+    assert.match(smoke.out, /refusing to touch router state from inside an executor/);
+    assert.match(smoke.out, /ROUTER_EXECUTOR_SANDBOX/);
+    assert.ok(!existsSync(join(dir, '.router/tasks/smoke')), 'the executor wrote real task state');
+
+    // --router-dir must not be a way around it, and neither must the symbol index, which
+    // writes .router/symbols.
+    for (const argv of [
+      ['new', 'smoke2', '--router-dir', join(dir, '.router')],
+      ['symbol', 'index', 'src'],
+      ['dispatch', 'real-task'],
+      ['result', 'real-task'],
+    ]) {
+      const r = router(dir, argv, sandboxed);
+      assert.notEqual(r.code, 0, `${argv.join(' ')} was allowed`);
+      assert.match(r.out, /refusing to touch router state from inside an executor/);
+    }
+    assert.ok(!existsSync(join(dir, '.router/tasks/smoke2')));
+    assert.ok(!existsSync(join(dir, '.router/symbols')));
+
+    // And the orchestrator itself is unaffected: same verb, no flag, real state still readable.
+    const asOrchestrator = router(dir, ['list', '--json']);
+    assert.equal(asOrchestrator.code, 0, asOrchestrator.out);
+    assert.match(asOrchestrator.out, /real-task/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
