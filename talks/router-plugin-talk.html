@@ -203,7 +203,7 @@
     <!-- 1 — TITLE -->
     <section class="slide active">
       <div class="slide-inner">
-        <div class="eyebrow">CLAUDE CODE 插件 · v0.8.3 · BETA</div>
+        <div class="eyebrow">CLAUDE CODE 插件 · v0.8.5 · BETA</div>
         <div class="wordmark">router<span>.</span></div>
         <p class="lede">把编码子任务路由到刚好够用的最便宜模型 —— <b style="color:var(--text)">Opus 只做规划、复审、验证与合并</b>,便宜的执行器负责写代码。</p>
         <div class="terminal" style="max-width:560px">
@@ -211,7 +211,7 @@
           <pre><span class="p">$</span> <span class="c">/router:go</span><span class="cursor"></span></pre>
         </div>
         <footer class="meta-row">
-          <span>204 次提交</span><span>6,647 行核心代码</span><span>44 个测试文件</span><span>2026-07-09 起</span>
+          <span>222 次提交</span><span>6,662 行核心代码</span><span>44 个测试文件</span><span>2026-07-09 起</span>
         </footer>
       </div>
       <div class="hint">← → 或空格键翻页 · F 全屏</div>
@@ -352,135 +352,256 @@
         <h1 class="headline">一次运行的形状</h1>
         <div class="figure">
           <figure>
-            <svg viewBox="0 0 1440 250" role="img" aria-label="规划、可选的对抗式复审、router go 拆包与执行、机械门禁、Opus 复审与真实验证、land 合并、可选的独立复审，中间在三处暂停等待人确认。">
+            <svg viewBox="0 0 1440 380" role="img" aria-label="日常路径：规划、router go 拆包、dispatch 执行、机械门禁、Opus 复审与真实验证、land 合并、可选的独立复审，三处暂停等待人确认；大特性可选支线：design、design-review、plan，批准的 Plan 由 go 逐字执行并跳过第一处暂停。">
               <defs>
                 <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                   <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
                 </marker>
               </defs>
               <g font-family="ui-monospace,monospace" font-size="12.5">
-                <!-- boxes -->
+                <!-- optional design branch (top row) -->
+                <text x="115" y="30" fill="var(--accent)" font-size="11.5" font-weight="700">大特性支线(可选 · 是否走,由你决定,router 从不判断任务大小)</text>
+                <g>
+                  <rect x="115" y="44" width="170" height="80" rx="10" fill="var(--bg-inset)" stroke="var(--accent)" stroke-dasharray="5 4"/>
+                  <text x="200" y="76" text-anchor="middle" fill="var(--accent)">/router:design</text>
+                  <text x="200" y="96" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">DESIGN.md 逐节确认</text>
+
+                  <rect x="325" y="44" width="190" height="80" rx="10" fill="var(--bg-inset)" stroke="var(--accent)" stroke-dasharray="5 4"/>
+                  <text x="420" y="70" text-anchor="middle" fill="var(--accent)">/router:design-review</text>
+                  <text x="420" y="88" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">对抗审核 · 可选多轮</text>
+                  <text x="420" y="104" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">每条异议由你裁决</text>
+
+                  <rect x="555" y="44" width="170" height="80" rx="10" fill="var(--bg-inset)" stroke="var(--accent)" stroke-dasharray="5 4"/>
+                  <text x="640" y="76" text-anchor="middle" fill="var(--accent)">/router:plan</text>
+                  <text x="640" y="96" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">PLAN.md 与设计版本绑定</text>
+                </g>
+                <!-- main row -->
                 <g id="boxes">
-                  <rect x="20" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
-                  <text x="95" y="130" text-anchor="middle" fill="currentColor">规划</text>
-                  <text x="95" y="150" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">你 + Opus</text>
+                  <rect x="20" y="180" width="170" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="105" y="220" text-anchor="middle" fill="currentColor">规划</text>
+                  <text x="105" y="240" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">你 + Opus 对话</text>
 
-                  <rect x="194" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
-                  <text x="269" y="126" text-anchor="middle" fill="currentColor">/router:spec</text>
-                  <text x="269" y="144" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">可选</text>
-                  <text x="269" y="160" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">对抗式复审</text>
+                  <rect x="210" y="180" width="170" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                  <text x="295" y="216" text-anchor="middle" fill="var(--accent)" font-weight="700">/router:go</text>
+                  <text x="295" y="236" text-anchor="middle" fill="var(--accent)" font-size="11">拆包 · 或逐字执行 Plan</text>
 
-                  <rect x="368" y="90" width="150" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
-                  <text x="443" y="130" text-anchor="middle" fill="var(--accent)" font-weight="700">/router:go</text>
-                  <text x="443" y="150" text-anchor="middle" fill="var(--accent)" font-size="11">拆包</text>
+                  <rect x="400" y="180" width="170" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="485" y="212" text-anchor="middle" fill="currentColor">dispatch</text>
+                  <text x="485" y="232" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">执行器 · 隔离 worktree</text>
+                  <text x="485" y="248" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">独立包并发</text>
 
-                  <rect x="542" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
-                  <text x="617" y="126" text-anchor="middle" fill="currentColor">dispatch</text>
-                  <text x="617" y="144" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">执行器</text>
-                  <text x="617" y="160" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">隔离 worktree</text>
+                  <rect x="590" y="180" width="170" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="675" y="220" text-anchor="middle" fill="currentColor">机械门禁</text>
+                  <text x="675" y="240" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">环境无关 · 五道</text>
 
-                  <rect x="716" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
-                  <text x="791" y="130" text-anchor="middle" fill="currentColor">机械门禁</text>
-                  <text x="791" y="150" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">环境无关</text>
+                  <rect x="780" y="180" width="170" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                  <text x="865" y="216" text-anchor="middle" fill="var(--accent)" font-weight="700">Opus</text>
+                  <text x="865" y="236" text-anchor="middle" fill="var(--accent)" font-size="11">复审 + 真实验证</text>
 
-                  <rect x="890" y="90" width="150" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
-                  <text x="965" y="122" text-anchor="middle" fill="var(--accent)" font-weight="700">Opus</text>
-                  <text x="965" y="140" text-anchor="middle" fill="var(--accent)" font-size="11">复审 + 真实验证</text>
+                  <rect x="970" y="180" width="170" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
+                  <text x="1055" y="216" text-anchor="middle" fill="var(--accent)" font-weight="700">land</text>
+                  <text x="1055" y="236" text-anchor="middle" fill="var(--accent)" font-size="11">合并进你的分支</text>
 
-                  <rect x="1064" y="90" width="150" height="94" rx="10" fill="var(--accent-soft)" stroke="var(--accent)"/>
-                  <text x="1139" y="130" text-anchor="middle" fill="var(--accent)" font-weight="700">land</text>
-                  <text x="1139" y="150" text-anchor="middle" fill="var(--accent)" font-size="11">合并进你的分支</text>
-
-                  <rect x="1238" y="90" width="150" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
-                  <text x="1313" y="126" text-anchor="middle" fill="currentColor">/router:review</text>
-                  <text x="1313" y="144" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">可选</text>
-                  <text x="1313" y="160" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">独立复审</text>
+                  <rect x="1160" y="180" width="170" height="94" rx="10" fill="var(--bg-inset)" stroke="currentColor" stroke-opacity=".45"/>
+                  <text x="1245" y="216" text-anchor="middle" fill="currentColor">/router:review</text>
+                  <text x="1245" y="236" text-anchor="middle" fill="currentColor" opacity=".55" font-size="11">可选 · 独立复审</text>
                 </g>
-                <!-- arrows -->
+                <!-- main arrows -->
                 <g stroke="currentColor" stroke-opacity=".6">
-                  <line x1="170" y1="137" x2="194" y2="137" marker-end="url(#ar2)"/>
-                  <line x1="344" y1="137" x2="368" y2="137" marker-end="url(#ar2)"/>
-                  <line x1="518" y1="137" x2="542" y2="137" marker-end="url(#ar2)"/>
-                  <line x1="692" y1="137" x2="716" y2="137" marker-end="url(#ar2)"/>
-                  <line x1="866" y1="137" x2="890" y2="137" marker-end="url(#ar2)"/>
-                  <line x1="1040" y1="137" x2="1064" y2="137" marker-end="url(#ar2)"/>
-                  <line x1="1214" y1="137" x2="1238" y2="137" marker-end="url(#ar2)"/>
+                  <line x1="190" y1="227" x2="210" y2="227" marker-end="url(#ar2)"/>
+                  <line x1="380" y1="227" x2="400" y2="227" marker-end="url(#ar2)"/>
+                  <line x1="570" y1="227" x2="590" y2="227" marker-end="url(#ar2)"/>
+                  <line x1="760" y1="227" x2="780" y2="227" marker-end="url(#ar2)"/>
+                  <line x1="950" y1="227" x2="970" y2="227" marker-end="url(#ar2)"/>
+                  <line x1="1140" y1="227" x2="1160" y2="227" marker-end="url(#ar2)"/>
                 </g>
+                <!-- branch arrows -->
+                <g stroke="var(--accent)" stroke-opacity=".75" stroke-dasharray="5 4">
+                  <line x1="105" y1="180" x2="160" y2="124" marker-end="url(#ar2)"/>
+                  <line x1="285" y1="84" x2="325" y2="84" marker-end="url(#ar2)"/>
+                  <line x1="515" y1="84" x2="555" y2="84" marker-end="url(#ar2)"/>
+                  <line x1="640" y1="124" x2="310" y2="180" marker-end="url(#ar2)"/>
+                </g>
+                <text x="540" y="168" text-anchor="middle" fill="var(--accent)" font-size="11">批准的 Plan → go 逐字执行(跳过 ①)</text>
               </g>
               <!-- pause flags -->
               <g font-family="ui-monospace,monospace" font-size="12" fill="var(--fail)">
-                <text x="443" y="60" text-anchor="middle" font-weight="700">① 确认清单</text>
-                <line x1="443" y1="68" x2="443" y2="88" stroke="var(--fail)"/>
-                <text x="617" y="40" text-anchor="middle" font-weight="700">② 不清晰的任务,Opus 亲自做</text>
-                <line x1="617" y1="48" x2="617" y2="88" stroke="var(--fail)"/>
-                <text x="1102" y="60" text-anchor="middle" font-weight="700">③ 批准合并</text>
-                <line x1="1102" y1="68" x2="1102" y2="88" stroke="var(--fail)"/>
+                <text x="295" y="330" text-anchor="middle" font-weight="700">① 确认拆分清单</text>
+                <line x1="295" y1="308" x2="295" y2="276" stroke="var(--fail)"/>
+                <text x="485" y="356" text-anchor="middle" font-weight="700">② 不清晰的任务,Opus 亲自做</text>
+                <line x1="485" y1="336" x2="485" y2="276" stroke="var(--fail)"/>
+                <text x="1055" y="330" text-anchor="middle" font-weight="700">③ 批准合并</text>
+                <line x1="1055" y1="308" x2="1055" y2="276" stroke="var(--fail)"/>
               </g>
             </svg>
-            <figcaption><b style="color:var(--text)">/router:go</b> 只在三处暂停:① 确认任务分解 ② 需要真判断的任务,Opus 亲自和你一起做,不丢给便宜模型 ③ 合并前请你批准。中间每个明确任务,全流程自动跑完。</figcaption>
+            <figcaption>日常任务走下排:<b style="color:var(--text)">/router:go</b> 只在三处暂停 —— ① 确认任务分解 ② 需要真判断的任务,Opus 亲自和你一起做,不丢给便宜模型 ③ 合并前请你批准。大特性由你(而非 router)决定走上排支线:design → design-review(可选)→ plan,每个关口都由你批准;批准的 Plan 进入 go 时<b style="color:var(--text)">逐字执行、跳过 ①</b> —— 包清单在 plan 阶段已经确认过,不再问第二遍。</figcaption>
           </figure>
         </div>
       </div>
     </section>
 
-    <!-- SPEC — ADVERSARIAL PLAN REVIEW -->
-    <section class="slide wide">
+    <!-- ORCH 1 — TASK CONTRACT: TIER VS RISK -->
+    <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">06 · Spec · 约束规则</div>
-        <h1 class="headline">Spec:对抗式计划复审,十条硬规则立住它</h1>
-        <p class="sub">动手写代码之前,让一个独立模型攻击<b style="color:var(--text)">方案本身</b>——对不对、藏着什么风险、有没有更简单的路子。审的不是"任务怎么拆"(那是 go 的事)。reviewer 被要求默认怀疑、逐条给出 <span class="mono" style="color:var(--accent)">{severity, argument, suggestion}</span>,方案真没问题就明说,不许硬凑意见。</p>
-        <div class="grid2">
-          <div class="card">
-            <h3>机制约束</h3>
-            <ul class="dims">
-              <li><span class="k">01</span><b>不审自己的计划</b> —— 换一个独立模型(优先非 Claude,如 codex);独立性抓的就是自我复审共享的盲区</li>
-              <li><span class="k">02</span><b>批评逐字打印,人是唯一裁判</b> —— 不替你判哪条成立,不因 reviewer 一句话偷偷改计划;没有自动收敛,审几轮由你定</li>
-              <li><span class="k">03</span><b>后台运行 + 完整落盘 + 防截断</b> —— 复审要几分钟,绝不阻塞会话;输出截断就续跑,半份批评绝不当完整呈现</li>
-              <li><span class="k">04</span><b>plan_id 命名空间 + spec.lock</b> —— reviewer 读到的 plan_id 不符必须拒审,防"对错的计划做一次无声复审";两个会话不许交错审同一份计划</li>
-              <li><span class="k">05</span><b>跨轮 resume 同一个 reviewer</b> —— 下一轮只发变更;它记得上轮的 objection,能追问"第 2 条解决没"</li>
-            </ul>
-          </div>
-          <div class="card">
-            <h3>判断与产物约束</h3>
-            <ul class="dims">
-              <li><span class="k">06</span><b>风险只升不降</b> —— 拿不准就升档;绝不为了少跑检查而降档</li>
-              <li><span class="k">07</span><b>覆盖不了的失败模式,标 unverified</b> —— 不许造一个假单测把缺口装扮成 pass;Known Limits 摆在明面上</li>
-              <li><span class="k">08</span><b>新依赖绝不静默安装</b> —— 你不批,依赖它的检查就停在 unverified</li>
-              <li><span class="k">09</span><b>会推翻方案的假设,先 probe</b> —— 派只读探针验证(空 diff 才算过),结论以文字进实现契约</li>
-              <li><span class="k">10</span><b>产物是机器契约,不是散文</b> —— 风险档位 → <span class="mono" style="color:var(--accent)">risk:</span>,Must NOT → <span class="mono" style="color:var(--accent)">invariants:</span>,Verification Matrix 每行 → 由哪道门禁证明;plan_revision 就此冻结,写不进契约的决定留给人</li>
-            </ul>
-          </div>
+        <div class="eyebrow">06 · 编排(一) · 任务契约</div>
+        <h1 class="headline">档位(tier)与风险(risk),是两个不同的问题</h1>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th></th><th>问题</th><th>决定什么</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="color:var(--accent)">tier</td><td>这活需要多强的能力?</td><td class="dim">挑选模型与推理强度</td></tr>
+              <tr><td class="mono" style="color:var(--accent)">risk</td><td>做错了有多糟?</td><td class="dim">挑选独立复审的深度</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="lede">对认证路径的机械式改动,是 <b style="color:var(--text)">weak 且 high</b>。router 按真实剩余配额在档位<em style="color:var(--accent);font-style:normal">内</em>挑执行器 —— 配额从不会把任务降级到更弱的模型;风险只会被证据升级,从不会被调低。</p>
+        <p class="sub" style="margin-top:.8rem">风险档位、Must NOT、Verification Matrix —— 走设计流时,这些在 <span class="mono" style="color:var(--accent)">/router:plan</span> 的任务拆分里就定好;日常任务由 <span class="mono" style="color:var(--accent)">/router:go</span> 凭你们对话的完整上下文现场拆解。两条路,契约都先于执行写进 <span class="mono">task.yaml</span>,不是 dispatch 时现拍的。</p>
+        <div class="card" style="margin-top:1.3rem; max-width:760px">
+          <span class="tag">为什么是少而大的工作包,而不是碎任务</span>
+          <p>实测一个真实计划:拆成五个微任务,意味着五次执行器冷启动重新读一遍同一个仓库(一个约 400 行的功能,吃掉 1.88M 执行器输入 token),外加五轮复审往返。执行器从来不是瓶颈 —— 12.8 分钟的执行器时间,对着约三小时、~317 轮编排器对话。<b style="color:var(--text)">墙钟和成本,由编排器的对话轮次主导</b>,机械门禁能判的事,不该多花一轮。</p>
         </div>
       </div>
     </section>
 
-    <!-- SPEC — WORKED EXAMPLE -->
+    <!-- ORCH 2 — CONCURRENT VS DEPENDENT -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">07 · 编排(二) · 并发与依赖</div>
+        <h1 class="headline">独立的任务并发跑,有依赖的排队等</h1>
+        <div class="figure">
+          <figure>
+            <svg viewBox="0 0 720 230" role="img" aria-label="任务 A 与任务 B 互不依赖、范围不重叠，一起并发派发；任务 C 声明依赖 A 和 B，必须等两者都完成才能开始。">
+              <defs>
+                <marker id="ar6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
+                </marker>
+              </defs>
+              <g font-family="ui-monospace,monospace" font-size="13">
+                <rect x="40" y="30" width="180" height="64" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
+                <text x="130" y="58" text-anchor="middle" fill="var(--pass)" font-weight="700">任务 A</text>
+                <text x="130" y="78" text-anchor="middle" fill="var(--pass)" font-size="11">allowed_globs 不重叠</text>
+
+                <rect x="40" y="130" width="180" height="64" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
+                <text x="130" y="158" text-anchor="middle" fill="var(--pass)" font-weight="700">任务 B</text>
+                <text x="130" y="178" text-anchor="middle" fill="var(--pass)" font-size="11">与 A 互不需要</text>
+
+                <text x="130" y="16" text-anchor="middle" fill="var(--pass)" font-size="11" font-weight="700">✓ 一起并发 dispatch</text>
+
+                <rect x="480" y="80" width="200" height="70" rx="10" fill="var(--fail-soft)" stroke="var(--fail)"/>
+                <text x="580" y="108" text-anchor="middle" fill="var(--fail)" font-weight="700">任务 C</text>
+                <text x="580" y="128" text-anchor="middle" fill="var(--fail)" font-size="11">depends_on: [A, B]</text>
+                <text x="580" y="62" text-anchor="middle" fill="var(--fail)" font-size="11" font-weight="700">等两者都完成才开始</text>
+
+                <line x1="220" y1="62" x2="480" y2="100" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar6)"/>
+                <line x1="220" y1="162" x2="480" y2="130" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar6)"/>
+              </g>
+            </svg>
+            <figcaption>两个任务能同时跑,当且仅当谁都不需要对方的产出、且各自的 <span class="mono" style="color:var(--accent)">allowed_globs</span> 互不相交;其余的必须声明 <span class="mono" style="color:var(--accent)">depends_on</span> 排队等待。这个判断是你 / Opus 做的,但 <span class="mono">land</span> 是 fail-close 的——判断错了,合并直接中止、把树还原,而不是留一堆烂摊子。</figcaption>
+          </figure>
+        </div>
+        <p class="lede" style="margin-top:1rem">实测:一个批次里 26s+31s 的两个独立任务,一起 dispatch 后墙钟是 32s;234s+244s 的一起跑是 244s —— <b style="color:var(--text)">墙钟取最慢的那个,不是求和</b>,而且只花一轮编排器对话,不是每个任务一轮。永远不要 fan out 到后台 shell 再自己去轮询——每一次轮询,都是一整轮编排器对话,那才是真正贵的东西。</p>
+      </div>
+    </section>
+
+    <!-- DESIGN FLOW 1 — TWO DOCUMENTS -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">08 · 设计流(一) · 两份文档</div>
+        <h1 class="headline">大特性:两份文档,按<em>顺序</em>批准</h1>
+        <p class="sub">跨模块、有真实取舍的大特性,由你主动进入设计流 —— router 从不替你判断任务大小。分层思路借鉴 Superpowers(brainstorm → spec → plan);router 加上了对抗审核、逐节确认、版本绑定,和一条铁律:<b style="color:var(--text)">人裁决一切</b>。</p>
+        <div class="grid2">
+          <div class="card">
+            <span class="tag">/router:design → DESIGN.md</span>
+            <h3>为什么做、做什么、不做什么</h3>
+            <ul class="dims">
+              <li><span class="k">01</span><b>澄清与调研交错</b> —— 一次只问一个问题;能问的不假设,能在代码里查证的不问,带回 file:line 证据</li>
+              <li><span class="k">02</span><b>没收敛,不动笔</b> —— 对话仍开放时起草的文档,只是"带标题的猜测"</li>
+              <li><span class="k">03</span><b>2–3 个真方案摆开</b> —— 推荐一个,你来挑;被否掉的连同理由记入 Alternatives considered,审核时要用</li>
+              <li><span class="k">04</span><b>七节逐节起草</b> —— 每写完一节停下,等你 approve / revise,才写下一节</li>
+              <li><span class="k">05</span><b>批准即冻结</b> —— 之后任何修改 bump revision、要求重批;变更必须可见,绝不静默</li>
+            </ul>
+          </div>
+          <div class="card">
+            <span class="tag">/router:plan → PLAN.md</span>
+            <h3>怎么做:步骤、拆分、验证、上线</h3>
+            <ul class="dims">
+              <li><span class="k">01</span><b>门禁前置</b> —— Design 不是 design_approved 就拒绝生成:从未批准的设计推导计划,等于把猜测冻结成承诺</li>
+              <li><span class="k">02</span><b>与设计版本硬绑定</b> —— frontmatter 记 design_revision;设计一动,Plan 自动打回草稿,绑旧版本的任务包被机器拒绝</li>
+              <li><span class="k">03</span><b>验证矩阵</b> —— 每条验收标准映射到真正证明它的门禁;证不了的标 unverified,绝不用测不到它的测试糊弄</li>
+              <li><span class="k">04</span><b>任务拆分按七要素预写</b> —— 目标 / 不变量 / 冻结接口 / 完成定义(含自带测试) / 文件范围 / 停止条件 / 版本绑定</li>
+              <li><span class="k">05</span><b>批准后 go 逐字执行</b> —— 包清单在这里确认过,go 不再问第二遍</li>
+            </ul>
+          </div>
+        </div>
+        <p class="sub" style="margin-top:1rem">日常任务跳过这一切,直接 <span class="mono" style="color:var(--accent)">/router:go</span> —— 是否走设计流,永远是你的决定。</p>
+      </div>
+    </section>
+
+    <!-- DESIGN FLOW 2 — ADVERSARIAL REVIEW -->
+    <section class="slide wide">
+      <div class="slide-inner">
+        <div class="eyebrow">09 · 设计流(二) · 对抗审核</div>
+        <h1 class="headline">Design Review:评审员戴着镣铐,裁决权在人</h1>
+        <p class="sub">绝不自审 —— 换一个<b style="color:var(--text)">独立模型</b>(优先非 Claude,如 codex)攻击方案本身:方向对不对、藏着什么风险、有没有更简单的路。这一页存在的原因是一次真实事故:<b style="color:var(--text)">一条错误的评审意见被静默采纳,改坏了正确的设计</b> —— 所以裁决是机制,不是承诺。</p>
+        <div class="grid2">
+          <div class="card">
+            <h3>评审员的镣铐</h3>
+            <ul class="dims">
+              <li><span class="k">01</span><b>必读 Alternatives considered</b> —— 不许把已经否掉的路当新点子重提;认为否错了,要引述被否的理由再反驳</li>
+              <li><span class="k">02</span><b>拿不准的,以问题提出</b> —— 不确定的事实绝不断言为错误;引具体处、说具体后果,不许喊"最佳实践"</li>
+              <li><span class="k">03</span><b>每条异议结构化</b> —— {severity, confidence, argument, suggestion},逐条可裁决</li>
+              <li><span class="k">04</span><b>没毛病就直说</b> —— 设计是健全的就明说,不许硬造异议凑数</li>
+              <li><span class="k">05</span><b>用你的语言写</b> —— 批评和建议以对话语言输出,不把翻译负担丢给人</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>裁决协议</h3>
+            <ul class="dims">
+              <li><span class="k">06</span><b>批评逐字打印</b> —— 从落盘文件读回,截断必续跑;半份批评绝不当完整呈现</li>
+              <li><span class="k">07</span><b>逐条裁决:accept / reject / discuss</b> —— 每个裁决记入 DECISIONS.md 留痕,附你的理由</li>
+              <li><span class="k">08</span><b>裁决之前,零编辑</b> —— 按评审员的意思"顺手改进"是违约,不是主动性</li>
+              <li><span class="k">09</span><b>没有自动收敛</b> —— 轮数你定,没有采纳阈值;评审员全票,也只是一个意见</li>
+              <li><span class="k">10</span><b>跨轮 resume 同一评审员</b> —— 下一轮只发变更;它记得上轮异议,能核对"真的改了没"</li>
+            </ul>
+          </div>
+        </div>
+        <p class="sub" style="margin-top:1rem">后台运行,完整输出落盘到 <span class="mono" style="color:var(--accent)">critique-&lt;n&gt;.md</span>;审的是 Design(方向),不是任务拆分 —— 拆分属于 Plan,不设对抗审核,因为方向已经定了。</p>
+      </div>
+    </section>
+
+    <!-- DESIGN FLOW 3 — SELF-HOSTED RECORD -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">07 · Spec · 一轮对抗实录</div>
-        <h1 class="headline">计划里"不明确的"和"有问题的",就是这样被逼出来的</h1>
+        <div class="eyebrow">10 · 设计流(三) · 自宿实录</div>
+        <h1 class="headline">这套流程的第一个用户,是它自己</h1>
+        <p class="sub">设计流(PR #60)就是用设计流做出来的。下面是仓库里<b style="color:var(--text)">真实的阶段记录</b>,不是演示数据。</p>
         <div class="terminal" style="margin-top:1.2rem">
-          <div class="bar">plan v1:一条正则,替换全仓 137 处 logger.log(...)</div>
-          <pre><span class="p">Round 1 · reviewer(codex)→</span> verdict: <span style="color:var(--fail)">revise</span>
-<span style="color:var(--fail)">hidden-risk</span>    12 处日志级别取决于业务语义,正则会误判
-               <span class="p">→ 机械可判的批量替换,和需要判断的少数,拆成两步</span>
-<span style="color:var(--fail)">unverifiable</span>   验收只写"测试通过"——漏改、错级别照样全绿,证明不了迁移完整
-               <span class="p">→ 加"grep 无 logger.log( 残留"作为完成判据</span>
+          <div class="bar">.router/plans/2026-08-11-design-plan-workflow/ · 真实 frontmatter</div>
+          <pre><span class="p"># DESIGN.md —— 七节逐节确认,修订 0 → 3,已批准</span>
+plan_id: 2026-08-11-design-plan-workflow
+revision: <span class="c">3</span>
+status: <span style="color:var(--pass)">design_approved</span>
+approved: { revision: 3, by: <span class="c">user</span>, date: 2026-08-11 }
+<span class="p">> 撰写方式:分段确认 —— 每节经用户审阅通过后追加下一节。当前进度:7/7</span>
 
-<span class="p">(你裁决:两条都成立 → Claude 改出 v2)</span>
-
-<span class="p">Round 2 · resume 同一 reviewer,只发 v2 的变更 →</span> verdict: <span style="color:var(--pass)">approve</span>
-<span style="color:var(--accent)">warn</span>           一次性删旧 API 会弄断外部调用方——考虑留一版 deprecated 垫片</pre>
+<span class="p"># PLAN.md —— 与 Design 修订硬绑定</span>
+design_revision: <span class="c">3</span>
+revision: 1
+status: <span class="c">executing</span>
+<span class="p"># r3 为勘误级 Design 修订(仅锁文件名),用户在批准勘误的同一裁决中确认发布</span></pre>
         </div>
-        <p class="lede" style="margin-top:1.2rem">plan 里<b style="color:var(--text)">不明确的</b>(验收判据根本写不出来)和<b style="color:var(--text)">有问题的</b>(藏着语义风险)都被逼到台面上。你裁决哪条成立、Claude 修订,满意才冻结 —— <b style="color:var(--text)">没有自动收敛</b>,因为 reviewer 也会错,一致不等于正确。</p>
-        <p class="sub" style="margin-top:.8rem">对抗的产物不留在散文里:风险档位 → <span class="mono" style="color:var(--accent)">risk:</span>,Must NOT → <span class="mono" style="color:var(--accent)">invariants:</span>,Verification Matrix 的每一行 → 由哪道门禁来证明 —— 全部写进机器契约,后面照着验收。</p>
+        <p class="lede" style="margin-top:1.2rem">真实的一幕:Design 批准后发现一处勘误(锁文件名)。修订没有被悄悄吞掉 —— revision 升到 3、波及 Plan、由用户重新确认。<b style="color:var(--text)">变更必须可见,绝不静默</b>,frontmatter 就是证据。</p>
+        <div class="card" style="margin-top:1.1rem; max-width:860px">
+          <span class="tag">裁决示意(非实录)</span>
+          <p>DECISIONS.md 里的一行长这样:<span class="mono" style="color:var(--accent)">R1-03 · "建议改用全局状态文件" · reject · 与"frontmatter 即状态"的既定决策冲突</span> —— 每条异议的去向都留痕,包括被拒绝的。</p>
+        </div>
       </div>
     </section>
 
     <!-- REVIEW — TWO LENSES + TWO-AXIS VERDICT -->
     <section class="slide wide">
       <div class="slide-inner">
-        <div class="eyebrow">08 · Review · 审核维度</div>
+        <div class="eyebrow">11 · Review · 审核维度</div>
         <h1 class="headline">绿灯之后的最后一关:两个镜头,16 条固定审核维度</h1>
         <div class="card" style="margin-top:1.1rem">
           <span class="tag fail">真实案例</span>
@@ -521,14 +642,14 @@
     <!-- REVIEW — VERDICT & BEHAVIOR RULES -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">09 · Review · 约束规则</div>
+        <div class="eyebrow">12 · Review · 约束规则</div>
         <h1 class="headline">Review:十条约束,把最后一关钉死</h1>
         <p class="sub" style="margin-top:.8rem">每条 finding 都是结构化的:<span class="mono" style="color:var(--accent)">{level, dimension, severity, location, what, why, suggestion, confidence}</span> —— 逐字打印,你裁决。</p>
         <div class="grid2">
           <div class="card">
             <h3>复审怎么进行</h3>
             <ul class="dims">
-              <li><span class="k">01</span><b>前置检查先行</b> —— scope 漂移或 spec 未批准:停,回 spec;绝不对着已经不匹配代码的 spec 审</li>
+              <li><span class="k">01</span><b>前置检查先行</b> —— scope 漂移或标准未经批准:停,回 design / plan;绝不对着已经不匹配代码的标准审</li>
               <li><span class="k">02</span><b>绿灯是前提,不是证据</b> —— 测试本身也是被审对象,可能压根没测对东西</li>
               <li><span class="k">03</span><b>从 router 的记录出发</b> —— delivery header 缺失 = 合约违规,先查它;复审深度绝不低于有效风险(它只升不降)</li>
               <li><span class="k">04</span><b>引用日志路径,不粘贴日志</b> —— 贴进上下文的每一行,后面每一轮都要重付</li>
@@ -542,7 +663,7 @@
               <li><span class="k">07</span><b>任何代码改动作废全部旧证据</b> —— 报告必须是对最终 head_sha 的一轮全新运行</li>
               <li><span class="k">08</span><b>反作弊契约</b> —— 不删不弱化测试;bug 修复先见 RED;不 mock 被测逻辑;没跑过的检查绝不标 pass,收了 0 个测试的运行不算通过</li>
               <li><span class="k">09</span><b>跨轮 resume,不橡皮图章</b> —— 核实每条 blocking 真解决:查新代码,不凭作者一句"改好了"</li>
-              <li><span class="k">10</span><b>spec 错了回 spec</b> —— 验收标准绝不在 review 里被悄悄放宽来放行一个改动</li>
+              <li><span class="k">10</span><b>标准错了,回 design</b> —— 验收标准绝不在 review 里被悄悄放宽来放行一个改动</li>
             </ul>
           </div>
         </div>
@@ -559,73 +680,10 @@
       </div>
     </section>
 
-    <!-- 5 — TASK CONTRACT: TIER VS RISK -->
-    <section class="slide">
-      <div class="slide-inner">
-        <div class="eyebrow">10 · 任务契约</div>
-        <h1 class="headline">档位(tier)与风险(risk),是两个不同的问题</h1>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th></th><th>问题</th><th>决定什么</th></tr></thead>
-            <tbody>
-              <tr><td class="mono" style="color:var(--accent)">tier</td><td>这活需要多强的能力?</td><td class="dim">挑选模型与推理强度</td></tr>
-              <tr><td class="mono" style="color:var(--accent)">risk</td><td>做错了有多糟?</td><td class="dim">挑选独立复审的深度</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="lede">对认证路径的机械式改动,是 <b style="color:var(--text)">weak 且 high</b>。router 按真实剩余配额在档位<em style="color:var(--accent);font-style:normal">内</em>挑执行器 —— 配额从不会把任务降级到更弱的模型;风险只会被证据升级,从不会被调低。</p>
-        <p class="sub" style="margin-top:.8rem">风险档位、Must NOT、Verification Matrix —— 这些都在 <span class="mono" style="color:var(--accent)">/router:spec</span> 阶段就定好,写进这里的 <span class="mono">task.yaml</span>,不是 dispatch 时现拍的。</p>
-        <div class="card" style="margin-top:1.3rem; max-width:760px">
-          <span class="tag">为什么是少而大的工作包,而不是碎任务</span>
-          <p>实测一个真实计划:拆成五个微任务,意味着五次执行器冷启动重新读一遍同一个仓库(一个约 400 行的功能,吃掉 1.88M 执行器输入 token),外加五轮复审往返。执行器从来不是瓶颈 —— 12.8 分钟的执行器时间,对着约三小时、~317 轮编排器对话。<b style="color:var(--text)">墙钟和成本,由编排器的对话轮次主导</b>,机械门禁能判的事,不该多花一轮。</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- ORCHESTRATION: CONCURRENT VS DEPENDENT -->
-    <section class="slide wide">
-      <div class="slide-inner">
-        <div class="eyebrow">11 · 任务编排</div>
-        <h1 class="headline">独立的任务并发跑,有依赖的排队等</h1>
-        <div class="figure">
-          <figure>
-            <svg viewBox="0 0 720 230" role="img" aria-label="任务 A 与任务 B 互不依赖、范围不重叠，一起并发派发；任务 C 声明依赖 A 和 B，必须等两者都完成才能开始。">
-              <defs>
-                <marker id="ar5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M0,0 L10,5 L0,10 Z" fill="currentColor"/>
-                </marker>
-              </defs>
-              <g font-family="ui-monospace,monospace" font-size="13">
-                <rect x="40" y="30" width="180" height="64" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
-                <text x="130" y="58" text-anchor="middle" fill="var(--pass)" font-weight="700">任务 A</text>
-                <text x="130" y="78" text-anchor="middle" fill="var(--pass)" font-size="11">allowed_globs 不重叠</text>
-
-                <rect x="40" y="130" width="180" height="64" rx="10" fill="var(--pass-soft)" stroke="var(--pass)"/>
-                <text x="130" y="158" text-anchor="middle" fill="var(--pass)" font-weight="700">任务 B</text>
-                <text x="130" y="178" text-anchor="middle" fill="var(--pass)" font-size="11">与 A 互不需要</text>
-
-                <text x="130" y="16" text-anchor="middle" fill="var(--pass)" font-size="11" font-weight="700">✓ 一起并发 dispatch</text>
-
-                <rect x="480" y="80" width="200" height="70" rx="10" fill="var(--fail-soft)" stroke="var(--fail)"/>
-                <text x="580" y="108" text-anchor="middle" fill="var(--fail)" font-weight="700">任务 C</text>
-                <text x="580" y="128" text-anchor="middle" fill="var(--fail)" font-size="11">depends_on: [A, B]</text>
-                <text x="580" y="62" text-anchor="middle" fill="var(--fail)" font-size="11" font-weight="700">等两者都完成才开始</text>
-
-                <line x1="220" y1="62" x2="480" y2="100" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar5)"/>
-                <line x1="220" y1="162" x2="480" y2="130" stroke="currentColor" stroke-opacity=".6" marker-end="url(#ar5)"/>
-              </g>
-            </svg>
-            <figcaption>两个任务能同时跑,当且仅当谁都不需要对方的产出、且各自的 <span class="mono" style="color:var(--accent)">allowed_globs</span> 互不相交;其余的必须声明 <span class="mono" style="color:var(--accent)">depends_on</span> 排队等待。这个判断是你 / Opus 做的,但 <span class="mono">land</span> 是 fail-close 的——判断错了,合并直接中止、把树还原,而不是留一堆烂摊子。</figcaption>
-          </figure>
-        </div>
-        <p class="lede" style="margin-top:1rem">实测:一个批次里 26s+31s 的两个独立任务,一起 dispatch 后墙钟是 32s;234s+244s 的一起跑是 244s —— <b style="color:var(--text)">墙钟取最慢的那个,不是求和</b>,而且只花一轮编排器对话,不是每个任务一轮。永远不要 fan out 到后台 shell 再自己去轮询——每一次轮询,都是一整轮编排器对话,那才是真正贵的东西。</p>
-      </div>
-    </section>
-
     <!-- MODEL SELECTION -->
     <section class="slide wide">
       <div class="slide-inner">
-        <div class="eyebrow">12 · 模型怎么选</div>
+        <div class="eyebrow">13 · 模型怎么选</div>
         <h1 class="headline">先定档位,再让真实配额在档位内挑执行器</h1>
         <div class="table-wrap">
           <table>
@@ -644,7 +702,7 @@
           <li>编排器自己的模型(Opus)<b>只出现在 critical 档位</b>——当成普通执行器用,等于吃掉这整套路由机制本来要保护的那份预算。</li>
         </ol>
         <div class="card" style="margin-top:1.4rem; max-width:820px">
-          <h3>spec / review 的独立复审链</h3>
+          <h3>design-review / review 的独立复审链</h3>
           <p>优先非 Claude(codex)保证独立;codex 不可用或超配额,才降到<b style="color:var(--text)">同强度</b>的 claude/opus —— 绝不为了复审这件事把强度降下来。<span class="mono" style="color:var(--accent)">.router/models.yaml</span> 可以覆盖任意一格,<span class="mono" style="color:var(--accent)">router models</span> 显示解析后的结果表;没人会替你自动改它。</p>
         </div>
       </div>
@@ -653,7 +711,7 @@
     <!-- 6 — ISOLATION -->
     <section class="slide wide">
       <div class="slide-inner">
-        <div class="eyebrow">13 · 隔离与沙箱</div>
+        <div class="eyebrow">14 · 隔离与沙箱</div>
         <h1 class="headline">在 <span class="mono" style="font-family:var(--font-mono);color:var(--accent)">land</span> 之前,你的分支不会变</h1>
         <div class="figure">
           <figure>
@@ -701,7 +759,7 @@
     <!-- 7 — ENV-FREE GATES -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">14 · 门禁(一)</div>
+        <div class="eyebrow">15 · 门禁(一)</div>
         <h1 class="headline">便宜模型伪造不了的五道机械关卡</h1>
         <div class="table-wrap">
           <table>
@@ -722,7 +780,7 @@
     <!-- 8 — TWO GATE MODES + QUOTA -->
     <section class="slide wide">
       <div class="slide-inner">
-        <div class="eyebrow">15 · 门禁(二)</div>
+        <div class="eyebrow">16 · 门禁(二)</div>
         <h1 class="headline">真实门禁是项目的属性,不是任务的属性</h1>
         <div class="figure">
           <figure>
@@ -785,7 +843,7 @@
     <!-- 9 — DIVIDER: WAR STORIES -->
     <section class="slide divider">
       <div class="slide-inner">
-        <div class="eyebrow">16 · 实战</div>
+        <div class="eyebrow">17 · 实战</div>
         <h1 class="headline">两次真实端到端运行,教会我们的事</h1>
         <p class="lede">每一条,都是文档写错、或压根没写的指导。每一条,都真的花了钱,或者错杀了一个正确的 diff。</p>
         <div class="meta">
@@ -799,7 +857,7 @@
     <!-- 10 — LESSON 0.8.2 -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">17 · 教训 0.8.2</div>
+        <div class="eyebrow">18 · 教训 0.8.2</div>
         <h1 class="headline">读代码看不出来的,只有跑起来才现形</h1>
         <div class="grid2">
           <div class="card">
@@ -820,7 +878,7 @@
     <!-- 11 — LESSON: RESUME COST -->
     <section class="slide wide">
       <div class="slide-inner">
-        <div class="eyebrow">18 · 教训 0.8.3 (1/3)</div>
+        <div class="eyebrow">19 · 教训 0.8.3 (1/3)</div>
         <h1 class="headline">"resume 省的是探索,不是 token"</h1>
         <div class="figure">
           <figure>
@@ -851,7 +909,7 @@
     <!-- 12 — LESSON: MAX CHANGED LINES -->
     <section class="slide wide">
       <div class="slide-inner">
-        <div class="eyebrow">19 · 教训 0.8.3 (2/3)</div>
+        <div class="eyebrow">20 · 教训 0.8.3 (2/3)</div>
         <h1 class="headline">改动行数上限,曾两次挡下正确的工作</h1>
         <div class="figure">
           <figure>
@@ -877,7 +935,7 @@
     <!-- 13 — LESSON: BUILD COST BLINDNESS -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">20 · 教训 0.8.3 (3/3)</div>
+        <div class="eyebrow">21 · 教训 0.8.3 (3/3)</div>
         <h1 class="headline">热构建目录,不等于验证是免费的</h1>
         <div class="stat-row">
           <div class="stat"><div class="num">+1</div><div class="label">新增源文件</div></div>
@@ -895,7 +953,7 @@
     <!-- 14 — DISTILLED PRINCIPLES -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">21 · 原则</div>
+        <div class="eyebrow">22 · 原则</div>
         <h1 class="headline">从真实运行里蒸馏出来的几条硬规矩</h1>
         <div class="principle">
           <h3>绝不仅凭绿灯合并</h3>
@@ -915,16 +973,17 @@
     <!-- 15 — STATUS + OPEN QUESTIONS -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">22 · 现状</div>
-        <h1 class="headline">四周,204 次提交,还在被真实使用教育</h1>
+        <div class="eyebrow">23 · 现状</div>
+        <h1 class="headline">五周,222 次提交,还在被真实使用教育</h1>
         <div class="chip-row">
           <span class="chip">首个提交 2026-07-09</span>
-          <span class="chip">204 次提交</span>
-          <span class="chip">~6,647 行核心代码</span>
+          <span class="chip">222 次提交</span>
+          <span class="chip">~6,662 行核心代码</span>
           <span class="chip">44 个测试文件</span>
-          <span class="chip">当前 v0.8.3 · beta</span>
+          <span class="chip">当前 v0.8.5 · beta</span>
         </div>
         <ul class="plain" style="margin-top:1.8rem">
+          <li><b>设计流(PR #60)刚落地</b> —— 分层 Design / Design-Review / Plan 替换了 /router:spec,第一个用户是它自己;场景演练还在继续。</li>
           <li><b>TASK_CONTEXT.md 的成本还没定论</b> —— 一个两文件的小任务上,写它让执行器输入涨了 21%(474.7k vs 392.6k),质量没变化;在需要先找到入口的大仓库上是否划算,靠每次 dispatch 记录的数据来回答,不是靠猜。</li>
           <li><b><span class="mono" style="color:var(--accent)">router usage --routing</span> 证据不够就明说</b> —— 不会拿三次运行去猜一个路由结论。</li>
           <li><b>1.0 之前,命令仍可能变</b> —— 状态是 beta,不是承诺。</li>
@@ -935,7 +994,7 @@
     <!-- 16 — CLOSING -->
     <section class="slide">
       <div class="slide-inner">
-        <div class="eyebrow">23 · 开始使用</div>
+        <div class="eyebrow">24 · 开始使用</div>
         <h1 class="headline">现在就能装上试试</h1>
         <div class="terminal">
           <div class="bar">Claude Code</div>
@@ -953,10 +1012,10 @@
 
   </div>
 
-  <div class="brandbar">router · v0.8.3</div>
+  <div class="brandbar">router · v0.8.5</div>
   <div class="navbar">
     <button class="navbtn" id="prevBtn" aria-label="上一页">‹</button>
-    <span class="counter" id="counter">1 / 16</span>
+    <span class="counter" id="counter">1 / 25</span>
     <button class="navbtn" id="nextBtn" aria-label="下一页">›</button>
   </div>
 </div>
