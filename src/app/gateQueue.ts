@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { GateResult, RunResult } from '../domain/types.ts';
 import { matchAny } from '../core/glob.ts';
@@ -18,8 +19,9 @@ import {
   trackedChanges,
 } from '../io/git.ts';
 import { buildWorkerEnv } from '../io/env.ts';
-import { acquireLock, type LockHandle } from '../io/lock.ts';
-import { runBranch, runId, type RouterPaths } from '../io/paths.ts';
+import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
+import { startHeartbeat } from '../io/heartbeat.ts';
+import { runId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker, type SupervisionOutcome } from '../io/supervisor.ts';
@@ -72,8 +74,11 @@ export async function runQueueGate(
     return { ok: false, reason: 'verifier_not_passed' };
   }
 
-  const taskBranch = runBranch(taskId, run);
-  if (!branchExists(paths.repoRoot, taskBranch)) {
+  // The branch the run recorded, falling back to the derived name for records written before
+  // the field existed. `run_branch_missing` keeps its wire name: it is a reported reason string
+  // that callers and tests match on, and renaming it would break them to say the same thing.
+  const branch = result.branch ?? taskBranch(taskId);
+  if (!branchExists(paths.repoRoot, branch)) {
     return { ok: false, reason: 'run_branch_missing' };
   }
 
@@ -95,28 +100,35 @@ export async function runQueueGate(
   let keepMerge = false;
   let currentPgid: number | undefined;
   let heartbeatError: Error | undefined;
-  let heartbeatTimer: NodeJS.Timeout | undefined;
+  let beater: { stop(): void } | undefined;
 
   const stopHeartbeat = (): void => {
-    if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
-    heartbeatTimer = undefined;
+    beater?.stop();
+    beater = undefined;
   };
 
-  const startHeartbeat = (): void => {
-    heartbeatTimer = setInterval(() => {
+  // Out of process, for the reason io/heartbeat.ts documents: gate commands run through
+  // spawnSync, so this event loop is blocked for the whole build and an in-process
+  // `setInterval` beat -- which is what stood here -- goes silent for exactly as long as the
+  // lock's 90-second staleness window. A gate is the longest thing router runs.
+  const beginHeartbeat = (): void => {
+    beater = startHeartbeat(lock.path, lock.ownerToken, LOCK_HEARTBEAT_MS);
+  };
+
+  // The beater exits on its own when the lock stops naming us, but it has no way to say so, so
+  // the fail-loud check has to be a question we ask between steps. Losing the lock mid-gate
+  // means someone else is in this checkout; killing our own gate is the correct response.
+  const assertStillOurs = (): void => {
+    if (heartbeatError !== undefined) return;
+    if (ownsLock(lock.path, lock.ownerToken)) return;
+    heartbeatError = new Error(`lost the gate lock ${lock.path} mid-gate; another holder took over`);
+    if (currentPgid !== undefined) {
       try {
-        lock.heartbeat();
-      } catch (err) {
-        heartbeatError = err instanceof Error ? err : new Error(String(err));
-        if (currentPgid !== undefined) {
-          try {
-            killProcessGroup(currentPgid, 'SIGTERM');
-          } catch {
-            /* the recorded heartbeat error is reported after supervision settles */
-          }
-        }
+        killProcessGroup(currentPgid, 'SIGTERM');
+      } catch {
+        /* the recorded error is reported after supervision settles */
       }
-    }, LOCK_HEARTBEAT_MS);
+    }
   };
 
   const supervise = async (
@@ -133,7 +145,7 @@ export async function runQueueGate(
       env,
       logPath,
       heartbeatPath: paths.heartbeat(taskId, run),
-      watchDir: paths.repoRoot,
+      watchPaths: [paths.repoRoot, join(paths.repoRoot, '.git')],
       maxWallMs,
       stallMs: maxWallMs,
       onPgid: (pgid) => {
@@ -141,6 +153,7 @@ export async function runQueueGate(
       },
     });
     currentPgid = undefined;
+    assertStillOurs();
     if (heartbeatError !== undefined) throw heartbeatError;
     return outcome;
   };
@@ -158,7 +171,7 @@ export async function runQueueGate(
     baseSha = resolveCommit(paths.repoRoot, 'HEAD');
 
     try {
-      mergeNoFF(paths.repoRoot, taskBranch);
+      mergeNoFF(paths.repoRoot, branch);
     } catch {
       mergeAbort(paths.repoRoot);
       resetHardTracked(paths.repoRoot, baseSha);
@@ -189,7 +202,7 @@ export async function runQueueGate(
     const maxWallMs = (config.gate_wall_minutes ?? GATE_WALL_MINUTES_DEFAULT) * 60_000;
     const env = buildWorkerEnv(process.env, config.env ?? []);
 
-    startHeartbeat();
+    beginHeartbeat();
     try {
       const resetLog = `${gateLog}.reset`;
       for (const argv of config.reset ?? []) {

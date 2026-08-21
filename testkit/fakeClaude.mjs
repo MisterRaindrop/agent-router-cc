@@ -6,8 +6,10 @@
 // args, makes an in-scope edit in its cwd (the worktree), and emits a
 // stream-json `result` event like `claude -p --output-format stream-json`.
 import { writeFileSync } from 'node:fs';
+import { commitUnit } from './fakeCommit.mjs';
 
 writeFileSync('src/a.ts', 'export const x = 2; // edited by fake claude\n');
+commitUnit('fake: unit a', ['src/a.ts']);
 process.stdout.write(
   JSON.stringify({
     type: 'result',

@@ -1,7 +1,7 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -11,8 +11,8 @@ import type { RunResult, RunStatus } from '../domain/types.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { EXECUTOR_SANDBOX_ENV } from '../io/env.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
-import { deleteBranch, mergeAbort, mergeNoFF, resolveCommit, worktreeRemove } from '../io/git.ts';
-import { findRouterDir, routerPaths, runBranch, runId as fmtRunId, type RouterPaths } from '../io/paths.ts';
+import { branchExists, currentBranch, deleteBranch, mergeAbort, mergeNoFF, resolveCommit } from '../io/git.ts';
+import { findRouterDir, routerPaths, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
 import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
@@ -220,6 +220,11 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     delivery: result.delivery?.path ?? null,
     delivery_header: result.delivery?.header_error ?? (result.delivery?.header ? 'ok' : 'missing'),
     uncommitted_changes: result.uncommitted_changes ?? false,
+    branch: result.branch ?? null,
+    rescue_sha: result.rescue_sha ?? null,
+    discarded_shas: result.discarded_shas ?? [],
+    closeout: result.closeout ?? null,
+    dirty_submodules: result.dirty_submodules ?? [],
   };
 }
 
@@ -227,12 +232,31 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
   const v = result.verifier?.result ?? 'FAILED';
   const who = `${result.worker.kind}${result.worker.model ? `/${result.worker.model}` : ''}`;
   const sw = result.executor_switches ? `, switched ${result.executor_switches}x` : '';
+  // Where the user is left standing. Router never switches back and never merges, so a report
+  // that omits this leaves them on a branch they did not check out and were not told about.
+  const where = result.branch ? `\nYou are now on branch ${result.branch}.` : '';
+  const rescued = result.rescue_sha
+    ? `\nYour uncommitted work was committed first as ${result.rescue_sha.slice(0, 12)} ` +
+      `(undo with: git reset --soft ${result.rescue_sha.slice(0, 12)}~1).`
+    : '';
+  const salvaged =
+    result.discarded_shas && result.discarded_shas.length > 0
+      ? `\nSalvaged before an executor switch, unreachable but recoverable: ` +
+        `${result.discarded_shas.map((sha) => sha.slice(0, 12)).join(', ')}`
+      : '';
+  const submodules =
+    result.dirty_submodules && result.dirty_submodules.length > 0
+      ? `\nNOTE: ${result.dirty_submodules.length} submodule(s) have uncommitted content. That lives in ` +
+        `another repository, so it was neither rescued nor reset.`
+      : '';
+  const closeout =
+    result.closeout && !result.closeout.ok
+      ? `\nCLOSING INVARIANT FAILED: ${result.closeout.reason}` +
+        (result.closeout.files.length > 0 ? `\n  ${result.closeout.files.join('\n  ')}` : '')
+      : '';
   if (result.conflict === true || result.exit_class === 'contract_conflict') {
     const report = result.delivery?.path ?? `.router/tasks/${id}/runs/${result.run_id}/DELIVERY.md`;
-    const recoverable = result.uncommitted_changes
-      ? `\nNOTE: the uncommitted worktree remains available at .router/worktrees/${id}/${result.run_id}`
-      : '';
-    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing committed or verified; the plan needs revising; report: ${report}${recoverable}`;
+    return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing verified; the plan needs revising; report: ${report}${where}${rescued}`;
   }
   const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
   const warn = result.model_mismatch
@@ -242,17 +266,19 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
   const report = result.delivery
     ? ` report: ${result.delivery.path}${result.delivery.header_error ? ` [delivery_header: ${result.delivery.header_error}]` : ''}`
     : '';
-  // Nothing is committed unless the run ended ok, so an unfinished run's work is only
-  // discoverable if we say where it is.
+  // An unfinished run leaves work uncommitted in the user's own checkout now, not in a
+  // worktree they would never have looked in.
   const recoverable = result.uncommitted_changes
-    ? `\nNOTE: this run did not commit, but its worktree still holds changes -- the work is ` +
-      `recoverable: git -C .router/worktrees/${id}/${result.run_id} status`
+    ? `\nNOTE: this run left uncommitted changes in your checkout -- inspect with: git status`
     : '';
   const raisedRisk =
     result.risk_raised_by && result.risk_raised_by.length > 0
       ? `\nRISK RAISED to ${result.risk}: ${result.risk_raised_by.join(', ')}`
       : '';
-  return `${id}: ${v} (executor ${who}${sw}); ${next}${report}${recoverable}${warn}${raisedRisk}`;
+  return (
+    `${id}: ${v} (executor ${who}${sw}); ${next}${report}` +
+    `${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`
+  );
 }
 
 // Resume the prior dispatch's executor session with feedback (context retained) instead
@@ -305,7 +331,18 @@ const land: Handler = (ctx) => {
       throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
     }
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
-    const branch = runBranch(id, RUN);
+    const branch = result.branch ?? taskBranch(id);
+    // Dispatch now leaves the user standing ON the task branch, so `land` has to say so rather
+    // than attempt to merge a branch into itself (and then fail to delete the branch it is on).
+    // Checking out the merge target is the user's decision: merging is irreversible, and
+    // choosing what to merge into is the whole point of not doing it automatically.
+    if (currentBranch(paths.repoRoot) === branch) {
+      throw new CliError(
+        `${id}: you are on ${branch}, the branch to be landed. Check out the branch you want to ` +
+          `merge INTO first, then re-run \`router land ${id}\`${prior}`,
+        1,
+      );
+    }
     try {
       mergeNoFF(paths.repoRoot, branch);
     } catch (e) {
@@ -316,15 +353,6 @@ const land: Handler = (ctx) => {
     // the only durable handle on what this task changed (`git show <sha>`). Without it a
     // later review or post-mortem has no way back to the task's diff.
     const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
-    worktreeRemove(paths.repoRoot, paths.worktree(id, RUN));
-    // The run's checkout is gone; drop its now-empty parent so `.router/worktrees/` does not
-    // keep one empty directory per task that ever ran. rmdir refuses a non-empty directory,
-    // so another run of the same task is never touched.
-    try {
-      rmdirSync(dirname(paths.worktree(id, RUN)));
-    } catch {
-      /* still holds another run, or already gone */
-    }
     deleteBranch(paths.repoRoot, branch);
     store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });
@@ -442,10 +470,13 @@ const list: Handler = (ctx) => {
     const res = store.readResult(paths, id, RUN);
     const live = readRunStatus(paths.runStatus(id, RUN));
     const status = statusLabel(res, live, nowMs);
-    const worktree = existsSync(paths.worktree(id, RUN));
+    // Was "is there a worktree on disk". There are no per-task worktrees any more, so the
+    // question that matters is whether the task's branch is still around to review or merge.
+    const branch = res?.branch ?? taskBranch(id);
+    const branchLive = branchExists(paths.repoRoot, branch);
     const risk = res?.risk ?? '-';
     const report = res?.delivery ? 'yes' : '-';
-    return { id, title, status, worktree, risk, report, live };
+    return { id, title, status, branch: branchLive ? branch : null, risk, report, live };
   });
   // A live label ("executor_working 3m") is wider than any terminal one; widen the column
   // to the longest row so the table stays aligned, and keep today's width when none is live.
@@ -454,20 +485,20 @@ const list: Handler = (ctx) => {
     if (rows.length === 0) return 'No tasks in .router/tasks.';
     const lines = [
       `Tasks (${rows.length}):`,
-      pad('id', 22) + pad('status', statusWidth) + pad('worktree', 10) + pad('risk', 10) + pad('report', 10) + 'title',
+      pad('id', 22) + pad('status', statusWidth) + pad('branch', 10) + pad('risk', 10) + pad('report', 10) + 'title',
     ];
     for (const r of rows)
       lines.push(
         pad(r.id, 22) +
           pad(String(r.status), statusWidth) +
-          pad(r.worktree ? 'present' : '-', 10) +
+          pad(r.branch !== null ? 'present' : '-', 10) +
           pad(r.risk, 10) +
           pad(r.report, 10) +
           r.title,
       );
-    const leftover = rows.filter((r) => r.worktree).length;
+    const leftover = rows.filter((r) => r.branch !== null).length;
     if (leftover > 0)
-      lines.push(`\n${leftover} worktree(s) still on disk. Land the task to clean it, or remove .router/worktrees/<id> manually (a fail-close \`router clean\` is planned).`);
+      lines.push(`\n${leftover} task branch(es) still present. \`router land <id>\` merges and deletes one; \`git branch -D <branch>\` discards it.`);
     return lines.join('\n');
   });
   return 0;

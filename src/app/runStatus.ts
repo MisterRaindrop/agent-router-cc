@@ -35,7 +35,7 @@ const TIMING_KEY: Partial<Record<RunPhase, keyof RunPhaseTimings>> = {
 
 export interface RunStatusOptions {
   path: string;
-  worktreeDir: string;
+  workDir: string;
   budgetMinutes: number;
   clock: Clock;
   /** Test seam; production uses the frozen two-second lower bound. */
@@ -52,7 +52,7 @@ export interface RunStatusOptions {
  */
 export class RunStatusWriter {
   private readonly path: string;
-  private readonly worktreeDir: string;
+  private readonly workDir: string;
   private readonly clock: Clock;
   private readonly activityThrottleMs: number;
   private readonly logPollMs: number;
@@ -78,7 +78,7 @@ export class RunStatusWriter {
 
   constructor(opts: RunStatusOptions) {
     this.path = opts.path;
-    this.worktreeDir = resolve(opts.worktreeDir);
+    this.workDir = resolve(opts.workDir);
     this.clock = opts.clock;
     this.activityThrottleMs = opts.activityThrottleMs ?? ACTIVITY_THROTTLE_MS;
     this.logPollMs = opts.logPollMs ?? LOG_POLL_MS;
@@ -146,7 +146,7 @@ export class RunStatusWriter {
     this.status.last_output_at = now;
     this.status.stall_deadline = deadline(now, this.stallMs);
     if (kind === 'claude') {
-      const action = recentClaudeAction(line, this.worktreeDir);
+      const action = recentClaudeAction(line, this.workDir);
       if (action !== undefined) this.status.recent_action = action;
     } else if (kind === 'codex') {
       const action = recentCodexAction(line);
@@ -293,7 +293,7 @@ export function terminalStateFor(exitClass: ExitClass, verifierPassed: boolean):
 }
 
 /** Extract only frozen-protocol allowlisted tool metadata from one Claude JSON event. */
-export function recentClaudeAction(line: string, worktreeDir: string): string | undefined {
+export function recentClaudeAction(line: string, workDir: string): string | undefined {
   let event: unknown;
   try {
     event = JSON.parse(line) as unknown;
@@ -309,7 +309,7 @@ export function recentClaudeAction(line: string, worktreeDir: string): string | 
     if (name === 'Read' || name === 'Edit' || name === 'Write') {
       const rawPath = typeof input.file_path === 'string' ? input.file_path : input.path;
       if (typeof rawPath !== 'string') continue;
-      const repoPath = repoRelativePath(rawPath, worktreeDir);
+      const repoPath = repoRelativePath(rawPath, workDir);
       if (repoPath !== undefined) recent = `${name}: ${repoPath}`;
     } else if (name === 'Bash' && typeof input.command === 'string') {
       const tokens = bashTokens(input.command);
@@ -354,8 +354,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function repoRelativePath(rawPath: string, worktreeDir: string): string | undefined {
-  const root = resolve(worktreeDir);
+function repoRelativePath(rawPath: string, workDir: string): string | undefined {
+  const root = resolve(workDir);
   const absolute = isAbsolute(rawPath) ? resolve(rawPath) : resolve(root, rawPath);
   const rel = relative(root, absolute);
   if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;

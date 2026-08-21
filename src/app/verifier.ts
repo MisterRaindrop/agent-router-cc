@@ -11,6 +11,7 @@ import { dirOf, extensionOf, findExecBitViolations, type ExecBitInput } from '..
 import {
   applyCheck,
   collectDiff,
+  uncommittedSourceFiles,
   listDirFileModes,
   rawDiff,
   worktreeAddDetached,
@@ -47,7 +48,7 @@ function pass(id: string, detail?: string): VerifierCheck {
 
 export interface TaskVerifyRequest {
   repoRoot: string;
-  worktreeDir: string;
+  workDir: string;
   baseSha: string;
   head: string;
   mode?: 'implement' | 'probe';
@@ -55,6 +56,8 @@ export interface TaskVerifyRequest {
   forbiddenGlobs?: string[];
   maxChangedLines?: number;
   verify: string[][]; // argv list; [] = diff/scope/secret only
+  /** Pathspecs excluded when looking for uncommitted files (router's own state). */
+  uncommittedExclude?: readonly string[];
   env: NodeJS.ProcessEnv;
   secretExtraPatterns?: string[];
   buildTimeoutMs?: number;
@@ -63,18 +66,22 @@ export interface TaskVerifyRequest {
 export function verifyTask(req: TaskVerifyRequest): VerifierReport {
   const checks: VerifierCheck[] = [];
 
-  const changes = collectDiff(req.worktreeDir, req.baseSha, req.head);
+  const changes = collectDiff(req.workDir, req.baseSha, req.head);
   if (req.mode === 'probe') {
-    if (changes.length === 0) {
+    // Committed changes AND uncommitted ones. A probe is required to write nothing at all, and
+    // it is the one mode exempt from the closing "commit everything" invariant -- so an
+    // uncommitted file is a probe violation to report here, not a leftover to sweep up.
+    const touched = changes.length + uncommittedSourceFiles(req.workDir, req.uncommittedExclude ?? []).length;
+    if (touched === 0) {
       checks.push(pass('probe_no_diff'));
       return { result: 'PASSED', checks };
     }
-    const files = `${changes.length} file${changes.length === 1 ? '' : 's'}`;
+    const files = `${touched} file${touched === 1 ? '' : 's'}`;
     checks.push(fail('probe_no_diff', `probe wrote ${files}; expected no diff`));
     return { result: 'FAILED', checks };
   }
 
-  const patch = rawDiff(req.worktreeDir, req.baseSha, req.head);
+  const patch = rawDiff(req.workDir, req.baseSha, req.head);
   if (patch.trim() === '') {
     checks.push(fail('diff_applies', 'diff is empty - executor produced no committed change'));
     return { result: 'FAILED', checks };
@@ -123,7 +130,7 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
     const ext = extensionOf(c.path);
     if (ext === '') continue; // no extension -> no sibling grouping to compare against
     const base = c.path.slice(c.path.lastIndexOf('/') + 1);
-    const siblingModes = listDirFileModes(req.worktreeDir, req.baseSha, dirOf(c.path))
+    const siblingModes = listDirFileModes(req.workDir, req.baseSha, dirOf(c.path))
       .filter((s) => s.name !== base && s.name.endsWith(ext))
       .map((s) => s.mode);
     execCandidates.push({ path: c.path, newMode: c.newMode, siblingModes });
@@ -141,7 +148,7 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
   for (const [i, argv] of req.verify.entries()) {
     if (argv.length === 0) continue;
     const r = runCommand(argv, {
-      cwd: req.worktreeDir,
+      cwd: req.workDir,
       env: req.env,
       timeoutMs: req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
     });

@@ -47,9 +47,26 @@ export function runId(n: number): string {
   return `run-${String(n).padStart(3, '0')}`;
 }
 
-/** Branch name for a run, e.g. "router/<id>/run-001". */
+/** Branch name for a run, e.g. "router/<id>/run-001". @deprecated use taskBranch(). */
 export function runBranch(id: string, run: string): string {
   return `router/${id}/${run}`;
+}
+
+/**
+ * The branch a task is developed on, e.g. "router/<id>".
+ *
+ * No run segment: `dispatch` has been one attempt per task since the sync model landed, so the
+ * run dimension was a naming layer over a constant. The `router/` prefix is load-bearing rather
+ * than decorative -- destructive steps assert the current branch starts with it before they
+ * are allowed to reset anything, which is what keeps a reset off the user's own branch.
+ */
+export function taskBranch(id: string): string {
+  return `router/${id}`;
+}
+
+/** Path to a branch's loose ref file. Reading its mtime is a cheap liveness probe. */
+export function branchRefPath(repoRoot: string, branch: string): string {
+  return join(repoRoot, '.git', 'refs', 'heads', ...branch.split('/'));
 }
 
 export function routerPaths(routerDir: string): RouterPaths {

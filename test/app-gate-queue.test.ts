@@ -10,7 +10,7 @@ import { gateYamlPath } from '../src/app/gateConfig.ts';
 import type { RunResult } from '../src/domain/types.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { acquireLock, type LockHandle } from '../src/io/lock.ts';
-import { routerPaths, runBranch } from '../src/io/paths.ts';
+import { routerPaths, taskBranch } from '../src/io/paths.ts';
 import * as store from '../src/io/store.ts';
 import * as fx from '../testkit/gitRepo.ts';
 
@@ -66,7 +66,7 @@ function stageTask(
   mutate: (repo: string) => void,
   base = fixture.base,
 ): string {
-  const branch = runBranch(id, RUN);
+  const branch = taskBranch(id);
   fx.git(fixture.repo, ['checkout', '-q', '-b', branch, base]);
   mutate(fixture.repo);
   const sha = fx.addCommit(fixture.repo, `task ${id}`);

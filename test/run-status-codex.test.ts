@@ -50,7 +50,7 @@ test('Codex status persists only allowlisted tokens, never command arguments or 
   try {
     const status = new RunStatusWriter({
       path,
-      worktreeDir: worktree,
+      workDir: worktree,
       budgetMinutes: 10,
       clock: fixedClock('2026-08-12T00:00:00.000Z'),
     });

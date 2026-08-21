@@ -374,13 +374,28 @@ export function isAncestor(cwd: string, ancestor: string, descendant: string): b
  * checkout: 107 of 110 porcelain entries were build residue inside `contrib/*`). The caller
  * reports these on their own line instead of pretending the tree is clean or bailing out.
  */
-export function submoduleDirty(cwd: string): string[] {
-  const all = tryGit(cwd, ['status', '--porcelain']);
+export function submoduleDirty(cwd: string, exclude: readonly string[] = []): string[] {
+  const scope = pathspec(exclude);
+  const all = tryGit(cwd, ['status', '--porcelain', ...scope]);
   if (!all.ok) return [];
   const ignoring = new Set(
-    tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty']).stdout.split('\n'),
+    tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...scope]).stdout.split('\n'),
   );
   return all.stdout.split('\n').filter((line) => line !== '' && !ignoring.has(line));
+}
+
+/**
+ * Turn exclusion pathspecs into a `git` argument tail, or nothing when there are none.
+ *
+ * Callers pass these to keep router's OWN state out of a commit made on the user's behalf.
+ * `.router/` carries a `*` gitignore, so in a well-formed repo it is invisible anyway -- but
+ * "the user's uncommitted work" and "orchestration state" must not be one decision away from
+ * each other, and a missing or edited .gitignore would otherwise commit router's bookkeeping
+ * into the user's history.
+ */
+function pathspec(exclude: readonly string[]): string[] {
+  if (exclude.length === 0) return [];
+  return ['--', '.', ...exclude.map((path) => `:(exclude,glob)${path}`), ...exclude.map((path) => `:(exclude,glob)${path}/**`)];
 }
 
 /**
@@ -393,8 +408,8 @@ export function submoduleDirty(cwd: string): string[] {
  * `base_sha..HEAD`, so every gate passes without ever seeing it, and the run reports success
  * while unreviewed code sits in the user's checkout.
  */
-export function uncommittedSourceFiles(cwd: string): string[] {
-  const r = tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty']);
+export function uncommittedSourceFiles(cwd: string, exclude: readonly string[] = []): string[] {
+  const r = tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...pathspec(exclude)]);
   if (!r.ok) return [];
   return r.stdout.split('\n').filter((line) => line !== '');
 }
@@ -413,10 +428,14 @@ export function uncommittedSourceFiles(cwd: string): string[] {
  * Carries its own committer identity via -c, so bookkeeping never depends on ambient git
  * config -- fresh containers and CI images often have none.
  */
-export function rescueCommit(cwd: string, message: string): { sha: string; files: string[] } | null {
-  const before = uncommittedSourceFiles(cwd);
+export function rescueCommit(
+  cwd: string,
+  message: string,
+  exclude: readonly string[] = [],
+): { sha: string; files: string[] } | null {
+  const before = uncommittedSourceFiles(cwd, exclude);
   if (before.length === 0) return null;
-  git(cwd, ['add', '-A']);
+  git(cwd, ['add', '-A', ...pathspec(exclude)]);
   const staged = git(cwd, ['diff', '--cached', '--name-only', '-z']);
   const files = splitNul(staged);
   if (files.length === 0) return null; // e.g. only submodule content was dirty

@@ -86,11 +86,14 @@ test('batch dispatch runs one task at a time, in input order', () => {
     assert.deepEqual(out.results.map((result) => result.verifier), ['PASSED', 'PASSED']);
     assert.deepEqual(out.results.map((result) => result.delivery), [null, null]);
     assert.deepEqual(out.results.map((result) => result.delivery_header), ['missing', 'missing']);
-    assert.equal(existsSync(join(dir, '.router', 'worktrees', 'p1', 'run-001')), true);
-    assert.equal(existsSync(join(dir, '.router', 'worktrees', 'p2', 'run-001')), true);
+    // No worktrees at all now -- the whole batch ran in this one checkout.
+    assert.equal(existsSync(join(dir, '.router', 'worktrees', 'p1')), false);
+    assert.equal(existsSync(join(dir, '.router', 'worktrees', 'p2')), false);
     const branches = fx.git(dir, ['branch', '--format=%(refname:short)']);
-    assert.match(branches, /^router\/p1\/run-001$/m);
-    assert.match(branches, /^router\/p2\/run-001$/m);
+    assert.match(branches, /^router\/p1$/m);
+    assert.match(branches, /^router\/p2$/m);
+    // Serial dispatch stacks: p2 was cut from p1, and we are left standing on p2.
+    assert.equal(fx.git(dir, ['branch', '--show-current']).trim(), 'router/p2');
     const metrics = readFileSync(join(dir, '.router', 'metrics.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(metrics.length, 2);
     assert.deepEqual(new Set(metrics.map((row: { task_id: string }) => row.task_id)), new Set(['p1', 'p2']));
@@ -143,6 +146,8 @@ test('batch land --json stays one document listing every merge', () => {
     stageTask(dir, 'p1');
     stageTask(dir, 'p2');
     assert.equal(router(dir, ['dispatch', 'p1', 'p2', '--json'], env).code, 0);
+    // Off the task branch first: choosing what to merge into is the user's decision.
+    fx.git(dir, ['checkout', '-q', 'main']);
     const l = router(dir, ['land', 'p1', 'p2', '--json'], env);
     assert.equal(l.code, 0, l.out);
     const out = JSON.parse(l.out) as { ok: boolean; landed: { id: string; merge_commit: string }[] };

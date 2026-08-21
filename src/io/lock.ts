@@ -141,6 +141,21 @@ function readForAcquire(path: string): LockRead {
   return { kind: 'valid', ...parsed };
 }
 
+/**
+ * Whether `path` is still held under `token`.
+ *
+ * Needed by callers whose beat runs in another process: the beater exits when ownership is
+ * lost, but it cannot tell its parent, so the parent has to ask. Fails closed -- a missing or
+ * corrupt file is not ours.
+ */
+export function ownsLock(path: string, token: string): boolean {
+  try {
+    return parseStored(readFileSync(path, 'utf8'))?.stored.ownerToken === token;
+  } catch {
+    return false;
+  }
+}
+
 /** Read valid public holder information, or null for missing/corrupt contents. */
 export function readLock(path: string): LockInfo | null {
   try {

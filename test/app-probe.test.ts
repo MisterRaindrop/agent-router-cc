@@ -117,7 +117,9 @@ test('probe passes when its executor writes nothing and stores the delivery repo
     assert.equal(existsSync(paths.diffPatch('probe-task', RUN)), false);
     assert.ok(result.delivery);
     assert.match(readFileSync(paths.delivery('probe-task', RUN), 'utf8'), /^Probe delivery report/);
-    assert.equal(fx.git(paths.worktree('probe-task', RUN), ['rev-parse', 'HEAD']).trim(), result.base_sha);
+    // A probe must leave no commit at all, so the task branch still points at the base.
+    assert.equal(fx.git(paths.repoRoot, ['rev-parse', 'HEAD']).trim(), result.base_sha);
+    assert.equal(fx.git(paths.repoRoot, ['branch', '--show-current']).trim(), 'router/probe-task');
   });
 });
 
@@ -141,7 +143,7 @@ test('probe fails with the file count when its executor writes code and leaves n
 function verifyRequest(repo: string, baseSha: string): TaskVerifyRequest {
   return {
     repoRoot: repo,
-    worktreeDir: repo,
+    workDir: repo,
     baseSha,
     head: 'HEAD',
     allowedGlobs: ['src/**'],

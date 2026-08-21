@@ -40,7 +40,7 @@ test('phase and terminal state remain separate and phase durations use the monot
   const { dir, path, worktree } = tempStatus();
   const clock = fixedClock('2026-08-12T00:00:00.000Z');
   try {
-    const status = new RunStatusWriter({ path, worktreeDir: worktree, budgetMinutes: 30, clock });
+    const status = new RunStatusWriter({ path, workDir: worktree, budgetMinutes: 30, clock });
     assert.deepEqual(readStatus(path), {
       phase: 'queued',
       started_at: '2026-08-12T00:00:00.000Z',
@@ -86,7 +86,7 @@ test('activity writes are merged and throttled to one write per two-second windo
   try {
     const status = new RunStatusWriter({
       path,
-      worktreeDir: worktree,
+      workDir: worktree,
       budgetMinutes: 10,
       clock,
       activityThrottleMs: 2_000,
@@ -119,7 +119,7 @@ test('Claude recent_action retains only allowlisted redacted tool metadata', () 
   const clock = fixedClock('2026-08-12T00:00:00.000Z');
   const secret = 'FAKE_SECRET_987654';
   try {
-    const status = new RunStatusWriter({ path, worktreeDir: worktree, budgetMinutes: 10, clock });
+    const status = new RunStatusWriter({ path, workDir: worktree, budgetMinutes: 10, clock });
     status.executorStarting(60_000);
     status.transition('executor_working', 60_000);
     status.noteOutput(
@@ -189,7 +189,7 @@ test('atomic replacement never exposes a partial status document to a concurrent
   const donePath = join(dir, 'done');
   const clock = fixedClock('2026-08-12T00:00:00.000Z');
   try {
-    const status = new RunStatusWriter({ path, worktreeDir: worktree, budgetMinutes: 10, clock });
+    const status = new RunStatusWriter({ path, workDir: worktree, budgetMinutes: 10, clock });
     const readerScript =
       'const fs=require("node:fs");const p=process.argv[1],done=process.argv[2];let reads=0;' +
       'function tick(){try{JSON.parse(fs.readFileSync(p,"utf8"));reads++;}catch(e){' +
@@ -254,9 +254,14 @@ verify: []
 
   const fake = join(repo, `fake-${scenario}.mjs`);
   const scripts: Record<Scenario, string> = {
+    // Commits, because the contract requires it: dispatch has no catch-all commit any more, so a
+    // fake that only wrote a file would end in the closing-invariant failure instead of success.
     success:
       '#!/usr/bin/env node\n' +
-      'import {writeFileSync} from "node:fs";writeFileSync("src/a.ts","export const x = 2;\\n");' +
+      'import {writeFileSync} from "node:fs";import {execFileSync} from "node:child_process";' +
+      'writeFileSync("src/a.ts","export const x = 2;\\n");' +
+      'execFileSync("git",["add","--","src/a.ts"]);' +
+      'execFileSync("git",["-c","user.name=f","-c","user.email=f@l","commit","-q","-m","fake: unit a"]);' +
       'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");',
     task_failed: '#!/usr/bin/env node\nprocess.exit(7);\n',
     timeout: '#!/usr/bin/env node\nsetInterval(()=>{},1000);\n',

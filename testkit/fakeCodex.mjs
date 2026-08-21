@@ -10,6 +10,7 @@
 // back (proving re-attach) and makes a follow-up edit. See fakeCodexResumeMismatch.mjs
 // for the not-re-attached case.
 import { writeFileSync } from 'node:fs';
+import { commitUnit } from './fakeCommit.mjs';
 
 const argv = process.argv.slice(2);
 const isResume = argv[0] === 'exec' && argv[1] === 'resume';
@@ -21,6 +22,7 @@ writeFileSync(
     ? 'export const x = 3; // edited by fake codex (resumed)\n'
     : 'export const x = 2; // edited by fake codex\n',
 );
+commitUnit(isResume ? 'fake: follow-up unit' : 'fake: unit a', ['src/a.ts']);
 
 process.stdout.write(JSON.stringify({ type: 'thread.started', model: 'fake-model-1', thread_id: sid }) + '\n');
 process.stdout.write(

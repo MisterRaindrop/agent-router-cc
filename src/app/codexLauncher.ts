@@ -8,7 +8,7 @@ import { parseClaudeLog, parseCodexLog, type ParsedLog } from './usage.ts';
 // edits files directly (ROUTER_CODEX_BIN / ROUTER_CLAUDE_BIN).
 export interface WorkerContext {
   task: TaskYaml;
-  worktreeDir: string;
+  workDir: string;
   contractMdText: string;
   planExists: boolean;
   taskContext?: { text: string } | null;
@@ -26,7 +26,7 @@ export interface WorkerLauncher {
    * run has to keep the same permission to run that gate. Without it the executor is asked to
    * fix a failure it is no longer allowed to reproduce.
    */
-  buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string, task?: TaskYaml): string[];
+  buildResumeArgv(workDir: string, sessionId: string, feedback: string, task?: TaskYaml): string[];
   /** Parse this executor's own log for usage/model/cost. Defaults to codex. */
   parseLog?: (log: string) => ParsedLog;
 }
@@ -50,7 +50,7 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
         'exec',
         buildPrompt(ctx),
         '-C',
-        ctx.worktreeDir,
+        ctx.workDir,
         '-s',
         'workspace-write',
         '--skip-git-repo-check',
@@ -67,8 +67,8 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
     // directory comes from the spawn (`superviseWorker` sets cwd), making `-C` redundant
     // anyway, and the sandbox is expressed as a config override -- verified honoured, the
     // run header reports the mode it was given.
-    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string): string[] {
-      void worktreeDir; // the supervisor spawns in the worktree; `exec resume` takes no -C
+    buildResumeArgv(workDir: string, sessionId: string, feedback: string): string[] {
+      void workDir; // the supervisor spawns in the worktree; `exec resume` takes no -C
       const argv = [
         bin,
         'exec',
@@ -139,7 +139,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         '--tools',
         'Read,Edit,Write,Bash',
         '--add-dir',
-        ctx.worktreeDir,
+        ctx.workDir,
       ];
       argv.push('--allowedTools', ...bashGrants(verifyCommands));
       if (model !== undefined) argv.push('--model', model);
@@ -149,7 +149,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
     // `claude --resume <session-id> -p <feedback>` continues that session with its
     // context retained. The session-id continuity guard in `router resume` verifies
     // it re-attached.
-    buildResumeArgv(worktreeDir: string, sessionId: string, feedback: string, task?: TaskYaml): string[] {
+    buildResumeArgv(workDir: string, sessionId: string, feedback: string, task?: TaskYaml): string[] {
       const verifyCommands = task === undefined ? [] : gateCommands(task);
       const argv = [
         bin,
@@ -166,7 +166,7 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         '--tools',
         'Read,Edit,Write,Bash',
         '--add-dir',
-        worktreeDir,
+        workDir,
       ];
       argv.push('--allowedTools', ...bashGrants(verifyCommands));
       if (model !== undefined) argv.push('--model', model);
@@ -278,10 +278,18 @@ function buildPrompt(ctx: WorkerContext): string {
     `You own this task start to finish: read the code you are about to change, decide your own\n` +
     `internal steps, implement it, write tests for what you changed, ${gateStep}, then check your\n` +
     `own diff against the scope below before finishing.\n\n` +
+    `COMMIT AS YOU GO. One commit per functional unit, each with its own tests -- a unit being\n` +
+    `something a human can review as one thing. The unit is not the smallest possible change and\n` +
+    `not the whole task: adding a storage access method is file IO, then the storage format, then\n` +
+    `the storage architecture, one commit each; splitting the file IO alone into ten commits is\n` +
+    `as wrong as squashing all three into one. Do NOT wait for green to commit -- the gate runs\n` +
+    `once at the end, so an intermediate commit that does not build yet is expected and fine.\n` +
+    `You must leave NOTHING uncommitted: an uncommitted file is invisible to every gate, so it\n` +
+    `fails the run rather than slipping through. Use only \`git add\` and \`git commit\`; you have\n` +
+    `no permission to checkout, reset, rebase, or move branches, and must not try.\n\n` +
     `Constraints:\n` +
     `- Change ONLY files matching: ${scope}\n` +
     `- Do not touch tests except to make them pass legitimately.\n` +
-    `- Leave changes in the working tree; the orchestrator will commit them.\n` +
     `- Do NOT set up the environment to make a check run: no installing dependencies, no\n` +
     `  creating directories, no editing configuration. If a check cannot run here, say so in\n` +
     `  the report -- an honest "did not run" is useful, a claimed pass that never ran is not.\n` +

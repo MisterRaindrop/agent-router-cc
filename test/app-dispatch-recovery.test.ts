@@ -18,7 +18,7 @@ import * as fx from '../testkit/gitRepo.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { dispatchTask } from '../src/app/dispatch.ts';
-import { worktreeDirty } from '../src/io/git.ts';
+import { uncommittedSourceFiles, worktreeDirty } from '../src/io/git.ts';
 
 const FAKE_EDIT_THEN_FAIL = fileURLToPath(new URL('../testkit/fakeCodexEditThenFail.mjs', import.meta.url));
 
@@ -64,10 +64,10 @@ test('a run that fails after doing work reports the work as recoverable', async 
     const result = await withFakeCodex(FAKE_EDIT_THEN_FAIL, repo, () => dispatchTask(deps, 't1'));
     assert.notEqual(result.exit_class, 'ok');
     assert.equal(result.uncommitted_changes, true);
-    // The claim has to be true: the edit really is still sitting in the worktree.
-    const worktree = paths.worktree('t1', 'run-001');
-    assert.equal(worktreeDirty(worktree), true);
-    assert.match(readFileSync(join(worktree, 'src', 'a.ts'), 'utf8'), /edited before failing/);
+    // The claim has to be true, and the place has changed: the edit is sitting in the user's
+    // own checkout now, not in a worktree they would never have thought to look in.
+    assert.deepEqual(uncommittedSourceFiles(paths.repoRoot, ['.router']), [' M src/a.ts']);
+    assert.match(readFileSync(join(paths.repoRoot, 'src', 'a.ts'), 'utf8'), /edited before failing/);
   } finally {
     fx.cleanup(repo);
   }

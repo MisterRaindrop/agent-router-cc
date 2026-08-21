@@ -3,13 +3,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { writeFileSync } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { commitUnit } from '../../testkit/fakeCommit.mjs';
 
-const id = basename(dirname(process.cwd()));
 const argv = process.argv.slice(2);
 const isResume = argv[0] === 'exec' && argv[1] === 'resume';
+// From the prompt, not from the cwd. The cwd used to be `.router/worktrees/<id>/run-001`, so its
+// parent directory happened to be the task id; the cwd is the shared repository root now.
+// A resume carries no prompt at all -- only the session id and the feedback -- so there the id
+// comes back out of the session id this same fake minted on the first run.
+const prompt = argv.find((arg) => /^task: \S+$/m.test(arg)) ?? '';
+const id = isResume
+  ? (argv[2] ?? '').replace(/^fake-session-/, '')
+  : /^task: (\S+)$/m.exec(prompt)?.[1];
+if (id === undefined || id === '') {
+  process.stderr.write('fakeCodexDelivery could not work out its task id\n');
+  process.exit(9);
+}
 const sessionId = isResume ? (argv[2] ?? `fake-session-${id}`) : `fake-session-${id}`;
 writeFileSync('src/a.ts', `export const x = ${isResume ? 3 : 2}; // delivery fake for ${id}\n`);
+// Not committed on the conflict path: an executor reporting CONTRACT_CONFLICT is told to undo
+// its experiment, so leaving the edit uncommitted is the faithful simulation.
+if (!id.startsWith('contract-conflict')) commitUnit(`fake: unit for ${id}`, ['src/a.ts']);
 
 let finalMessage = `${isResume ? 'Resumed delivery' : 'Delivery report'} for ${id}.`;
 if (id.startsWith('contract-conflict')) {

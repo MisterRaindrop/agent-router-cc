@@ -25,7 +25,7 @@ const CTX = {
     max_wall_minutes: 1,
     allowed_globs: ['src/**'],
   },
-  worktreeDir: '/tmp/router-worktree',
+  workDir: '/tmp/router-worktree',
   contractMdText: '# Goal\nEdit src/a.ts.',
   planExists: false,
 };
@@ -40,7 +40,7 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
       max_wall_minutes: 1,
       allowed_globs: ['src/**'],
     },
-    worktreeDir: '/tmp/router-worktree',
+    workDir: '/tmp/router-worktree',
     contractMdText: '# Goal\nEdit src/a.ts.',
     planExists: false,
   });

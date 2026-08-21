@@ -222,7 +222,22 @@ export interface RunResult {
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
   /** What the resumed run actually reported: another id, or `null` for none at all. */
   resume_reported_session?: string | null;
-  base_sha?: string; // commit the worktree branch was created from (diff base; used by resume)
+  base_sha?: string; // commit the task branch was created from (diff base; used by resume)
+  /** The task branch this run developed on. The final report has to name it: the user is left
+   *  standing on it, and router never merges or switches back for them. */
+  branch?: string;
+  /** Step 4: the user's own uncommitted work, committed onto their branch before anything moved.
+   *  Present only when there was something to rescue -- a clean tree gets no empty commit. */
+  rescue_sha?: string;
+  /** Commits made solely so a destructive reset could not lose them. Unreachable after the
+   *  reset, recoverable by sha -- which is the whole reason they are reported. */
+  discarded_shas?: string[];
+  /** Step 9, the closing invariant, checked before verification and reported either way.
+   *  A run that fails it is not verified and does not claim completion. */
+  closeout?: { ok: true } | { ok: false; reason: string; files: string[] };
+  /** Submodule content dirt seen in the checkout. Not the user's work and not rescuable (it
+   *  lives in another repository), so it is reported rather than acted on. */
+  dirty_submodules?: string[];
   // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
   // Set so a caller can recover work from a run that was killed after it had finished.
   uncommitted_changes?: boolean;

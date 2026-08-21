@@ -26,7 +26,7 @@ function baseSpec(dir: string, script: string, over: Partial<SuperviseSpec> = {}
     env: process.env,
     logPath: join(dir, 'logs', 'worker.log'),
     heartbeatPath: join(dir, 'heartbeat'),
-    watchDir: dir,
+    watchPaths: [dir],
     maxWallMs: 10_000,
     stallMs: 10_000,
     pollIntervalMs: 50,
