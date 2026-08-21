@@ -85,6 +85,22 @@ test('hooks.json wires the PreToolUse guard and the guard script exists', () => 
 const COMMANDS = new URL('../commands/', import.meta.url);
 const commandFiles = (): string[] => readdirSync(COMMANDS).filter((f) => f.endsWith('.md'));
 
+// The command menu shows each file's `description`, so a stale one is the first thing a user
+// reads -- and it is invisible to every other test. `list.md` still advertised worktrees after
+// they were gone, which is how this assertion came to exist.
+test('no command file still advertises a removed mechanism', () => {
+  for (const file of commandFiles()) {
+    const body = readFileSync(new URL(file, COMMANDS), 'utf8');
+    const description = frontmatter(body).description ?? '';
+    for (const gone of [/worktree/i, /concurrent/i, /in parallel/i, /--max-parallel/]) {
+      assert.doesNotMatch(description, gone, `${file} description: ${description}`);
+    }
+  }
+  // go.md may still SAY "worktree" -- it explains why there isn't one -- but only in the body.
+  const go = readFileSync(new URL('go.md', COMMANDS), 'utf8');
+  assert.match(go, /does not get a\nseparate worktree, because/);
+});
+
 test('the six flow commands all exist', () => {
   const present = new Set(commandFiles());
   for (const stage of ['brainstorm', 'design', 'design-review', 'workplan', 'go', 'review']) {
