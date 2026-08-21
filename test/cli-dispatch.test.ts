@@ -62,7 +62,7 @@ test('dispatch -> land: synchronous run to a verified diff, then merge', () => {
     const sha = /-> ([0-9a-f]{12})/.exec(l.out)?.[1];
     assert.ok(sha !== undefined, `land output should carry the merge commit: ${l.out}`);
     assert.match(fx.git(dir, ['show', '--stat', sha]), /src\/a\.ts/);
-    const landed = JSON.parse(readFileSync(join(dir, '.router', 'tasks', 'demo', 'runs', 'run-001', 'result.json'), 'utf8'));
+    const landed = JSON.parse(readFileSync(join(dir, '.router', 'tasks', 'demo', 'result.json'), 'utf8'));
     assert.match(landed.merge_commit, new RegExp(`^${sha}`));
     // No worktree is created any more, and land deletes the branch it merged.
     assert.equal(existsSync(join(dir, '.router', 'worktrees', 'demo')), false);
@@ -155,10 +155,10 @@ test('dispatch persists delivery reports and surfaces header status', () => {
 
     const missing = dispatchJson('delivery-missing');
     assert.equal(missing.delivery_header, 'missing');
-    assert.match(String(missing.delivery), /\/\.router\/tasks\/delivery-missing\/runs\/run-001\/DELIVERY\.md$/);
+    assert.match(String(missing.delivery), /\/\.router\/tasks\/delivery-missing\/DELIVERY\.md$/);
     assert.equal(readFileSync(missing.delivery as string, 'utf8'), 'Delivery report for delivery-missing.');
     const missingPatch = readFileSync(
-      join(dir, '.router', 'tasks', 'delivery-missing', 'runs', 'run-001', 'diff.patch'),
+      join(dir, '.router', 'tasks', 'delivery-missing', 'diff.patch'),
       'utf8',
     );
     assert.doesNotMatch(missingPatch, /DELIVERY\.md|Delivery report/);
@@ -166,7 +166,7 @@ test('dispatch persists delivery reports and surfaces header status', () => {
     const valid = dispatchJson('delivery-valid');
     assert.equal(valid.delivery_header, 'ok');
     const validResult = JSON.parse(
-      readFileSync(join(dir, '.router', 'tasks', 'delivery-valid', 'runs', 'run-001', 'result.json'), 'utf8'),
+      readFileSync(join(dir, '.router', 'tasks', 'delivery-valid', 'result.json'), 'utf8'),
     ) as { delivery: { header: { task: string }; header_error?: string } };
     assert.equal(validResult.delivery.header.task, 'delivery-valid');
     assert.equal(validResult.delivery.header_error, undefined);
@@ -174,7 +174,7 @@ test('dispatch persists delivery reports and surfaces header status', () => {
     const mismatch = dispatchJson('delivery-mismatch');
     assert.match(String(mismatch.delivery_header), /task mismatch/);
     const mismatchResult = JSON.parse(
-      readFileSync(join(dir, '.router', 'tasks', 'delivery-mismatch', 'runs', 'run-001', 'result.json'), 'utf8'),
+      readFileSync(join(dir, '.router', 'tasks', 'delivery-mismatch', 'result.json'), 'utf8'),
     ) as { verifier: { result: string }; delivery: { path: string; header_error: string } };
     assert.equal(mismatchResult.verifier.result, 'PASSED');
     assert.match(mismatchResult.delivery.header_error, /^task mismatch:/);
@@ -223,7 +223,7 @@ test('contract conflict overrides exit 0, creates no diff or verifier result, an
     assert.equal(out.verifier, null);
     assert.equal(out.commands_run, 1);
 
-    const runDir = join(dir, '.router', 'tasks', 'contract-conflict', 'runs', 'run-001');
+    const runDir = join(dir, '.router', 'tasks', 'contract-conflict');
     const result = JSON.parse(readFileSync(join(runDir, 'result.json'), 'utf8')) as Record<string, unknown>;
     assert.equal(result.exit_class, 'contract_conflict');
     assert.equal(result.conflict, true);
@@ -292,7 +292,7 @@ test('dispatch reports deterministic risk escalation and writes routing metrics'
     assert.match(dispatch.out, /RISK RAISED to high: invariant:src\/\*\*/);
 
     const result = JSON.parse(
-      readFileSync(join(dir, '.router', 'tasks', 'risk-raised', 'runs', 'run-001', 'result.json'), 'utf8'),
+      readFileSync(join(dir, '.router', 'tasks', 'risk-raised', 'result.json'), 'utf8'),
     ) as { risk: string; risk_raised_by: string[]; commands_run: number };
     assert.equal(result.risk, 'high');
     assert.deepEqual(result.risk_raised_by, ['invariant:src/**']);
@@ -442,7 +442,7 @@ test('dispatch runs gate.yaml reset and picks the clean gate when a trigger is t
 
     // ...and the run record names which one it was, so the evidence is not just a side effect.
     const result = JSON.parse(
-      readFileSync(join(dir, '.router', 'tasks', 'gated', 'runs', 'run-001', 'result.json'), 'utf8'),
+      readFileSync(join(dir, '.router', 'tasks', 'gated', 'result.json'), 'utf8'),
     ) as { verifier: { checks: { id: string; ok: boolean }[] } };
     const ids = result.verifier.checks.map((check) => check.id);
     assert.ok(ids.includes('reset'), ids.join(','));

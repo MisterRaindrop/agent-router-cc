@@ -76,7 +76,7 @@ test('batch dispatch runs one task at a time, in input order', () => {
     assert.equal(out.ok, true);
     assert.equal(out.parallel, undefined, 'a pool size is still being reported');
     const windows = ['p1', 'p2'].map((id) =>
-      JSON.parse(readFileSync(join(dir, '.router', 'tasks', id, 'runs', 'run-001', 'result.json'), 'utf8')),
+      JSON.parse(readFileSync(join(dir, '.router', 'tasks', id, 'result.json'), 'utf8')),
     );
     assert.ok(
       Date.parse(windows[1]!.started_at) >= Date.parse(windows[0]!.ended_at),
@@ -115,7 +115,7 @@ test('batch dispatch keeps every task diff scoped to its own file', () => {
     assert.equal(d.code, 0, d.out);
     for (const id of ['p1', 'p2']) {
       const other = id === 'p1' ? 'p2' : 'p1';
-      const patch = readFileSync(join(dir, '.router', 'tasks', id, 'runs', 'run-001', 'diff.patch'), 'utf8');
+      const patch = readFileSync(join(dir, '.router', 'tasks', id, 'diff.patch'), 'utf8');
       assert.match(patch, new RegExp(`src/${id}\\.ts`));
       assert.doesNotMatch(patch, new RegExp(`src/${other}\\.ts`));
     }

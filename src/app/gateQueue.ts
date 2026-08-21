@@ -20,7 +20,7 @@ import {
 import { buildWorkerEnv } from '../io/env.ts';
 import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
-import { runId, taskBranch, type RouterPaths } from '../io/paths.ts';
+import { taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker, type SupervisionOutcome } from '../io/supervisor.ts';
@@ -31,7 +31,6 @@ export interface GateQueueDeps {
   clock: Clock;
 }
 
-const RUN = runId(1);
 const LOCK_WAIT_MINUTES_DEFAULT = 60;
 const GATE_WALL_MINUTES_DEFAULT = 180;
 const LOCK_HEARTBEAT_MS = 20_000;
@@ -39,12 +38,11 @@ const LOCK_HEARTBEAT_MS = 20_000;
 function persistGate(
   paths: RouterPaths,
   taskId: string,
-  run: string,
   result: RunResult,
   gate: GateResult,
 ): GateResult {
   result.gate = gate;
-  store.writeResult(paths, taskId, run, result);
+  store.writeResult(paths, taskId, result);
   return gate;
 }
 
@@ -63,8 +61,7 @@ export async function runQueueGate(
     throw new Error('runQueueGate requires gate mode "queue"');
   }
 
-  const run = RUN;
-  const result = store.readResult(paths, taskId, run);
+  const result = store.readResult(paths, taskId);
   if (result === null) return { ok: false, reason: 'result_missing' };
   if (result.exit_class === 'contract_conflict') {
     return { ok: false, reason: 'contract_conflict' };
@@ -143,7 +140,7 @@ export async function runQueueGate(
       cwd: paths.repoRoot,
       env,
       logPath,
-      heartbeatPath: paths.heartbeat(taskId, run),
+      heartbeatPath: paths.heartbeat(taskId),
       watchPaths: [paths.repoRoot, join(paths.repoRoot, '.git')],
       maxWallMs,
       stallMs: maxWallMs,
@@ -174,7 +171,7 @@ export async function runQueueGate(
     } catch {
       mergeAbort(paths.repoRoot);
       resetHardTracked(paths.repoRoot, baseSha);
-      return persistGate(paths, taskId, run, result, {
+      return persistGate(paths, taskId, result, {
         ok: false,
         reason: 'apply_conflict',
       });
@@ -185,7 +182,7 @@ export async function runQueueGate(
     const selected = selectGate(config, changes);
     if (selected === null) throw new Error('configured gate has no commands');
     const { level, commands } = selected;
-    const gateLog = paths.gateLog(taskId, run);
+    const gateLog = paths.gateLog(taskId);
     const maxWallMs = (config.gate_wall_minutes ?? GATE_WALL_MINUTES_DEFAULT) * 60_000;
     const env = buildWorkerEnv(process.env, config.env ?? []);
 
@@ -199,7 +196,7 @@ export async function runQueueGate(
           // reset failure prevented every gate command from starting.
           writeFileSync(gateLog, '', { flag: 'a' });
           resetHardTracked(paths.repoRoot, baseSha);
-          return persistGate(paths, taskId, run, result, {
+          return persistGate(paths, taskId, result, {
             ok: false,
             reason: 'reset_failed',
             level,
@@ -219,7 +216,7 @@ export async function runQueueGate(
         const gateOutcome = await supervise(argv, gateLog, maxWallMs, env);
         if (gateOutcome.exitClass !== 'ok') {
           resetHardTracked(paths.repoRoot, baseSha);
-          return persistGate(paths, taskId, run, result, {
+          return persistGate(paths, taskId, result, {
             ok: false,
             reason: 'gate_failed',
             level,
@@ -246,7 +243,7 @@ export async function runQueueGate(
       head_sha: mergeSha,
       log: gateLog,
     };
-    persistGate(paths, taskId, run, result, gate);
+    persistGate(paths, taskId, result, gate);
     keepMerge = true;
     return gate;
   } finally {

@@ -26,7 +26,7 @@ const SUBCOMMAND_PROGRAMS = new Set([
 ]);
 
 const TIMING_KEY: Partial<Record<RunPhase, keyof RunPhaseTimings>> = {
-  worktree: 't_worktree',
+  worktree: 't_worktree', // preparation: rescue + branch. Name kept; see note below.
   executor_starting: 't_launch',
   executor_working: 't_exec',
   gating: 't_gate',

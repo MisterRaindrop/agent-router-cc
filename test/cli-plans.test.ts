@@ -100,22 +100,27 @@ test('plans shows current and legacy revisions plus the furthest recognized docu
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /id\s+revision\s+stage\s+critique\s+decisions\s+locked/);
-    assert.match(text.out, /plan-a\s+rev-1\s+plan_approved\s+2\s+yes\s+-/);
-    assert.match(text.out, /plan-b\s+rev-9\s+executing\s+1\s+-\s+yes/);
-    assert.match(text.out, /plan-c\s+unknown\s+-\s+-\s+-\s+-/);
-    assert.match(text.out, /plan-d\s+unknown\s+design_approved\s+-\s+-\s+-/);
-    assert.match(text.out, /plan-e\s+unknown\s+-\s+-\s+-\s+-/);
+    // `design` is a separate column from `revision`, because they are separate documents with
+    // separate revisions. Without it a design at revision 3 with no plan yet reported
+    // "unknown" -- see plan-d, where the design revision is the only revision that exists.
+    assert.match(text.out, /id\s+design\s+revision\s+stage\s+critique\s+decisions\s+locked/);
+    assert.match(text.out, /plan-a\s+-\s+rev-1\s+plan_approved\s+2\s+yes\s+-/);
+    assert.match(text.out, /plan-b\s+-\s+rev-9\s+executing\s+1\s+-\s+yes/);
+    assert.match(text.out, /plan-c\s+-\s+unknown\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /plan-d\s+3\s+unknown\s+design_approved\s+-\s+-\s+-/);
+    // plan-e has an unparsable PLAN.md over a design at revision 2: the design revision is
+    // still reported, and the plan's is still `unknown` rather than borrowing the design's.
+    assert.match(text.out, /plan-e\s+2\s+unknown\s+-\s+-\s+-\s+-/);
 
     const json = router(dir, ['plans', '--json']);
     assert.equal(json.code, 0, json.out);
     const rows = (JSON.parse(json.out) as { plans: Record<string, unknown>[] }).plans;
     assert.deepEqual(rows, [
-      { id: 'plan-a', plan_revision: 'rev-1', stage: 'plan_approved', critique_round: 2, decisions: true, locked: false },
-      { id: 'plan-b', plan_revision: 'rev-9', stage: 'executing', critique_round: 1, decisions: false, locked: true },
-      { id: 'plan-c', plan_revision: null, stage: null, critique_round: null, decisions: false, locked: false },
-      { id: 'plan-d', plan_revision: null, stage: 'design_approved', critique_round: null, decisions: false, locked: false },
-      { id: 'plan-e', plan_revision: null, stage: null, critique_round: null, decisions: false, locked: false },
+      { id: 'plan-a', plan_revision: 'rev-1', design_revision: null, stage: 'plan_approved', critique_round: 2, decisions: true, locked: false },
+      { id: 'plan-b', plan_revision: 'rev-9', design_revision: null, stage: 'executing', critique_round: 1, decisions: false, locked: true },
+      { id: 'plan-c', plan_revision: null, design_revision: null, stage: null, critique_round: null, decisions: false, locked: false },
+      { id: 'plan-d', plan_revision: null, design_revision: '3', stage: 'design_approved', critique_round: null, decisions: false, locked: false },
+      { id: 'plan-e', plan_revision: null, design_revision: '2', stage: null, critique_round: null, decisions: false, locked: false },
     ]);
   } finally {
     fx.cleanup(dir);

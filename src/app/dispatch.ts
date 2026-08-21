@@ -90,7 +90,14 @@ export interface PreparedRun {
   dirtySubmodules: string[];
 }
 
-const RUN = fmtRunId(1); // sync model: one attempt per task
+/**
+ * The metrics label for an executor row (MetricRecord.run_id).
+ *
+ * Not a path any more -- run artifacts live directly in `tasks/<id>/`. It survives only as a
+ * label in the append-only metrics file, where a constant reads better than a field that means
+ * different things in old and new rows.
+ */
+const RUN_LABEL = fmtRunId(1);
 
 // How long a silent executor is tolerated before the stall watchdog kills it. The signal is
 // coarse -- log growth plus worktree mtime -- and a high-effort model reasoning between tool
@@ -153,7 +160,7 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
   const { task, contractMdText } = loadTask(paths, id);
   const workDir = paths.repoRoot;
   const status = new RunStatusWriter({
-    path: paths.runStatus(id, RUN),
+    path: paths.runStatus(id),
     workDir,
     budgetMinutes: task.max_wall_minutes,
     clock: deps.clock,
@@ -202,7 +209,7 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
       baseSha,
       context,
       workers,
-      logPath: paths.workerLog(id, RUN),
+      logPath: paths.workerLog(id),
       status,
       rescue,
       dirtySubmodules,
@@ -222,7 +229,7 @@ async function runPreparedObserved(
   const { paths } = deps;
   const { id, task, contractMdText, workDir, branch, baseSha, context, workers, logPath } = prep;
   const refPath = branchRefPath(workDir, branch);
-  if (task.mode === 'probe') rmSync(paths.diffPatch(id, RUN), { force: true });
+  if (task.mode === 'probe') rmSync(paths.diffPatch(id), { force: true });
   // Verification runs repository-controlled commands: never expose provider keys,
   // proxy credentials, or login-session context to them.
   const verifyEnv = buildWorkerEnv(process.env);
@@ -255,7 +262,7 @@ async function runPreparedObserved(
       cwd: workDir,
       env: executorEnv,
       logPath,
-      heartbeatPath: paths.heartbeat(id, RUN),
+      heartbeatPath: paths.heartbeat(id),
       watchPaths: [refPath],
       maxWallMs: task.max_wall_minutes * 60_000,
       stallMs,
@@ -337,7 +344,6 @@ async function runPreparedObserved(
   const modelMismatch = exitClass !== 'ok' && exitClass !== 'contract_conflict' && detectModelMismatch(finalLog);
 
   const result: RunResult = {
-    run_id: RUN,
     task_id: id,
     attempt_number: 1,
     exit_class: exitClass,
@@ -364,9 +370,9 @@ async function runPreparedObserved(
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
     ...(parsed.sessionId ? { session_id: parsed.sessionId } : {}),
   };
-  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  const delivery = persistDelivery(paths, id, task, parsed.finalMessage);
   if (delivery !== undefined) result.delivery = delivery;
-  if (conflict) rmSync(paths.diffPatch(id, RUN), { force: true });
+  if (conflict) rmSync(paths.diffPatch(id), { force: true });
   // A run that did not end `ok` is never committed, so its work would otherwise look lost.
   // Say plainly that it is still on disk: an executor killed after it had already finished is
   // recoverable, and silently discarding that work is the worse failure.
@@ -377,7 +383,7 @@ async function runPreparedObserved(
   if (exitClass === 'ok') {
     if (task.mode !== 'probe') {
       const patch = rawDiff(workDir, baseSha, 'HEAD');
-      writeFileSync(paths.diffPatch(id, RUN), patch);
+      writeFileSync(paths.diffPatch(id), patch);
       result.diff_sha = createHash('sha256').update(patch).digest('hex');
     }
     prep.status.transition('verify');
@@ -405,7 +411,7 @@ async function runPreparedObserved(
   const phaseTimings = prep.status.terminal(
     terminalStateFor(result.exit_class, result.verifier?.result === 'PASSED'),
   );
-  store.writeResult(paths, id, RUN, result);
+  store.writeResult(paths, id, result);
   appendMetric(deps, result, task, context, phaseTimings);
   return result;
 }
@@ -531,7 +537,7 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
  */
 export async function resumeTask(deps: DispatchDeps, id: string, feedback: string): Promise<RunResult> {
   const { paths } = deps;
-  const prev = store.readResult(paths, id, RUN);
+  const prev = store.readResult(paths, id);
   if (prev === null) throw new Error(`no prior dispatch for ${id}; run \`router dispatch ${id}\` first`);
   const priorSession = prev.session_id ?? null;
   if (!priorSession) throw new Error(`prior run for ${id} has no session id; resume unavailable -- re-dispatch instead`);
@@ -556,7 +562,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     ...(prev.worker.effort ? { effort: prev.worker.effort } : {}),
   };
   const launcher = makeLauncher(used);
-  const logPath = paths.workerLog(id, RUN);
+  const logPath = paths.workerLog(id);
   writeFileSync(logPath, '');
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
@@ -566,7 +572,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     cwd: workDir,
     env: executorEnv,
     logPath,
-    heartbeatPath: paths.heartbeat(id, RUN),
+    heartbeatPath: paths.heartbeat(id),
     watchPaths: [refPath],
     maxWallMs: task.max_wall_minutes * 60_000,
     stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
@@ -587,7 +593,6 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== 'ok' && !conflict && detectModelMismatch(log);
   const result: RunResult = {
-    run_id: RUN,
     task_id: id,
     attempt_number: prev.attempt_number + 1,
     exit_class: conflict ? 'contract_conflict' : mismatch ? 'task_failed' : exitClass,
@@ -610,9 +615,9 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     ...(parsed.usage !== null ? { tokens: { input: parsed.usage.input, output: parsed.usage.output } } : {}),
     ...(costUsd !== null ? { cost_usd: costUsd } : {}),
   };
-  const delivery = persistDelivery(paths, id, RUN, task, parsed.finalMessage);
+  const delivery = persistDelivery(paths, id, task, parsed.finalMessage);
   if (delivery !== undefined) result.delivery = delivery;
-  if (conflict) rmSync(paths.diffPatch(id, RUN), { force: true });
+  if (conflict) rmSync(paths.diffPatch(id), { force: true });
   // A run that did not end `ok` is never committed, so its work would otherwise look lost.
   // Say plainly that it is still on disk: an executor killed after it had already finished is
   // recoverable, and silently discarding that work is the worse failure.
@@ -631,13 +636,13 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
         reason: 'uncommitted source files remain after resume; the executor did not commit its last unit',
         files: leftover,
       };
-      store.writeResult(paths, id, RUN, result);
+      store.writeResult(paths, id, result);
       appendMetric(deps, result, task, null);
       return result;
     }
     result.closeout = { ok: true };
     const patch = rawDiff(workDir, baseSha, 'HEAD');
-    writeFileSync(paths.diffPatch(id, RUN), patch);
+    writeFileSync(paths.diffPatch(id), patch);
     result.diff_sha = createHash('sha256').update(patch).digest('hex');
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
@@ -653,7 +658,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     attachEffectiveRisk(result, task, workDir, baseSha);
   }
 
-  store.writeResult(paths, id, RUN, result);
+  store.writeResult(paths, id, result);
   appendMetric(deps, result, task, null);
   return result;
 }
@@ -669,13 +674,12 @@ function safeRead(path: string): string {
 function persistDelivery(
   paths: RouterPaths,
   id: string,
-  run: string,
   task: TaskYaml,
   finalMessage: string | null | undefined,
 ): RunResult['delivery'] | undefined {
   if (finalMessage == null || finalMessage.length === 0) return undefined;
 
-  const path = paths.delivery(id, run);
+  const path = paths.delivery(id);
   try {
     writeFileSync(path, finalMessage);
   } catch (e) {
@@ -753,7 +757,7 @@ function appendMetric(
         }
       : {}),
     role: 'executor',
-    run_id: result.run_id,
+    run_id: RUN_LABEL,
     attempt_number: 1,
     model: result.worker.model ?? null,
     executor: result.worker.kind,

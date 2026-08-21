@@ -41,7 +41,7 @@ test('Codex command_execution extracts the real command through its login-shell 
 
 test('Codex status persists only allowlisted tokens, never command arguments or secrets', () => {
   const dir = mkdtempSync(join(tmpdir(), 'router-status-codex-'));
-  const path = join(dir, 'runs', 'run-001', 'status.json');
+  const path = join(dir, 'status.json');
   const worktree = join(dir, 'worktree');
   // Named `planted`, not `secret`: a `secret = '<20+ chars with digits>'` line is exactly
   // what router's own secret gate flags, and this fixture would trip it on every diff.

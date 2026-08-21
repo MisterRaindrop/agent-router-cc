@@ -181,8 +181,8 @@ test('dispatch records bound task-context metrics and keeps context out of the w
     assert.equal(metrics[0]!.plan_revision, 'rev-1');
 
     assert.equal(
-      readFileSync(withContext.paths.diffPatch('t1', 'run-001'), 'utf8'),
-      readFileSync(withoutContext.paths.diffPatch('t1', 'run-001'), 'utf8'),
+      readFileSync(withContext.paths.diffPatch('t1'), 'utf8'),
+      readFileSync(withoutContext.paths.diffPatch('t1'), 'utf8'),
     );
     assert.equal(existsSync(join(withContext.paths.worktree('t1', 'run-001'), 'TASK_CONTEXT.md')), false);
   } finally {
@@ -205,7 +205,7 @@ test('a stale task context fails before a worktree or executor is started', asyn
       /base_sha mismatch.*context describes "stale-base-sha".*dispatch base is "[0-9a-f]{40}".*regenerate/s,
     );
     assert.equal(existsSync(paths.worktree('t1', 'run-001')), false);
-    assert.equal(existsSync(paths.workerLog('t1', 'run-001')), false);
+    assert.equal(existsSync(paths.workerLog('t1')), false);
   } finally {
     fx.cleanup(repo);
   }

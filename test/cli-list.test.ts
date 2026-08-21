@@ -11,7 +11,6 @@ import * as fx from '../testkit/gitRepo.ts';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const NODE = process.execPath;
-const RUN = 'run-001';
 
 function router(dir: string, argv: string[]): { code: number; out: string } {
   try {
@@ -29,11 +28,11 @@ function writeTask(dir: string, id: string, title: string): void {
 }
 
 function writeResult(dir: string, id: string, extra: Record<string, unknown>): void {
-  const runDir = join(dir, '.router', 'tasks', id, 'runs', RUN);
+  const runDir = join(dir, '.router', 'tasks', id);
   mkdirSync(runDir, { recursive: true });
   writeFileSync(
     join(runDir, 'result.json'),
-    JSON.stringify({ run_id: RUN, task_id: id, exit_class: 'completed', ...extra }),
+    JSON.stringify({ task_id: id, exit_class: 'completed', ...extra }),
   );
 }
 

@@ -255,7 +255,7 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
         (result.closeout.files.length > 0 ? `\n  ${result.closeout.files.join('\n  ')}` : '')
       : '';
   if (result.conflict === true || result.exit_class === 'contract_conflict') {
-    const report = result.delivery?.path ?? `.router/tasks/${id}/runs/${result.run_id}/DELIVERY.md`;
+    const report = result.delivery?.path ?? `.router/tasks/${id}/DELIVERY.md`;
     return `${id}: CONTRACT CONFLICT (executor ${who}${sw}); nothing verified; the plan needs revising; report: ${report}${where}${rescued}`;
   }
   const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
@@ -323,11 +323,11 @@ const land: Handler = (ctx) => {
   const ids = requireIds(ctx);
   const landed: { id: string; merged: string; merge_commit: string }[] = [];
   for (const id of ids) {
-    const result = store.readResult(paths, id, RUN);
+    const result = store.readResult(paths, id);
     const prior = landed.length > 0 ? `; already landed: ${landed.map((l) => l.id).join(', ')}` : '';
     if (result === null) throw new CliError(`${id}: no dispatch result to land (run \`router dispatch ${id}\` first)${prior}`, 1);
     if (result.conflict === true || result.exit_class === 'contract_conflict') {
-      const report = result.delivery?.path ?? paths.delivery(id, RUN);
+      const report = result.delivery?.path ?? paths.delivery(id);
       throw new CliError(`${id}: contract conflict; refusing to land -- the plan needs revising; report: ${report}${prior}`, 1);
     }
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
@@ -354,7 +354,7 @@ const land: Handler = (ctx) => {
     // later review or post-mortem has no way back to the task's diff.
     const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
     deleteBranch(paths.repoRoot, branch);
-    store.writeResult(paths, id, RUN, { ...result, merge_commit: mergeCommit });
+    store.writeResult(paths, id, { ...result, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
   // Report once, after the loop: a batch has to leave stdout as ONE json document, so
@@ -423,11 +423,11 @@ const result: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const id = requireId(ctx);
   const run = flagStr(ctx.args.flags, 'run') ?? RUN;
-  const res = store.readResult(paths, id, run);
+  const res = store.readResult(paths, id);
   if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
   let tail = '';
   try {
-    tail = readFileSync(paths.workerLog(id, run), 'utf8').split('\n').slice(-50).join('\n');
+    tail = readFileSync(paths.workerLog(id), 'utf8').split('\n').slice(-50).join('\n');
   } catch {
     /* no log */
   }
@@ -467,8 +467,8 @@ const list: Handler = (ctx) => {
     } catch {
       /* missing/invalid task.yaml */
     }
-    const res = store.readResult(paths, id, RUN);
-    const live = readRunStatus(paths.runStatus(id, RUN));
+    const res = store.readResult(paths, id);
+    const live = readRunStatus(paths.runStatus(id));
     const status = statusLabel(res, live, nowMs);
     // Was "is there a worktree on disk". There are no per-task worktrees any more, so the
     // question that matters is whether the task's branch is still around to review or merge.
@@ -569,13 +569,19 @@ const plans: Handler = (ctx) => {
       /* an unreadable existing PLAN.md still owns the stage, which therefore stays unknown */
     }
     let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
-    if (!hasPlan) {
-      try {
-        stage = documentStage(documentFrontmatter(readFileSync(join(paths.planDir(id), 'DESIGN.md'), 'utf8')), DESIGN_STATUSES);
-      } catch {
-        /* missing or unreadable DESIGN.md -- stage stays unknown */
-      }
+    // The design's own revision, read separately from the plan's. Without this the design stage
+    // was unobservable from the tooling: `revision` reads PLAN.md, so a design at revision 3
+    // with no plan yet showed as "unknown" -- while /router:design is required to freeze a
+    // bumped revision at every approval. Two documents, two revisions, two columns.
+    let designRevision: string | null = null;
+    let designFrontmatter: Record<string, unknown> | null = null;
+    try {
+      designFrontmatter = documentFrontmatter(readFileSync(join(paths.planDir(id), 'DESIGN.md'), 'utf8'));
+      designRevision = scalarText(designFrontmatter?.revision);
+    } catch {
+      /* missing or unreadable DESIGN.md -- no design revision to report */
     }
+    if (!hasPlan) stage = documentStage(designFrontmatter, DESIGN_STATUSES);
     let critiqueRound: number | null = null;
     try {
       critiqueRound = highestCritiqueRound(readdirSync(paths.planDir(id)));
@@ -585,6 +591,7 @@ const plans: Handler = (ctx) => {
     return {
       id,
       plan_revision: planRevision(planFrontmatter),
+      design_revision: designRevision,
       stage,
       critique_round: critiqueRound,
       decisions: existsSync(paths.specDecisions(id)),
@@ -597,16 +604,18 @@ const plans: Handler = (ctx) => {
       Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
     const idWidth = width('id', 24, rows.map((r) => r.id));
     const revisionWidth = width('revision', 12, rows.map((r) => r.plan_revision ?? 'unknown'));
+    const designWidth = width('design', 8, rows.map((r) => r.design_revision ?? '-'));
     const stageWidth = width('stage', 8, rows.map((r) => r.stage ?? '-'));
     const critiqueWidth = width('critique', 10, rows.map((r) => r.critique_round === null ? '-' : String(r.critique_round)));
     const decisionsWidth = width('decisions', 12, rows.map((r) => r.decisions ? 'yes' : '-'));
     const lines = [
       `Plans (${rows.length}):`,
-      pad('id', idWidth) + pad('revision', revisionWidth) + pad('stage', stageWidth) + pad('critique', critiqueWidth) + pad('decisions', decisionsWidth) + 'locked',
+      pad('id', idWidth) + pad('design', designWidth) + pad('revision', revisionWidth) + pad('stage', stageWidth) + pad('critique', critiqueWidth) + pad('decisions', decisionsWidth) + 'locked',
     ];
     for (const r of rows)
       lines.push(
         pad(r.id, idWidth) +
+          pad(r.design_revision ?? '-', designWidth) +
           pad(r.plan_revision ?? 'unknown', revisionWidth) +
           pad(r.stage ?? '-', stageWidth) +
           pad(r.critique_round === null ? '-' : String(r.critique_round), critiqueWidth) +

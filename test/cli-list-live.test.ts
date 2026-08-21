@@ -12,7 +12,6 @@ import * as fx from '../testkit/gitRepo.ts';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const NODE = process.execPath;
-const RUN = 'run-001';
 
 function router(dir: string, argv: string[]): { code: number; out: string } {
   try {
@@ -30,7 +29,7 @@ function writeTask(dir: string, id: string, title: string): void {
 }
 
 function runDir(dir: string, id: string): string {
-  const p = join(dir, '.router', 'tasks', id, 'runs', RUN);
+  const p = join(dir, '.router', 'tasks', id);
   mkdirSync(p, { recursive: true });
   return p;
 }
@@ -38,7 +37,7 @@ function runDir(dir: string, id: string): string {
 function writeResult(dir: string, id: string, extra: Record<string, unknown>): void {
   writeFileSync(
     join(runDir(dir, id), 'result.json'),
-    JSON.stringify({ run_id: RUN, task_id: id, exit_class: 'completed', ...extra }),
+    JSON.stringify({ task_id: id, exit_class: 'completed', ...extra }),
   );
 }
 

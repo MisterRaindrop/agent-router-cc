@@ -78,11 +78,11 @@ test('a failed run still stores its delivery report and parses the header', asyn
   try {
     const result = await withFakeCodex(FAKE_EDIT_THEN_FAIL, repo, () => dispatchTask(deps, 't1'));
     assert.ok(result.delivery, 'a failed run must still keep its report');
-    assert.equal(result.delivery?.path, paths.delivery('t1', 'run-001'));
+    assert.equal(result.delivery?.path, paths.delivery('t1'));
     assert.equal(result.delivery?.header?.gate_ran, false);
     assert.equal(result.delivery?.header?.escalate_review, true);
     assert.equal(result.delivery?.header_error, undefined);
-    assert.match(readFileSync(paths.delivery('t1', 'run-001'), 'utf8'), /then hit a wall/);
+    assert.match(readFileSync(paths.delivery('t1'), 'utf8'), /then hit a wall/);
   } finally {
     fx.cleanup(repo);
   }
@@ -93,7 +93,7 @@ test('a report that cannot be written surfaces the error instead of failing the 
   try {
     // A directory where the report file belongs makes the write fail deterministically on
     // every platform -- no permission games, and it never leaves the repo unusable.
-    const runDir = join(paths.root, 'tasks', 't1', 'runs', 'run-001');
+    const runDir = join(paths.root, 'tasks', 't1');
     mkdirSync(join(runDir, 'DELIVERY.md'), { recursive: true });
     const result = await withFakeCodex(FAKE_EDIT_THEN_FAIL, repo, () => dispatchTask(deps, 't1'));
     assert.match(result.delivery?.header_error ?? '', /^write failed: /);

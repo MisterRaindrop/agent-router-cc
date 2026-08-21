@@ -193,7 +193,6 @@ export interface DeliveryHeader {
 }
 
 export interface RunResult {
-  run_id: string;
   task_id: string;
   attempt_number: number;
   exit_class: ExitClass;
@@ -288,6 +287,13 @@ export interface MetricRecord {
   context_base_sha?: string;
   /** Whether this metric is for the main model or an executor. */
   role?: 'executor' | 'orchestrator';
+  /**
+   * Legacy label: `'orchestrator'` for a main-model row, `'run-001'` for an executor one.
+   *
+   * Kept, unlike RunResult's, because metrics.jsonl is append-only history: a field that means
+   * one thing in the old rows and another in the new ones is worse to read than a constant.
+   * Nothing branches on it.
+   */
   run_id: string;
   attempt_number: number;
   model: string | null;

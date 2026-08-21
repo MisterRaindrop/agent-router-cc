@@ -284,7 +284,7 @@ verify: []
     }
     await runPrepared(deps, prep);
     return {
-      status: readStatus(paths.runStatus('status-task', RUN)),
+      status: readStatus(paths.runStatus('status-task')),
       metrics: readJsonl<MetricRecord>(paths.metrics),
       cleanup: () => fx.cleanup(repo),
     };
