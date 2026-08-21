@@ -6,7 +6,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { gateYamlPath, loadGateConfig } from '../src/app/gateConfig.ts';
+import { gateYamlPath, loadGateConfig, selectGate } from '../src/app/gateConfig.ts';
+import type { DiffEntry, GateConfig } from '../src/domain/types.ts';
 import { routerPaths } from '../src/io/paths.ts';
 
 function freshPaths() {
@@ -163,4 +164,68 @@ test('queue mode requires an integration branch and a non-empty gate', () => {
       fixture.cleanup();
     }
   }
+});
+
+// --- selectGate (P7) ------------------------------------------------------------------
+//
+// Shared by the queue gate and by dispatch's own verification. It used to be written out inline
+// inside the queue gate only, which is why dispatch -- claiming to have absorbed the queue's
+// gate handling -- ran nothing but `task.verify`, leaving `clean_triggers` documented and dead.
+
+const INCREMENTAL = [['make', 'test']];
+const FULL = [['make', 'clean', 'test']];
+
+function entry(path: string, status: DiffEntry['status'] = 'M', oldPath?: string): DiffEntry {
+  return { path, status, added: 1, deleted: 0, binary: false, ...(oldPath !== undefined ? { oldPath } : {}) };
+}
+
+const CONFIG: GateConfig = {
+  mode: 'queue',
+  integration_branch: 'router/integration',
+  gate: INCREMENTAL,
+  clean_gate: FULL,
+  clean_triggers: ['**/*.h', 'configure.ac'],
+};
+
+test('selectGate picks the incremental gate for an ordinary source change', () => {
+  const picked = selectGate(CONFIG, [entry('src/exec.c')]);
+  assert.deepEqual(picked, { level: 'task', commands: INCREMENTAL });
+});
+
+// Fault-injection case 8i.
+test('selectGate escalates to the full gate when a clean trigger is touched (8i)', () => {
+  assert.deepEqual(selectGate(CONFIG, [entry('src/nodes/plan.h')]), { level: 'clean', commands: FULL });
+  assert.deepEqual(selectGate(CONFIG, [entry('configure.ac')]), { level: 'clean', commands: FULL });
+  // One trigger among many ordinary files is still enough.
+  assert.deepEqual(
+    selectGate(CONFIG, [entry('src/a.c'), entry('src/b.c'), entry('include/api.h')]),
+    { level: 'clean', commands: FULL },
+  );
+});
+
+// The rule that is not about triggers at all: an incremental build can keep a stale object for a
+// source file that no longer exists, and nothing in the diff tells it to drop it.
+test('selectGate escalates for any deletion, trigger or not', () => {
+  assert.deepEqual(selectGate(CONFIG, [entry('src/gone.c', 'D')]), { level: 'clean', commands: FULL });
+});
+
+// A rename moves a file out of one path and into another; if the ORIGIN was a trigger, the build
+// still has to forget it, so both ends are checked.
+test('selectGate checks both ends of a rename', () => {
+  assert.deepEqual(
+    selectGate(CONFIG, [entry('src/renamed.c', 'R', 'include/old.h')]),
+    { level: 'clean', commands: FULL },
+  );
+});
+
+test('selectGate stays incremental when no clean_gate is configured at all', () => {
+  const noClean: GateConfig = { mode: 'queue', integration_branch: 'i', gate: INCREMENTAL, clean_triggers: ['**/*.h'] };
+  assert.deepEqual(selectGate(noClean, [entry('a.h', 'D')]), { level: 'task', commands: INCREMENTAL });
+});
+
+// null is the caller's signal to fall back to whatever the task carries -- which is what keeps
+// every project WITHOUT a gate.yaml behaving exactly as it did.
+test('selectGate returns null when the config declares no gate commands', () => {
+  assert.equal(selectGate({ mode: 'worktree' }, [entry('src/a.ts')]), null);
+  assert.equal(selectGate({ mode: 'worktree', gate: [] }, [entry('src/a.ts')]), null);
 });

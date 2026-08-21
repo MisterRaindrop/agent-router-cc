@@ -4,7 +4,8 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load, JSON_SCHEMA } from 'js-yaml';
-import type { GateConfig, GateMode } from '../domain/types.ts';
+import type { DiffEntry, GateConfig, GateMode } from '../domain/types.ts';
+import { matchAny } from '../core/glob.ts';
 import type { RouterPaths } from '../io/paths.ts';
 
 const KEYS = new Set([
@@ -140,4 +141,37 @@ export function loadGateConfig(paths: RouterPaths): GateConfig {
     if (config.gate.length === 0) invalid('gate must contain at least one argv array in queue mode');
   }
   return config;
+}
+
+/**
+ * Which gate a diff needs: the incremental one, or the full rebuild.
+ *
+ * Lives here, and is shared by the queue gate and by dispatch's own verification, because it
+ * was previously written out inline in one of them -- so the other simply did not have it. The
+ * design review caught that: dispatch claimed to have absorbed the queue's gate handling while
+ * only ever running `task.verify`, which meant `clean_triggers` -- the mechanism a C project
+ * most needs -- was documented and unreachable.
+ *
+ * Any deletion forces the heavy gate regardless of triggers: an incremental build can keep a
+ * stale object for a source file that no longer exists, and nothing in the diff says so.
+ *
+ * Returns null when the config declares no gate commands at all, which is the caller's signal
+ * to fall back to whatever the task itself carries.
+ */
+export function selectGate(
+  config: GateConfig,
+  changes: readonly DiffEntry[],
+): { level: 'task' | 'clean'; commands: string[][] } | null {
+  const triggers = config.clean_triggers ?? [];
+  const useClean =
+    config.clean_gate !== undefined &&
+    changes.some(
+      (entry) =>
+        entry.status === 'D' ||
+        matchAny(entry.path, triggers) ||
+        (entry.oldPath !== undefined && matchAny(entry.oldPath, triggers)),
+    );
+  if (useClean) return { level: 'clean', commands: config.clean_gate! };
+  if (config.gate !== undefined && config.gate.length > 0) return { level: 'task', commands: config.gate };
+  return null;
 }

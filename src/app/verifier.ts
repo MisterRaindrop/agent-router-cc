@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { VerifierCheck, VerifierReport } from '../domain/types.ts';
+import type { GateConfig, VerifierCheck, VerifierReport } from '../domain/types.ts';
 import { evaluateScope } from '../core/scope.ts';
 import { scanSecrets } from '../core/secrets.ts';
 import { dirOf, extensionOf, findExecBitViolations, type ExecBitInput } from '../core/execBit.ts';
@@ -18,6 +18,7 @@ import {
   worktreeRemove,
 } from '../io/git.ts';
 import { runCommand } from '../io/proc.ts';
+import { selectGate } from './gateConfig.ts';
 
 // The mechanical verifier (policy-free). The task carries its own scope and verify
 // command; checks run in order, fail-fast. Every gate the executor must clear lives
@@ -58,6 +59,18 @@ export interface TaskVerifyRequest {
   verify: string[][]; // argv list; [] = diff/scope/secret only
   /** Pathspecs excluded when looking for uncommitted files (router's own state). */
   uncommittedExclude?: readonly string[];
+  /**
+   * The project's own gate configuration, when it has one.
+   *
+   * Present: its `reset` runs before verification, and its `gate`/`clean_gate` pair REPLACES
+   * `verify` -- `clean_triggers` deciding which. That replacement is the point rather than a
+   * side effect: gate.yaml describes how this project actually builds and tests, `verify`
+   * describes one task, and running both would build twice. Absent: behaviour is unchanged,
+   * which is what keeps every project without a gate.yaml exactly where it was.
+   */
+  gate?: GateConfig;
+  /** Environment for gate.yaml's commands; falls back to `env`. */
+  gateEnv?: NodeJS.ProcessEnv;
   env: NodeJS.ProcessEnv;
   secretExtraPatterns?: string[];
   buildTimeoutMs?: number;
@@ -145,20 +158,48 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
   }
   checks.push(pass('exec_bit'));
 
-  for (const [i, argv] of req.verify.entries()) {
+  const gateEnv = req.gateEnv ?? req.env;
+  const limitMs = req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
+
+  // The project's reset, before anything is measured. A warm checkout can hold objects from a
+  // previous build, and verifying against those is how wrong code passes: the gate answers a
+  // question about the last build rather than about this diff.
+  for (const [i, argv] of (req.gate?.reset ?? []).entries()) {
     if (argv.length === 0) continue;
-    const r = runCommand(argv, {
-      cwd: req.workDir,
-      env: req.env,
-      timeoutMs: req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS,
-    });
-    const label = req.verify.length > 1 ? `verify[${i}]` : 'verify';
+    const r = runCommand(argv, { cwd: req.workDir, env: gateEnv, timeoutMs: limitMs });
+    const label = (req.gate?.reset ?? []).length > 1 ? `reset[${i}]` : 'reset';
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
     }
     if (r.timedOut) {
-      const limitMs = req.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
+      checks.push(fail(label, `timed out after ${Math.round(limitMs / 1000)}s: ${argv.join(' ')}`));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines, timed_out: true };
+    }
+    if (r.rc !== 0) {
+      checks.push(fail(label, `${argv.join(' ')} (rc ${r.rc})`, r.rc ?? undefined));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    checks.push(pass(label, `${argv.join(' ')} (rc 0)`));
+  }
+
+  const selected = req.gate === undefined ? null : selectGate(req.gate, changes);
+  const commands = selected?.commands ?? req.verify;
+  const prefix = selected === null ? 'verify' : `gate:${selected.level}`;
+
+  for (const [i, argv] of commands.entries()) {
+    if (argv.length === 0) continue;
+    const r = runCommand(argv, {
+      cwd: req.workDir,
+      env: selected === null ? req.env : gateEnv,
+      timeoutMs: limitMs,
+    });
+    const label = commands.length > 1 ? `${prefix}[${i}]` : prefix;
+    if (r.spawnError !== null) {
+      checks.push(fail(label, `spawn error: ${r.spawnError}`));
+      return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
+    }
+    if (r.timedOut) {
       checks.push(fail(label, `timed out after ${Math.round(limitMs / 1000)}s: ${argv.join(' ')}`));
       // timed_out, not just FAILED: the command never returned a verdict, so this says nothing
       // about the change itself. The caller reports it as unverified rather than as a defect.

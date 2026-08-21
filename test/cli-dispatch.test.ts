@@ -407,3 +407,48 @@ test('an executor cannot touch real router state (8h)', () => {
     fx.cleanup(dir);
   }
 });
+
+// P7 end to end: the design claimed the queue gate's machinery had been absorbed into dispatch,
+// while dispatch in fact ran nothing but `task.verify` -- so gate.yaml's `reset` and
+// `clean_triggers` were documented and unreachable. This asserts they actually run, by having
+// each of them leave a file behind.
+test('dispatch runs gate.yaml reset and picks the clean gate when a trigger is touched', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.write(dir, '.gitignore', '.router/\nevidence-*\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  const marker = (name: string): string[] =>
+    [NODE, '-e', `require('fs').writeFileSync(${JSON.stringify(join(dir, `evidence-${name}`))}, '1')`];
+  try {
+    router(dir, ['new', 'gated'], env);
+    writeFileSync(
+      join(dir, '.router', 'gate.yaml'),
+      'mode: worktree\n' +
+        `reset:\n  - ${JSON.stringify(marker('reset'))}\n` +
+        `gate:\n  - ${JSON.stringify(marker('incremental'))}\n` +
+        `clean_gate:\n  - ${JSON.stringify(marker('clean'))}\n` +
+        'clean_triggers: ["src/*.ts"]\n',
+    );
+    const d = router(dir, ['dispatch', 'gated', '--json'], env);
+    assert.equal(d.code, 0, d.out);
+    assert.equal(JSON.parse(d.out).verifier, 'PASSED');
+
+    // Reset ran, and the trigger sent us to the full gate rather than the incremental one.
+    assert.ok(existsSync(join(dir, 'evidence-reset')), 'gate.yaml reset never ran');
+    assert.ok(existsSync(join(dir, 'evidence-clean')), 'clean_triggers did not select the clean gate');
+    assert.ok(!existsSync(join(dir, 'evidence-incremental')), 'the incremental gate ran despite a trigger');
+
+    // ...and the run record names which one it was, so the evidence is not just a side effect.
+    const result = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'gated', 'runs', 'run-001', 'result.json'), 'utf8'),
+    ) as { verifier: { checks: { id: string; ok: boolean }[] } };
+    const ids = result.verifier.checks.map((check) => check.id);
+    assert.ok(ids.includes('reset'), ids.join(','));
+    assert.ok(ids.includes('gate:clean'), ids.join(','));
+    assert.ok(!ids.includes('verify'), `task.verify ran as well: ${ids.join(',')}`);
+  } finally {
+    fx.cleanup(dir);
+  }
+});

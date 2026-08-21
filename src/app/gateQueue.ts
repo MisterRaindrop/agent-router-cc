@@ -5,7 +5,6 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { GateResult, RunResult } from '../domain/types.ts';
-import { matchAny } from '../core/glob.ts';
 import {
   branchExists,
   checkoutBranch,
@@ -25,7 +24,7 @@ import { runId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker, type SupervisionOutcome } from '../io/supervisor.ts';
-import { loadGateConfig } from './gateConfig.ts';
+import { loadGateConfig, selectGate } from './gateConfig.ts';
 
 export interface GateQueueDeps {
   paths: RouterPaths;
@@ -183,21 +182,9 @@ export async function runQueueGate(
     mergeSha = resolveCommit(paths.repoRoot, 'HEAD');
 
     const changes = collectDiff(paths.repoRoot, baseSha, 'HEAD');
-    // Incremental builds can retain a stale object for a source file that no
-    // longer exists, so every deletion forces the heavy gate.
-    const useClean =
-      config.clean_gate !== undefined &&
-      (changes.some((entry) => entry.status === 'D') ||
-        changes.some(
-          (entry) =>
-            matchAny(entry.path, config.clean_triggers ?? []) ||
-            (entry.oldPath !== undefined && matchAny(entry.oldPath, config.clean_triggers ?? [])),
-        ));
-    const level: 'task' | 'clean' = useClean ? 'clean' : 'task';
-    const commands = useClean ? config.clean_gate! : config.gate!;
-    if (commands.length === 0) {
-      throw new Error(`configured ${level === 'clean' ? 'clean_gate' : 'gate'} has no commands`);
-    }
+    const selected = selectGate(config, changes);
+    if (selected === null) throw new Error('configured gate has no commands');
+    const { level, commands } = selected;
     const gateLog = paths.gateLog(taskId, run);
     const maxWallMs = (config.gate_wall_minutes ?? GATE_WALL_MINUTES_DEFAULT) * 60_000;
     const env = buildWorkerEnv(process.env, config.env ?? []);

@@ -6,7 +6,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { DeliveryHeader, ExecutorQuota, ExitClass, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import {
   detectContractConflict,
@@ -214,7 +214,11 @@ export function prepareRun(deps: DispatchDeps, id: string): PreparedRun {
 }
 
 /** Run one prepared task to a verified (or failed) result on its run branch. */
-async function runPreparedObserved(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
+async function runPreparedObserved(
+  deps: DispatchDeps,
+  prep: PreparedRun,
+  gateConfig?: GateConfig,
+): Promise<RunResult> {
   const { paths } = deps;
   const { id, task, contractMdText, workDir, branch, baseSha, context, workers, logPath } = prep;
   const refPath = branchRefPath(workDir, branch);
@@ -389,6 +393,11 @@ async function runPreparedObserved(deps: DispatchDeps, prep: PreparedRun): Promi
       verify: task.verify ?? [],
       env: verifyEnv,
       uncommittedExclude: ROUTER_STATE_EXCLUDE,
+      // The project's own build/test commands and reset, when it declares them. Without this
+      // the flow only ever ran `task.verify`, so `clean_triggers` was documented and dead --
+      // and a warm checkout could pass a diff on objects left from an earlier build.
+      ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
+      ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
     attachEffectiveRisk(result, task, workDir, baseSha);
   }
@@ -402,9 +411,13 @@ async function runPreparedObserved(deps: DispatchDeps, prep: PreparedRun): Promi
 }
 
 /** Run one prepared task, recording a failed terminal state on every handled exception. */
-export async function runPrepared(deps: DispatchDeps, prep: PreparedRun): Promise<RunResult> {
+export async function runPrepared(
+  deps: DispatchDeps,
+  prep: PreparedRun,
+  gateConfig?: GateConfig,
+): Promise<RunResult> {
   try {
-    return await runPreparedObserved(deps, prep);
+    return await runPreparedObserved(deps, prep, gateConfig);
   } catch (error) {
     prep.status.terminal('failed');
     throw error;
@@ -440,8 +453,10 @@ export class CheckoutBusyError extends Error {
  */
 export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
   const { paths } = deps;
-  const waitMinutes = loadGateConfig(paths).lock_wait_minutes ?? 0;
-  const lock = acquireLock(paths.gateLock(), { waitMs: waitMinutes * 60_000 });
+  const gateConfig = loadGateConfig(paths);
+  const lock = acquireLock(paths.gateLock(), {
+    waitMs: (gateConfig.lock_wait_minutes ?? 0) * 60_000,
+  });
   if ('blocked' in lock) {
     const held = lock.holder;
     throw new CheckoutBusyError(
@@ -457,7 +472,7 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   const beater = startHeartbeat(lock.path, lock.ownerToken);
   try {
     const prep = prepareRun(deps, id);
-    const result = await runPrepared(deps, prep);
+    const result = await runPrepared(deps, prep, gateConfig);
     return result;
   } finally {
     beater.stop();

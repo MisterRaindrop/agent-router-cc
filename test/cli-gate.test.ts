@@ -46,13 +46,24 @@ function setup(gateArgv: string[][]): { dir: string; env: NodeJS.ProcessEnv } {
   const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
   router(dir, ['new', 't1'], env);
   mkdirSync(join(dir, '.router'), { recursive: true });
-  writeFileSync(
-    join(dir, '.router', 'gate.yaml'),
-    `mode: queue\nintegration_branch: ${INTEGRATION}\ngate:\n${gateArgv
-      .map((argv) => `  - ${JSON.stringify(argv)}`)
-      .join('\n')}\n`,
-  );
+  const writeGate = (argv: string[][]): void => {
+    writeFileSync(
+      join(dir, '.router', 'gate.yaml'),
+      `mode: queue\nintegration_branch: ${INTEGRATION}\ngate:\n${argv
+        .map((command) => `  - ${JSON.stringify(command)}`)
+        .join('\n')}\n`,
+    );
+  };
+  // Dispatch runs the project's own gate now, so the run that produces the PASSED result has to
+  // be verified against a gate that passes. The gate under test here -- which several of these
+  // cases deliberately make fail -- is installed afterwards, for `router gate` to pick up. That
+  // ordering also matches reality: you do not get a PASSED dispatch out of a failing gate.
+  writeGate([[NODE, '-e', 'process.exit(0)']]);
   assert.equal(router(dir, ['dispatch', 't1', '--json'], env).code, 0);
+  // Back to our own branch: dispatch leaves us on router/t1, and the queue gate has to check
+  // out the integration branch.
+  fx.git(dir, ['checkout', '-q', 'main']);
+  writeGate(gateArgv);
   return { dir, env };
 }
 
