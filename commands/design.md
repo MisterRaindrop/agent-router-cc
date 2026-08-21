@@ -13,7 +13,7 @@ in order, each approved by the user before the next stage may start:
 
 - **`DESIGN.md`** (this command) -- why do it, what to do, what NOT to do, the chosen
   approach and its rejected alternatives, risks and invariants, acceptance criteria.
-- **`PLAN.md`** (`/router:plan`) -- how: implementation steps, task breakdown, dependencies,
+- **`WORKPLAN.md`** (`/router:workplan`) -- how: implementation steps, task breakdown, dependencies,
   verification, rollout. Only an approved Design may enter it; only an approved Plan may be
   executed by `/router:go`.
 
@@ -36,7 +36,7 @@ approved: null         # { revision, by, date } once approved
 ```
 
 Approval is an explicit user action and **always the last action of the stage**. Any edit
-after approval bumps `revision`, requires re-approval, drops an existing `PLAN.md` back to
+after approval bumps `revision`, requires re-approval, drops an existing `WORKPLAN.md` back to
 `plan_draft`, and is recorded in a Revision Log section -- a changed bar must be visible,
 never silent.
 
@@ -89,7 +89,7 @@ the next. Track progress in a header note (`n/7 confirmed`).
 
 When all sections are confirmed, ask for approval of the whole document as an explicit
 action. On approval: set `status: design_approved`, freeze the bumped `revision`, record
-`approved`. Then the user may run `/router:plan`.
+`approved`. Then the user may run `/router:workplan`.
 
 An optional adversarial pass -- `/router:design-review`, an independent model attacking the
 draft, every objection adjudicated by the user -- can run before approval, as many rounds as

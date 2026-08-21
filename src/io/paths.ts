@@ -26,7 +26,17 @@ export interface RouterPaths {
    * from disk cannot silently be handed a different one. `plan_id` is schema-constrained to a
    * path-safe shape for exactly this reason. */
   planDir(planId: string): string;
+  /**
+   * The work plan: `WORKPLAN.md`, or `PLAN.md` when that is the one on disk.
+   *
+   * The document was renamed because "plan" and "design" both described planning and neither
+   * name said which. Resolution is by existence rather than by a version flag: a plan written
+   * before the rename must stay readable to `router plans` and to the go gate, and a machine
+   * whose plugin build is a day behind must not see the work vanish.
+   */
   planMd(planId: string): string;
+  /** Where a new work plan is written, regardless of what is already on disk. */
+  workplanMd(planId: string): string;
   specCritique(planId: string, round: number): string;
   specDecisions(planId: string): string;
   specLock(planId: string): string;
@@ -100,7 +110,11 @@ export function routerPaths(routerDir: string): RouterPaths {
     symbolLatest: join(root, 'symbols', 'latest'),
     gateLock: () => join(root, 'gate.lock'),
     planDir: (planId) => join(root, 'plans', planId),
-    planMd: (planId) => join(root, 'plans', planId, 'PLAN.md'),
+    planMd: (planId) => {
+      const workplan = join(root, 'plans', planId, 'WORKPLAN.md');
+      return existsSync(workplan) ? workplan : join(root, 'plans', planId, 'PLAN.md');
+    },
+    workplanMd: (planId) => join(root, 'plans', planId, 'WORKPLAN.md'),
     specCritique: (planId, round) => join(root, 'plans', planId, `critique-${round}.md`),
     specDecisions: (planId) => join(root, 'plans', planId, 'DECISIONS.md'),
     specLock: (planId) => join(root, 'plans', planId, 'spec.lock'),

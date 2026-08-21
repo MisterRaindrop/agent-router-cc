@@ -63,7 +63,7 @@ landed diff; whether the diff is within the declared scope; whether the bar this
 judged against was approved by the user (the Design/Plan for work that went through the
 design flow, the plan agreed at `/router:go` otherwise); and whether the code changed again
 after the last verification run (if so, prior evidence is stale). **If scope drifted or the
-bar was never approved, stop and return to `/router:design` / `/router:plan`** -- do not
+bar was never approved, stop and return to `/router:design` / `/router:workplan`** -- do not
 review against a bar that no longer matches the code.
 
 **Start from router's own record rather than from scratch.** For each package `/router:go`
@@ -195,7 +195,7 @@ verify against the new code, never on a "fixed it" claim. Repeat until the user 
 
 If a finding is `level: spec` (the bar itself is wrong -- e.g. a Design acceptance
 criterion is incorrect, or a Plan verification row proves the wrong thing), **do not
-quietly change the bar in review**: stop, return to `/router:design` (or `/router:plan`
+quietly change the bar in review**: stop, return to `/router:design` (or `/router:workplan`
 when only the how is wrong), record the revision in the document's Revision Log -- a bumped
 Design revision drops the Plan back to draft -- have the user re-approve, then re-implement
 and re-review. The acceptance criteria are never weakened inside review to make a change pass.

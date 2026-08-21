@@ -1,7 +1,7 @@
 # Assurance core (shared by the design flow and /router:review)
 
 Shared vocabulary and rules. The design flow uses these to define *what must be proven* --
-risk tier and Must NOT at `/router:design`, the Verification Matrix at `/router:plan`
+risk tier and Must NOT at `/router:design`, the Verification Matrix at `/router:workplan`
 (`/router:go` sets the same bar in the contract for work that skips the flow); `review`
 uses them to judge *whether it was proven*. Load only the parts a given task needs.
 

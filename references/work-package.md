@@ -156,22 +156,23 @@ run" is useful; a claimed pass that never ran is corrosive.
   - **Do trivial mechanical edits yourself.** A two-comment fix through a resume cost roughly what
     the entire implementation cost; the orchestrator's own edit would have been a few thousand
     tokens. Resume is for work that needs the executor's context, not for typing.
-- **A different task -> a fresh session.** `resume` reuses the same worktree and the same
-  `base_sha`; the next task starts from a new base, so a reused session's memory and the files on
-  disk drift apart silently. Worse, the scope gate diffs against `base_sha`, so a second task in
-  the same worktree would carry the first one's changes -- "one task, one auditable diff" is gone.
-  And a stale session cheerfully revives plans it already discarded.
+- **A different task -> a fresh session.** `resume` continues on the same task branch from the
+  same `base_sha`; the next task starts from a new base, so a reused session's memory and the
+  files on disk drift apart silently. Worse, the scope gate diffs against `base_sha`, so a second
+  task resumed into the first one's session would carry the first one's changes -- "one task, one
+  auditable diff" is gone. And a stale session cheerfully revives plans it already discarded.
 - **Wanting to reuse a session across tasks is a symptom of splitting too finely.** If the next
   task is the same area, the same base, and has no dependency, it should have been part of the
   same package. Merge them instead.
-- A `TASK_CONTEXT.md` navigation summary is written **by default**, but only from facts
-  establishing the contract already required -- never explore extra to fill it in, and leave a
-  section out rather than pad it. Measured on a small two-file task it cost **21% more executor
-  input** for identical quality, because an executor's input is re-sent every turn: the summary
-  is paid every turn while its benefit is one-off. That is executor quota (the cheap side), and
-  whether it pays where finding the entry points genuinely dominates is still open --
-  `task_context_present` and `task_context_chars` are recorded on every dispatch so the answer
-  can come from data rather than from either side's intuition.
+- A `TASK_CONTEXT.md` navigation summary is **not written**. Measured on a small two-file task
+  it cost **21% more executor input** (474.7k vs 392.6k) for identical quality, because an
+  executor's input is re-sent every turn: the summary is paid every turn while its benefit is
+  one-off. Whether it pays on a repository where finding the entry points genuinely dominates is
+  still open, and `task_context_present` / `task_context_chars` are still recorded on every
+  dispatch so the answer can come from data -- but the default is off until it does. The loader
+  still reads a file that is present, which is what keeps an existing task working; nothing
+  writes one. **This is the single answer to a question this repository used to answer three
+  different ways** (`go.md` said no, `go.md` also said yes, and this file said by default).
 - Warm context is carried by **artifacts, not sessions**: the symbol index (`/router:symbol`) gives
   a fresh session the same repository knowledge without inheriting stale beliefs, and a probe's
   findings enter the next contract as text.

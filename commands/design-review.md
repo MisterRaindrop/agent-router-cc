@@ -4,7 +4,7 @@ allowed-tools: Bash, Read, Write, Task, AskUserQuestion
 ---
 Get an independent, adversarial second opinion on a **`DESIGN.md`** -- the approach, its
 risks, whether a simpler road exists. This reviews the *design*, not implementation steps
-and not task breakdown (those live in `PLAN.md`, which gets no adversarial pass). Optional,
+and not task breakdown (those live in `WORKPLAN.md`, which gets no adversarial pass). Optional,
 user-invoked, any number of rounds; run it **before** the Design is approved. If the Design
 was already approved, any change accepted here bumps its revision and requires re-approval.
 
@@ -40,8 +40,25 @@ to a concrete language name before sending):
 >   assertion of error. Cite specifics; name the concrete consequence, never "best practices".
 > - Emit each objection as `{severity: blocking|advisory|nit, confidence: high|medium|low,
 >   argument: <specific problem + concrete consequence>, suggestion: <concrete fix>}`.
+> - **End with a section titled "Where I could not follow this document."** List every place you
+>   had to guess: a term used without explanation, a sentence you had to read twice, a reference
+>   to something the document assumes you know. Quote the passage and say what you took it to
+>   mean. Report nothing only if there was genuinely nothing -- an empty list from a reader who
+>   has never seen this project before is a real result, and so is a long one.
 > - If the design is sound, say so plainly instead of manufacturing objections.
 > - Write every `argument` and `suggestion` in **[the language the user is conversing in]**.
+
+**Why the readability section is part of an adversarial review and not a style pass.** The
+failure it catches is the curse of knowledge: a document written by someone who already knows the
+project, read later by someone who does not -- including its own author, three months on. That
+cannot be measured mechanically. Sentence length and "is a term defined on first use" are exactly
+the checkable properties, and exactly the ones that do not matter; what matters is *assuming the
+reader knows your vocabulary*, which only an outside reader can detect. The reviewer is already
+that reader -- it has no access to this project's conventions -- so the finding is nearly free
+here and unavailable anywhere else.
+
+Treat those findings as findings: they go through the same adjudication as any other objection.
+An explanation the user judges unnecessary is a `reject` with a reason, not a silent skip.
 
 ## Adjudication -- mechanism, not promises
 
