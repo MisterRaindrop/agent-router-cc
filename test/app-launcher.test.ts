@@ -5,6 +5,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { claudeLauncher, codexLauncher } from '../src/app/codexLauncher.ts';
 
+// Spelled out here rather than imported: the point of these assertions is that the grant list
+// is exactly this and nothing wider, which an import from the module under test cannot prove.
+const GIT_GRANTS = [
+  'Bash(git add:*)',
+  'Bash(git commit:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git log:*)',
+  'Bash(git rev-parse:*)',
+] as const;
+
 const CTX = {
   task: {
     schema_version: 1 as const,
@@ -35,11 +46,13 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
   });
   assert.deepEqual(argv.slice(0, 2), ['claude', '-p']);
   assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'acceptEdits');
-  assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Edit,Write');
+  // Bash and the git allowlist are unconditional: a task with no verify command still has to
+  // commit one commit per functional unit. PROBE-1 measured what happens without the grant --
+  // the run wrote its file, was refused on `git add`/`git commit`, and stalled asking.
+  assert.equal(argv[argv.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
   assert.equal(argv[argv.indexOf('--add-dir') + 1], '/tmp/router-worktree');
   assert.equal(argv[argv.indexOf('--model') + 1], 'haiku');
   assert.ok(!argv.includes('bypassPermissions'));
-  assert.ok(!argv.includes('--allowedTools'));
   assert.deepEqual(argv, [
     'claude',
     '-p',
@@ -51,9 +64,16 @@ test('claude launcher uses worktree-scoped file tools without bypassPermissions'
     'acceptEdits',
     '--strict-mcp-config',
     '--tools',
-    'Read,Edit,Write',
+    'Read,Edit,Write,Bash',
     '--add-dir',
     '/tmp/router-worktree',
+    '--allowedTools',
+    'Bash(git add:*)',
+    'Bash(git commit:*)',
+    'Bash(git status:*)',
+    'Bash(git diff:*)',
+    'Bash(git log:*)',
+    'Bash(git rev-parse:*)',
     '--model',
     'haiku',
   ]);
@@ -95,8 +115,37 @@ test('claude launcher narrowly pre-approves each declared verify command', () =>
     'Bash(npm run:*)',
     'Bash(node --test test/unit.test.ts)',
     'Bash(node --test:*)',
+    'Bash(git add:*)',
+    'Bash(git commit:*)',
+    'Bash(git status:*)',
+    'Bash(git diff:*)',
+    'Bash(git log:*)',
+    'Bash(git rev-parse:*)',
   ]);
   assert.ok(!argv.includes('bypassPermissions'));
+});
+
+// The git grant is a subcommand allowlist, never `Bash(git:*)`: the contract's Must NOT forbids
+// the executor moving between branches or rewriting history, and a blanket git grant would hand
+// it exactly that. Guarding it in a test because the safe and the unsafe form differ by one word.
+test('the executor git grant cannot reach checkout, reset, rebase, branch deletion or push', () => {
+  for (const argv of [
+    claudeLauncher({ model: 'haiku' }).buildArgv(CTX),
+    claudeLauncher({ model: 'haiku' }).buildArgv({
+      ...CTX,
+      task: { ...CTX.task, verify: [['npm', 'run', 'check']] },
+    }),
+  ]) {
+    const grants = argv.slice(argv.indexOf('--allowedTools') + 1, argv.indexOf('--model'));
+    assert.ok(grants.includes('Bash(git commit:*)'));
+    assert.ok(!grants.includes('Bash(git:*)'));
+    for (const forbidden of ['checkout', 'reset', 'rebase', 'branch', 'push', 'stash', 'clean']) {
+      assert.ok(
+        !grants.some((g) => g.includes(`git ${forbidden}`)),
+        `git ${forbidden} must not be pre-approved, saw: ${grants.join(' ')}`,
+      );
+    }
+  }
 });
 
 test('codex launcher passes model + reasoning effort', () => {
@@ -147,15 +196,23 @@ test('a resumed claude run keeps permission to run the gate it is being asked to
   });
   assert.equal(withGate[withGate.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
   const grants = withGate.slice(withGate.indexOf('--allowedTools') + 1, withGate.indexOf('--model'));
-  assert.deepEqual(grants, ['Bash(npm run check)', 'Bash(npm run:*)']);
+  assert.deepEqual(grants, ['Bash(npm run check)', 'Bash(npm run:*)', ...GIT_GRANTS]);
 
-  // No gate declared -> no Bash, and no task at all -> unchanged from before.
+  // No gate declared, or no task at all: still Bash, still the git allowlist. A resume that
+  // could not commit would strand the fix it was resumed to make.
   const noGate = claudeLauncher({ model: 'sonnet' }).buildResumeArgv('/wt', 'sess-1', 'fix it', {
     ...CTX.task,
     verify: [],
   });
-  assert.equal(noGate[noGate.indexOf('--tools') + 1], 'Read,Edit,Write');
-  assert.ok(!noGate.includes('--allowedTools'));
+  assert.equal(noGate[noGate.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
+  assert.deepEqual(
+    noGate.slice(noGate.indexOf('--allowedTools') + 1, noGate.indexOf('--model')),
+    [...GIT_GRANTS],
+  );
   const noTask = claudeLauncher({ model: 'sonnet' }).buildResumeArgv('/wt', 'sess-1', 'fix it');
-  assert.equal(noTask[noTask.indexOf('--tools') + 1], 'Read,Edit,Write');
+  assert.equal(noTask[noTask.indexOf('--tools') + 1], 'Read,Edit,Write,Bash');
+  assert.deepEqual(
+    noTask.slice(noTask.indexOf('--allowedTools') + 1, noTask.indexOf('--model')),
+    [...GIT_GRANTS],
+  );
 });

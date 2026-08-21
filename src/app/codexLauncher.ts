@@ -87,10 +87,18 @@ export function codexLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): W
   };
 }
 
-// The claude CLI as a headless executor. It gets Read/Edit/Write tools and normal
-// edit-acceptance permissions: reads outside the worktree are denied. A task that
-// declares a gate additionally gets Bash, with its verify commands named in
-// `--allowedTools` so running the gate needs no prompt.
+// The claude CLI as a headless executor. It gets Read/Edit/Write/Bash and normal
+// edit-acceptance permissions: reads outside the worktree are denied. `--allowedTools`
+// names what it may actually *run*: the task's own verify commands, plus the narrow git
+// allowlist every task needs (see GIT_GRANTS).
+//
+// Bash is unconditional, which it was not before: a task used to get Bash only when it
+// declared a gate. That stopped working the moment the contract began requiring one commit
+// per functional unit -- a task with no verify command still has to commit. Measured
+// (PROBE-1, 2026-08-21): with Bash present but git absent from the allow list, a real run
+// wrote its file and was then refused, verbatim -- "This Bash command contains multiple
+// operations. The following parts require approval: git add unit-a.txt, git commit -m ..."
+// -- and stalled asking a human who, headless, was not there.
 //
 // Be precise about what that grant is, because two real runs measured it and the first
 // reading was wrong. `acceptEdits` auto-approves **read-only** Bash on its own -- which is
@@ -129,11 +137,11 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         'acceptEdits',
         '--strict-mcp-config', // no MCP servers: do not inherit the user's own
         '--tools',
-        verifyCommands.length > 0 ? 'Read,Edit,Write,Bash' : 'Read,Edit,Write',
+        'Read,Edit,Write,Bash',
         '--add-dir',
         ctx.worktreeDir,
       ];
-      if (verifyCommands.length > 0) argv.push('--allowedTools', ...bashGrants(verifyCommands));
+      argv.push('--allowedTools', ...bashGrants(verifyCommands));
       if (model !== undefined) argv.push('--model', model);
       if (effort !== undefined) argv.push('--effort', effort);
       return argv;
@@ -156,11 +164,11 @@ export function claudeLauncher(worker: Pick<WorkerPolicy, 'model' | 'effort'>): 
         'acceptEdits',
         '--strict-mcp-config', // no MCP servers: do not inherit the user's own
         '--tools',
-        verifyCommands.length > 0 ? 'Read,Edit,Write,Bash' : 'Read,Edit,Write',
+        'Read,Edit,Write,Bash',
         '--add-dir',
         worktreeDir,
       ];
-      if (verifyCommands.length > 0) argv.push('--allowedTools', ...bashGrants(verifyCommands));
+      argv.push('--allowedTools', ...bashGrants(verifyCommands));
       if (model !== undefined) argv.push('--model', model);
       if (effort !== undefined) argv.push('--effort', effort);
       return argv;
@@ -174,12 +182,36 @@ function gateCommands(task: TaskYaml): string[] {
 }
 
 /**
- * Bash pre-approvals for a task's gate: the exact command, plus its program+subcommand prefix.
- * Measured why the prefix is needed: with only the exact string, a real sonnet run read files
- * freely (`acceptEdits` auto-approves read-only Bash) but was blocked the moment it reached for
- * `npm run typecheck` -- a sub-step of its own gate. Headless there is nobody to approve, so it
- * stalled asking, shipped no tests, and emitted no delivery header. The prefix keeps the grant
- * inside the project's own script runner while letting the executor iterate normally.
+ * The git subcommands every executor gets, because the task contract requires one commit per
+ * functional unit. Deliberately a subcommand allowlist and NOT `Bash(git:*)`: the contract's
+ * Must NOT forbids the executor rewriting history or moving between branches, so `checkout`,
+ * `reset`, `rebase`, `branch -d` and `push` stay unreachable.
+ *
+ * A subcommand prefix is enough to be safe here because the permission system decomposes a
+ * compound command and checks each part -- measured verbatim in PROBE-1: "This Bash command
+ * contains multiple operations. The following parts require approval: ...". So
+ * `git add x && git commit -m y` is approved by these two grants, while
+ * `git commit -m y && git checkout main` still stops on the checkout.
+ */
+const GIT_GRANTS: readonly string[] = [
+  'Bash(git add:*)',
+  'Bash(git commit:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git log:*)',
+  'Bash(git rev-parse:*)',
+];
+
+/**
+ * Bash pre-approvals: the task's gate (exact command plus its program+subcommand prefix),
+ * then GIT_GRANTS.
+ *
+ * Measured why the gate prefix is needed: with only the exact string, a real sonnet run read
+ * files freely (`acceptEdits` auto-approves read-only Bash) but was blocked the moment it
+ * reached for `npm run typecheck` -- a sub-step of its own gate. Headless there is nobody to
+ * approve, so it stalled asking, shipped no tests, and emitted no delivery header. The prefix
+ * keeps the grant inside the project's own script runner while letting the executor iterate
+ * normally.
  */
 function bashGrants(verifyCommands: readonly string[]): string[] {
   const grants = new Set<string>();
@@ -188,6 +220,7 @@ function bashGrants(verifyCommands: readonly string[]): string[] {
     const prefix = command.split(' ').slice(0, 2).join(' ');
     if (prefix !== '' && prefix !== command) grants.add(`Bash(${prefix}:*)`);
   }
+  for (const grant of GIT_GRANTS) grants.add(grant);
   return [...grants];
 }
 
