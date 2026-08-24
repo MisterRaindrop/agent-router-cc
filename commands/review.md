@@ -193,6 +193,20 @@ Verification Matrix against the final code** (prior evidence is now stale), then
 the same reviewer session** to confirm each blocking finding is genuinely resolved --
 verify against the new code, never on a "fixed it" claim. Repeat until the user is satisfied.
 
+## Close the plan
+
+When the user accepts the review and the work is finished, set the work plan's frontmatter to
+`status: done`.
+
+This is the only place that writes it. `done` was a legal status from the day the flow was
+written and **nothing ever set it**: `/router:go` moves a plan to `executing` and no stage moved
+it on, so `router plans` showed finished work as still running -- two plans sat that way for
+nearly two weeks. A state the schema allows and the flow cannot reach is worse than no state, and
+it fails the way everything in this project fails: silently, still looking fine.
+
+If the user is not finished -- findings deferred, a follow-up expected -- leave it `executing` and
+say so. `done` means the plan is closed, not that this review round ended.
+
 If a finding is `level: spec` (the bar itself is wrong -- e.g. a Design acceptance
 criterion is incorrect, or a Plan verification row proves the wrong thing), **do not
 quietly change the bar in review**: stop, return to `/router:design` (or `/router:workplan`

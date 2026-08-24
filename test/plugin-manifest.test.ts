@@ -228,3 +228,24 @@ test('the glossary splits the two words that were doing several jobs', () => {
   }
   assert.match(g, /## Retired words/);
 });
+
+// `done` was a legal work-plan status from the day the flow was written and nothing ever set it:
+// go moves a plan to `executing`, no stage moved it on, so finished work showed as still running.
+// A state the schema allows and the flow cannot reach is worse than no state.
+test('every work-plan status has a stage that writes it', () => {
+  const read = (f: string): string => readFileSync(new URL(f, COMMANDS), 'utf8');
+  const workplan = read('workplan.md');
+  const go = read('go.md');
+  const review = read('review.md');
+
+  assert.match(workplan, /status: plan_draft/);
+  assert.match(workplan, /set `status: plan_approved`/);
+  assert.match(go, /`status: executing`/);
+  // The one that was missing.
+  assert.match(review, /set the work plan's frontmatter to\n`status: done`/);
+  // ...and the lifecycle is written down in one place, so the next added state cannot be orphaned.
+  assert.match(workplan, /Who writes each status/);
+  for (const status of ['plan_draft', 'plan_approved', 'executing', 'done']) {
+    assert.match(workplan, new RegExp(`\`${status}\``), `lifecycle note omits ${status}`);
+  }
+});

@@ -84,3 +84,19 @@ other — and every result still needs reviewing one at a time, so review was th
 parallelism kept feeding.
 
 **Fallback:** none. Run the tasks in sequence.
+
+## `/router:spec`
+
+**Removed** in 0.10.0, with no stub. Replaced by `/router:design` then `/router:workplan`.
+
+**Why no stub, when `/router:plan` got one:** the two had very different windows. `plan` was
+renamed in that same release, so muscle memory for it was current and a stub costs three lines.
+`spec` had been marked deprecated since 0.7 and had been pointing at its replacement for many
+versions -- by 0.10.0 anyone still typing it was not going to be surprised by it being gone.
+
+Recorded because the asymmetry was decided in passing and never written down, which is how a
+reasonable judgement later reads as an oversight. It also breaks one acceptance criterion of the
+design/plan-flow plan (`/router:spec` must return a deprecation pointer); that plan's closeout
+notes the supersession.
+
+**Fallback:** none. Use `/router:design` and `/router:workplan`.
