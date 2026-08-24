@@ -25,6 +25,10 @@ status: plan_draft     # plan_draft | plan_approved | executing | done
 approved: null         # { revision, by, date } once approved
 ```
 
+Who writes each status, so none of them is unreachable: `plan_draft` here, `plan_approved` here
+on approval, `executing` by `/router:go` when it starts, `done` by `/router:review` when the user
+accepts the finished work.
+
 **If the Design's revision ever moves past `design_revision`, this work plan is stale**: drop
 `status` back to `plan_draft`, re-derive what the Design change affects, and take it back
 through approval. Packages already dispatched are bound to the old revision and get refused
