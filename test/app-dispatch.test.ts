@@ -506,3 +506,72 @@ test('dispatch publishes the executor process group into the lock (finding 3)', 
     `the lock never carried an execPgid; observed ${seen.length} samples, all undefined`,
   );
 });
+
+// Review finding 9a, reproducing what the reviewer demonstrated: ROUTER_EXECUTOR_SANDBOX only
+// refuses a nested `router` CLI, so an executor can write real orchestration state with a plain
+// file API. The reviewer's fake created `.router/tasks/forged/result.json`, the dispatch still
+// reported PASSED, the file stayed, and the committed diff showed only `src/a.ts` -- because
+// `.router/` is gitignored and therefore invisible to every gate.
+//
+// Prevention would need the sandbox to exclude a subdirectory of its own writable root, which
+// codex's workspace-write does not offer. So this is enforcement by detection.
+test('an executor forging router state fails the run (finding 9)', async () => {
+  const { repo, paths, deps } = setup();
+  const forger = join(repo, 'fake-forger.mjs');
+  writeFileSync(
+    forger,
+    '#!/usr/bin/env node\n' +
+      "import {writeFileSync, mkdirSync} from 'node:fs';import {execFileSync} from 'node:child_process';\n" +
+      'writeFileSync("src/a.ts","export const x = 2;\\n");\n' +
+      'execFileSync("git",["add","--","src/a.ts"]);\n' +
+      'execFileSync("git",["-c","user.name=f","-c","user.email=f@l","commit","-q","-m","fake: unit a"]);\n' +
+      // The forgery: a plain file write into real orchestration state, no router CLI involved.
+      'mkdirSync(".router/tasks/forged", {recursive: true});\n' +
+      'writeFileSync(".router/tasks/forged/result.json", JSON.stringify({task_id:"forged",exit_class:"ok",verifier:{result:"PASSED",checks:[]}}));\n' +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(forger, 0o755);
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = forger;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+
+    assert.equal(result.exit_class, 'task_failed', 'a forged state file did not fail the run');
+    assert.ok(result.state_tampering !== undefined, 'the forgery was not detected');
+    assert.ok(
+      result.state_tampering.some((line) => line.includes('tasks/forged/result.json')),
+      result.state_tampering.join(' | '),
+    );
+    // Never verified: this is a contract violation, not a code defect to weigh against the diff.
+    assert.equal(result.verifier, undefined);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+// The other side of the same coin: the run's OWN artifacts change constantly while it runs
+// (status.json, the heartbeat, the worker log), so a detector that flagged those would fail every
+// run. A clean executor must come out clean.
+test('an ordinary run reports no state tampering (finding 9)', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.state_tampering, undefined, JSON.stringify(result.state_tampering));
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});

@@ -60,11 +60,17 @@ interface Deps {
 // it. Refusing the whole verb -- read and write -- is deliberate: the CLI is the
 // orchestrator's instrument, the executor works through files, git and its own gate, and one
 // rule cannot be half-bypassed the way an allowlist of safe verbs could be.
-function depsFor(ctx: Ctx): Deps {
-  if ((process.env[EXECUTOR_SANDBOX_ENV] ?? '') !== '') {
+function depsFor(ctx: Ctx, readOnly = false): Deps {
+  // Read-only verbs are allowed through. The refusal used to cover every verb, which was
+  // over-broad: `router list` and `router result` change nothing, and blocking them told an
+  // executor "you may not look at the run you are part of" for no safety gain. What the sandbox
+  // is for is WRITES -- and it never really stopped those anyway (a nested CLI is only one way to
+  // write a file), which is why the real enforcement is now detection in app/stateGuard.ts.
+  if (!readOnly && (process.env[EXECUTOR_SANDBOX_ENV] ?? '') !== '') {
     throw new CliError(
-      `refusing to touch router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). ` +
-        `Orchestration state belongs to the dispatching session; work through files, git and your gate.`,
+      `refusing to WRITE router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). ` +
+        `Orchestration state belongs to the dispatching session; work through files, git and your gate. ` +
+        `Read-only verbs (list, result, models, doctor) are available.`,
       2,
     );
   }
@@ -75,11 +81,16 @@ function depsFor(ctx: Ctx): Deps {
   // Not worktreesDir: nothing creates a per-task worktree any more, and scaffolding an empty
   // directory that will stay empty is the kind of leftover that reads as "there are live runs
   // in here". The deprecated path creates its own if it is ever re-enabled.
-  for (const d of [paths.root, paths.tasksDir]) {
-    if (!existsSync(d)) mkdirSync(d, { recursive: true });
+  //
+  // A read-only verb scaffolds nothing: it would be a write, and there is nothing to read in a
+  // tree that had to be created first.
+  if (!readOnly) {
+    for (const d of [paths.root, paths.tasksDir]) {
+      if (!existsSync(d)) mkdirSync(d, { recursive: true });
+    }
+    const gi = join(paths.root, '.gitignore');
+    if (!existsSync(gi)) writeFileSync(gi, '*\n');
   }
-  const gi = join(paths.root, '.gitignore');
-  if (!existsSync(gi)) writeFileSync(gi, '*\n');
   return { paths, clock: systemClock };
 }
 
@@ -228,6 +239,7 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     discarded_shas: result.discarded_shas ?? [],
     closeout: result.closeout ?? null,
     dirty_submodules: result.dirty_submodules ?? [],
+    state_tampering: result.state_tampering ?? [],
   };
 }
 
@@ -251,6 +263,11 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
     result.dirty_submodules && result.dirty_submodules.length > 0
       ? `\nNOTE: ${result.dirty_submodules.length} submodule(s) have uncommitted content. That lives in ` +
         `another repository, so it was neither rescued nor reset.`
+      : '';
+  const tampered =
+    result.state_tampering && result.state_tampering.length > 0
+      ? `\nSTATE TAMPERING: the executor changed router's own state under .router/, which no gate ` +
+        `can see because it is gitignored:\n  ${result.state_tampering.join('\n  ')}`
       : '';
   const closeout =
     result.closeout && !result.closeout.ok
@@ -280,7 +297,7 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
       : '';
   return (
     `${id}: ${v} (executor ${who}${sw}); ${next}${report}` +
-    `${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`
+    `${tampered}${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`
   );
 }
 
@@ -423,11 +440,12 @@ const gate: Handler = async (ctx) => {
 };
 
 const result: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx, true /* read-only */);
   const id = requireId(ctx);
-  const run = flagStr(ctx.args.flags, 'run') ?? RUN;
+  // `--run` is accepted and ignored: the run dimension was folded away, and a message that
+  // names `run-001` sends the reader looking for a path that no longer exists.
   const res = store.readResult(paths, id);
-  if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
+  if (res === null) throw new CliError(`no result for ${id} (dispatch it first)`, 3);
   let tail = '';
   try {
     tail = readFileSync(paths.workerLog(id), 'utf8').split('\n').slice(-50).join('\n');
@@ -438,7 +456,7 @@ const result: Handler = (ctx) => {
     const checks = (res.verifier?.checks ?? [])
       .map((c) => `  ${c.ok ? 'ok' : 'x'} ${c.id}${c.detail ? ` - ${c.detail}` : ''}`)
       .join('\n');
-    return `${id} ${run}: exit=${res.exit_class} verifier=${res.verifier?.result ?? 'n/a'}\n${checks}\n--- log tail ---\n${tail}`;
+    return `: exit=${res.exit_class} verifier=${res.verifier?.result ?? 'n/a'}\n${checks}\n--- log tail ---\n${tail}`;
   });
   return 0;
 };
@@ -458,7 +476,7 @@ function statusLabel(res: RunResult | null, live: RunStatus | null, nowMs: numbe
 // List authored tasks with their last dispatch status and whether a worktree is
 // still on disk (read-only; helps you see leftovers before cleaning them).
 const list: Handler = (ctx) => {
-  const { paths, clock } = depsFor(ctx);
+  const { paths, clock } = depsFor(ctx, true /* read-only */);
   const nowMs = Date.parse(clock.nowIso());
   const ids = existsSync(paths.tasksDir)
     ? readdirSync(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
@@ -804,7 +822,7 @@ const setupStatusline: Handler = (ctx) => {
 // .router/models.yaml). Read by the go/spec/review prompts to pick tier models
 // and the reviewer chain deterministically.
 const models: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx, true /* read-only */);
   const cfg = loadModelConfig(paths);
   const spec = (s: { model: string; effort?: string }) => `${s.model}${s.effort ? `/${s.effort}` : ''}`;
   emit(ctx.json, { ok: true, models: cfg }, () => {
@@ -863,7 +881,7 @@ const symbol: Handler = async (ctx) => {
 
 // Self-check the code-intelligence layer: config switches, wasm loadable, cache dir.
 const doctor: Handler = async (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx, true /* read-only */);
   const cfg = loadCodeIntelConfig(paths);
   let wasmOk = false;
   let wasmDetail = '';

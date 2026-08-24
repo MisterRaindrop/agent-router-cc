@@ -37,6 +37,7 @@ import { acquireLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import { loadGateConfig } from './gateConfig.ts';
+import { fingerprintState, stateDiff } from './stateGuard.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
@@ -241,6 +242,8 @@ async function runPreparedObserved(
 
   // Executor chain, quota-ordered: try the executor with the most headroom first;
   // quota/auth/setup failures reset the worktree and fall through to the next.
+  // Must NOT 11 detection: what the orchestration state looked like before any executor ran.
+  const stateBefore = fingerprintState(paths, id);
   const { order } = orderByQuota(paths, workers);
   let used = order[0]!;
   let exitClass: ExitClass = 'task_failed';
@@ -334,6 +337,12 @@ async function runPreparedObserved(
   // a correctness hole. A file the executor forgot to commit never enters `base_sha..HEAD`, so
   // every gate passes without ever seeing it, and the run reports success while unreviewed code
   // sits in the user's checkout.
+  // Compare before anything else is decided: state tampering is not a code defect to be weighed
+  // against the diff, it is a contract violation, and it is invisible to every gate because
+  // `.router/` is gitignored.
+  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  if (tampering.length > 0 && exitClass === 'ok') exitClass = 'task_failed';
+
   let closeout: RunResult['closeout'];
   // A probe is exempt, and has to be: it is required to produce NO diff, so demanding that it
   // commit its work would be self-contradictory. Its equivalent check is `probe_no_diff`, which
@@ -381,6 +390,7 @@ async function runPreparedObserved(
     ...(prep.rescue !== null ? { rescue_sha: prep.rescue.sha } : {}),
     ...(discarded.length > 0 ? { discarded_shas: discarded } : {}),
     ...(closeout !== undefined ? { closeout } : {}),
+    ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
     ...(prep.dirtySubmodules.length > 0 ? { dirty_submodules: prep.dirtySubmodules } : {}),
     ...(context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {}),
     ...(switches > 0 ? { executor_switches: switches } : {}),

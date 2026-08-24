@@ -234,6 +234,11 @@ export interface RunResult {
   /** Step 9, the closing invariant, checked before verification and reported either way.
    *  A run that fails it is not verified and does not claim completion. */
   closeout?: { ok: true } | { ok: false; reason: string; files: string[] };
+  /**
+   * Orchestration state under `.router/` that the executor changed and had no business changing.
+   * Present only when something was detected; its presence fails the run.
+   */
+  state_tampering?: string[];
   /** Submodule content dirt seen in the checkout. Not the user's work and not rescuable (it
    *  lives in another repository), so it is reported rather than acted on. */
   dirty_submodules?: string[];

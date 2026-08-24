@@ -380,7 +380,7 @@ test('an executor cannot touch real router state (8h)', () => {
     const sandboxed = { ROUTER_EXECUTOR_SANDBOX: '1' };
     const smoke = router(dir, ['new', 'smoke', '--title', 'Smoke'], sandboxed);
     assert.notEqual(smoke.code, 0);
-    assert.match(smoke.out, /refusing to touch router state from inside an executor/);
+    assert.match(smoke.out, /refusing to WRITE router state from inside an executor/);
     assert.match(smoke.out, /ROUTER_EXECUTOR_SANDBOX/);
     assert.ok(!existsSync(join(dir, '.router/tasks/smoke')), 'the executor wrote real task state');
 
@@ -390,12 +390,24 @@ test('an executor cannot touch real router state (8h)', () => {
       ['new', 'smoke2', '--router-dir', join(dir, '.router')],
       ['symbol', 'index', 'src'],
       ['dispatch', 'real-task'],
-      ['result', 'real-task'],
     ]) {
       const r = router(dir, argv, sandboxed);
       assert.notEqual(r.code, 0, `${argv.join(' ')} was allowed`);
-      assert.match(r.out, /refusing to touch router state from inside an executor/);
+      assert.match(r.out, /refusing to WRITE router state from inside an executor/);
     }
+
+    // Review finding 9b: the refusal used to cover every verb, including ones that change
+    // nothing. Blocking `router list` told an executor "you may not look at the run you are part
+    // of" for no safety gain, while the writes it was meant to stop went through a plain file API
+    // anyway (see the state-tampering detection).
+    for (const argv of [['list'], ['result', 'real-task'], ['models'], ['doctor']]) {
+      const r = router(dir, argv, sandboxed);
+      // Not "exit 0" -- `result` on a task that was never dispatched legitimately reports that.
+      // The assertion is that the SANDBOX is not what stopped it.
+      assert.doesNotMatch(r.out, /refusing to/, `${argv.join(' ')} was refused: ${r.out}`);
+    }
+    assert.equal(router(dir, ['list'], sandboxed).code, 0);
+    assert.match(router(dir, ['list'], sandboxed).out, /real-task/);
     assert.ok(!existsSync(join(dir, '.router/tasks/smoke2')));
     assert.ok(!existsSync(join(dir, '.router/symbols')));
 
