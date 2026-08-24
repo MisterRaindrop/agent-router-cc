@@ -125,6 +125,16 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
     });
 
     child.on('exit', (code, signal) => {
+      // Terminate the GROUP, not just the leader that already exited. An executor that started a
+      // background compiler, server or script and then returned normally left those children
+      // running: supervision reported `ok`, the caller released the exclusive lock, and the
+      // survivors kept writing the same checkout. The escalation path only ran on timeout and
+      // stall, so the SUCCESS path was the one that leaked.
+      //
+      // Best effort and non-blocking: the run's verdict is already decided, so a survivor that
+      // ignores SIGTERM must not turn a finished run into a hang. The caller kills the group
+      // again before releasing the lock, which is where the ordering guarantee belongs.
+      if (child.pid !== undefined) killProcessGroup(child.pid, 'SIGTERM');
       finish({ rc: code, signal, timedOut, stalled, spawnError: null });
     });
 

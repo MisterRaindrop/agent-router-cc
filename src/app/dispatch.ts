@@ -33,6 +33,7 @@ import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
 import { acquireLock } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
+import { killProcessGroup } from '../io/signals.ts';
 import { loadGateConfig } from './gateConfig.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
@@ -226,6 +227,7 @@ async function runPreparedObserved(
   deps: DispatchDeps,
   prep: PreparedRun,
   gateConfig?: GateConfig,
+  onExecPgid?: (pgid: number) => void,
 ): Promise<RunResult> {
   const { paths } = deps;
   const { id, task, contractMdText, workDir, branch, baseSha, context, workers, logPath } = prep;
@@ -267,7 +269,15 @@ async function runPreparedObserved(
       watchPaths: [refPath],
       maxWallMs: task.max_wall_minutes * 60_000,
       stallMs,
-      onPgid: () => prep.status.executorWorking(logPath, used.kind, initialLogChars),
+      onPgid: (pgid) => {
+        prep.status.executorWorking(logPath, used.kind, initialLogChars);
+        // Publish the group into the LOCK. This was the missing wire: `recordExecPgid` existed
+        // and only the io-lock test ever called it, so in production the lock never carried an
+        // execPgid -- and a reclaimer therefore could not clean up the orphan it was supposed to
+        // (Must NOT 6, fault injection 8c). The 8c test called the primitive by hand and so
+        // passed straight over the gap.
+        onExecPgid?.(pgid);
+      },
     });
     prep.status.finishExecutor();
     outcome = o;
@@ -425,9 +435,10 @@ export async function runPrepared(
   deps: DispatchDeps,
   prep: PreparedRun,
   gateConfig?: GateConfig,
+  onExecPgid?: (pgid: number) => void,
 ): Promise<RunResult> {
   try {
-    return await runPreparedObserved(deps, prep, gateConfig);
+    return await runPreparedObserved(deps, prep, gateConfig, onExecPgid);
   } catch (error) {
     prep.status.terminal('failed');
     throw error;
@@ -480,11 +491,19 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   // acquireLock has already reaped any orphan executor left by a dead holder (step 3) -- it
   // will not hand back a handle while one is still writing to this checkout.
   const beater = startHeartbeat(lock.path, lock.ownerToken);
+  let execPgid: number | null = null;
   try {
     const prep = prepareRun(deps, id);
-    const result = await runPrepared(deps, prep, gateConfig);
-    return result;
+    return await runPrepared(deps, prep, gateConfig, (pgid) => {
+      execPgid = pgid;
+      lock.recordExecPgid(pgid);
+    });
   } finally {
+    // Step 12, in this order: kill the executor's process group, THEN release the lock. The
+    // supervisor already signals the group when the leader exits, but that is best effort and
+    // non-blocking; this is the point where "no writer is left in this checkout" has to be true,
+    // because the next line lets somebody else in.
+    if (execPgid !== null) killProcessGroup(execPgid, 'SIGKILL');
     beater.stop();
     lock.release();
   }

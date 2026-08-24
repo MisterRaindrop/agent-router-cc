@@ -13,7 +13,7 @@ import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
-import { acquireLock } from '../src/io/lock.ts';
+import { acquireLock, readLock } from '../src/io/lock.ts';
 import { currentBranch, uncommittedSourceFiles } from '../src/io/git.ts';
 
 const NODE = process.execPath;
@@ -466,4 +466,43 @@ test('an executor that forgets a file fails the run instead of passing the gate 
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
     fx.cleanup(repo);
   }
+});
+
+// Review finding 3. `recordExecPgid` existed and only the io-lock test ever called it, so in
+// production the lock never carried an execPgid -- and a process reclaiming a dead holder's lock
+// therefore could not clean up the orphan it was supposed to. Must NOT 6 and fault-injection 8c
+// were both satisfied only by a test that called the primitive by hand, which is precisely how a
+// missing wire survives a green suite.
+test('dispatch publishes the executor process group into the lock (finding 3)', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+
+  // Observe the lock file from OUTSIDE while the run holds it: the run releases the lock in its
+  // own finally, so by the time dispatchTask returns there is nothing left to inspect.
+  const seen: (number | undefined)[] = [];
+  const poller = setInterval(() => {
+    const info = readLock(paths.gateLock());
+    if (info !== null) seen.push(info.execPgid);
+  }, 15);
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+    assert.equal(result.exit_class, 'ok');
+  } finally {
+    clearInterval(poller);
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+
+  assert.ok(seen.length > 0, 'never observed the lock while the run held it');
+  const withPgid = seen.filter((p): p is number => typeof p === 'number' && p > 1);
+  assert.ok(
+    withPgid.length > 0,
+    `the lock never carried an execPgid; observed ${seen.length} samples, all undefined`,
+  );
 });
