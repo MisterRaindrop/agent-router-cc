@@ -27,6 +27,7 @@ import {
   resolveCommit,
   submoduleDirty,
   uncommittedSourceFiles,
+  uncommittedSourceFilesOrUnknown,
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
@@ -376,8 +377,11 @@ async function runPreparedObserved(
   // A run that did not end `ok` is never committed, so its work would otherwise look lost.
   // Say plainly that it is still on disk: an executor killed after it had already finished is
   // recoverable, and silently discarding that work is the worse failure.
-  if (exitClass !== 'ok' && uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE).length > 0) {
-    result.uncommitted_changes = true;
+  if (exitClass !== 'ok') {
+    // Reporting, not deciding: a failure here must not mask the failure being reported, so
+    // "could not determine" (null) is left off the record rather than becoming `false`.
+    const leftoverOnFailure = uncommittedSourceFilesOrUnknown(workDir, ROUTER_STATE_EXCLUDE);
+    if (leftoverOnFailure !== null && leftoverOnFailure.length > 0) result.uncommitted_changes = true;
   }
 
   if (exitClass === 'ok') {
@@ -621,8 +625,9 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   // A run that did not end `ok` is never committed, so its work would otherwise look lost.
   // Say plainly that it is still on disk: an executor killed after it had already finished is
   // recoverable, and silently discarding that work is the worse failure.
-  if (result.exit_class !== 'ok' && uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE).length > 0) {
-    result.uncommitted_changes = true;
+  if (result.exit_class !== 'ok') {
+    const leftoverOnFailure = uncommittedSourceFilesOrUnknown(workDir, ROUTER_STATE_EXCLUDE);
+    if (leftoverOnFailure !== null && leftoverOnFailure.length > 0) result.uncommitted_changes = true;
   }
 
   if (!conflict && !mismatch && exitClass === 'ok') {

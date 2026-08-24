@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync } from 'node:fs';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as fx from '../testkit/gitRepo.ts';
 import {
@@ -24,6 +24,7 @@ import {
   submoduleDirty,
   TaskIdentityError,
   uncommittedSourceFiles,
+  uncommittedSourceFilesOrUnknown,
   worktreeAdd,
   worktreeAddDetached,
   worktreeRemove,
@@ -499,6 +500,31 @@ test('rescueCommit excludes router state even when nothing ignores it', () => {
     assert.equal(fx.git(dir, ['ls-files', '.router']).trim(), '');
     // Still on disk, just not in the commit.
     assert.ok(existsSync(join(dir, '.router', 'result.json')));
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Review finding 4. This function decides two safety questions -- whether to rescue the user's
+// uncommitted work, and whether the closing invariant holds before verification. It used to
+// return [] when `git status` failed, which answers "the tree is clean" to "I could not look".
+test('uncommittedSourceFiles throws rather than reporting a broken repo as clean (finding 4)', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'a.txt', 'v1\n');
+    fx.addCommit(dir, 'base');
+    fx.write(dir, 'a.txt', 'v2\n');
+    assert.equal(uncommittedSourceFiles(dir).length, 1);
+
+    // A corrupt index: `git status` exits non-zero with a fatal message.
+    writeFileSync(join(dir, '.git', 'index'), 'this is not an index');
+    assert.throws(() => uncommittedSourceFiles(dir), /git status/);
+    // rescueCommit asks the same question first, so it must refuse too rather than skip silently.
+    assert.throws(() => rescueCommit(dir, 'router: rescue'), /git status/);
+
+    // The reporting variant says "unknown" -- distinct from "nothing", and never masks the
+    // failure it is being used to describe.
+    assert.equal(uncommittedSourceFilesOrUnknown(dir), null);
   } finally {
     fx.cleanup(dir);
   }

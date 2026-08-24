@@ -397,6 +397,9 @@ export function isAncestor(cwd: string, ancestor: string, descendant: string): b
 export function submoduleDirty(cwd: string, exclude: readonly string[] = []): string[] {
   const scope = pathspec(exclude);
   const all = tryGit(cwd, ['status', '--porcelain', ...scope]);
+  // [] on failure is acceptable HERE, unlike uncommittedSourceFiles: nothing decides on this
+  // value. It feeds one advisory report line, and the run's real safety checks fail loudly on
+  // the same broken repository a moment later.
   if (!all.ok) return [];
   const ignoring = new Set(
     tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...scope]).stdout.split('\n'),
@@ -429,9 +432,34 @@ function pathspec(exclude: readonly string[]): string[] {
  * while unreviewed code sits in the user's checkout.
  */
 export function uncommittedSourceFiles(cwd: string, exclude: readonly string[] = []): string[] {
-  const r = tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...pathspec(exclude)]);
-  if (!r.ok) return [];
+  const args = ['status', '--porcelain', '--ignore-submodules=dirty', ...pathspec(exclude)];
+  const r = tryGit(cwd, args);
+  // THROWS on failure; it used to return [] "best effort". That turned "I could not check" into
+  // "the tree is clean" -- for the one function that decides both whether to rescue the user's
+  // work and whether the closing invariant holds. A corrupt index makes `git status` exit
+  // non-zero with a fatal message, and the old code answered "clean": the rescue would be
+  // skipped and the closeout would report {ok:true} over a working tree nobody had seen.
+  //
+  // Callers that only REPORT (rather than decide) must catch this and say "unknown" -- never
+  // "none". See uncommittedSourceFilesOrUnknown.
+  if (!r.ok) throw new GitError(args, r.stderr, r.code);
   return r.stdout.split('\n').filter((line) => line !== '');
+}
+
+/**
+ * The same question for a caller that is reporting rather than deciding, where a failure must
+ * not mask the failure being reported. `null` means "could not determine" and is deliberately
+ * distinct from `[]`, which means "nothing uncommitted".
+ */
+export function uncommittedSourceFilesOrUnknown(
+  cwd: string,
+  exclude: readonly string[] = [],
+): string[] | null {
+  try {
+    return uncommittedSourceFiles(cwd, exclude);
+  } catch {
+    return null;
+  }
 }
 
 /**
