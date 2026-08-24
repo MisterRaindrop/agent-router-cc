@@ -28,6 +28,9 @@ plan_id: <slug>
 status: brainstorming   # brainstorming | converged | rejected
 ```
 
+`router plans` reads that `status`, so the stage is visible from the tooling without opening the
+file -- including `rejected`, which is the point below.
+
 `rejected` is a real terminal state. **Killing an idea with a documented reason is a successful
 outcome of this stage, not a failure of it** -- and the record is what stops the same idea coming
 back in three months with nobody remembering why it was dropped.

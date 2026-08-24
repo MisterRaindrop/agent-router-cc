@@ -37,6 +37,12 @@ function writeDesignMd(dir: string, id: string, content: string): void {
   writeFileSync(join(d, 'DESIGN.md'), content);
 }
 
+function writeBrainstormMd(dir: string, id: string, content: string): void {
+  const d = planDir(dir, id);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'BRAINSTORM.md'), content);
+}
+
 function writeCritique(dir: string, id: string, round: number): void {
   const d = planDir(dir, id);
   mkdirSync(d, { recursive: true });
@@ -148,6 +154,57 @@ test('plans sizes columns from their longest values so a long id cannot swallow 
       assert.equal(row.slice(header.indexOf(heading)).startsWith(value), true, `${heading} column must stay aligned`);
     }
     assert.equal(row[id.length], ' ', 'id and revision must have at least one separating space');
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The brainstorm stage was invisible here. A converged brainstorm is a FINISHED stage -- its
+// direction and its rejected alternatives are on disk, and the rejection list is what a later
+// design review is required to read so a closed road is not re-proposed. Reporting no stage made
+// that directory look empty, which is the same blind spot the design revision had.
+test('plans reports the brainstorm stage when it is the only document', () => {
+  const dir = fx.initRepo();
+  try {
+    writeBrainstormMd(dir, 'bs-open', '---\nplan_id: bs-open\nstatus: brainstorming\n---\nbody\n');
+    writeBrainstormMd(dir, 'bs-done', '---\nplan_id: bs-done\nstatus: converged\n---\nbody\n');
+    // A documented rejection is a successful outcome of the stage, so it has to be visible too.
+    writeBrainstormMd(dir, 'bs-no', '---\nplan_id: bs-no\nstatus: rejected\n---\nbody\n');
+    writeBrainstormMd(dir, 'bs-bad', '---\nplan_id: bs-bad\nstatus: daydreaming\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /bs-open\s+-\s+unknown\s+brainstorming/);
+    assert.match(text.out, /bs-done\s+-\s+unknown\s+converged/);
+    assert.match(text.out, /bs-no\s+-\s+unknown\s+rejected/);
+    // An unrecognized status is still unknown rather than echoed back.
+    assert.match(text.out, /bs-bad\s+-\s+unknown\s+-/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Precedence, in both directions.
+test('a later document outranks the brainstorm, and a broken plan does not fall back to it', () => {
+  const dir = fx.initRepo();
+  try {
+    // design over brainstorm
+    writeBrainstormMd(dir, 'has-design', '---\nstatus: converged\n---\nbody\n');
+    writeDesignMd(dir, 'has-design', '---\nrevision: 2\nstatus: design_approved\n---\nbody\n');
+    // work plan over both
+    writeBrainstormMd(dir, 'has-plan', '---\nstatus: converged\n---\nbody\n');
+    writeDesignMd(dir, 'has-plan', '---\nrevision: 1\nstatus: design_approved\n---\nbody\n');
+    writePlanMd(dir, 'has-plan', '---\nrevision: 4\nstatus: executing\n---\nbody\n');
+    // An unparseable plan keeps the stage unknown: a plan on disk means the earlier stages are
+    // done, so reporting "converged" over a broken plan would read as regress, not as damage.
+    writeBrainstormMd(dir, 'broken-plan', '---\nstatus: converged\n---\nbody\n');
+    writePlanMd(dir, 'broken-plan', '---\nrevision: [\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /has-design\s+2\s+unknown\s+design_approved/);
+    assert.match(text.out, /has-plan\s+1\s+4\s+executing/);
+    assert.match(text.out, /broken-plan\s+-\s+unknown\s+-/);
   } finally {
     fx.cleanup(dir);
   }
