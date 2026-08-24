@@ -47,30 +47,66 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<bo
   return predicate();
 }
 
-// This is fault-injection case 8b. It is the whole reason the heartbeat is a separate process:
-// the verify command runs through spawnSync, so an in-process `setInterval` beat cannot fire
-// during the phase that lasts longest, and the lock would be declared stale (90s) while its
-// owner was still editing the user's checkout.
-test('the heartbeat keeps beating while the owner blocks its own event loop (8b)', async () => {
+// Fault-injection case 8b, rewritten after review finding 10 showed the original could not catch
+// its own regression.
+//
+// The original blocked the loop and then asserted beatAtMs had advanced. That passes either way:
+// if the beat were an in-process `setInterval`, the timer fires the instant the loop is released
+// and the value advances just the same. PLAN §3 registered that test as the required evidence for
+// Must NOT 5, so the green suite was overstating the guarantee it claimed to prove.
+//
+// The only assertion that separates the two is "beats landed WHILE we were blocked", and that
+// cannot be observed by the blocked process. It takes two children: one that only blocks, and one
+// whose own loop is free and does nothing but sample. Neither can be the same process.
+test('beats land WHILE the owner is blocked, not just after (8b)', async () => {
   const dir = tempDir();
   const path = join(dir, 'gate.lock');
+  const samples = join(dir, 'samples.jsonl');
   try {
     const handle = acquireLock(path, { waitMs: 0 });
     assert.ok(!('blocked' in handle));
     const beater = startHeartbeat(path, handle.ownerToken, 60);
     try {
       assert.ok(beater.pid !== null);
-      const before = beatAt(path);
 
-      // The event loop is now unavailable for a second -- no timer of ours can run.
-      blockEventLoop(1000);
-
-      // ...and the lock was still refreshed, from the outside.
-      assert.ok(
-        await waitUntil(() => beatAt(path) > before),
-        'beatAtMs never advanced across the blocking call',
+      // The watcher: its loop is free, so it can see what happens during our block. It records
+      // (sampledAt, beatAtMs) pairs so the window can be reconstructed afterwards.
+      const watcher = spawn(
+        process.execPath,
+        [
+          '-e',
+          "const fs=require('node:fs');" +
+            `const t=setInterval(()=>{try{const b=JSON.parse(fs.readFileSync(${JSON.stringify(path)},'utf8')).beatAtMs;` +
+            `fs.appendFileSync(${JSON.stringify(samples)}, JSON.stringify([Date.now(),b])+'\\n')}catch{}},15);` +
+            'setTimeout(()=>{clearInterval(t);process.exit(0)},4000);',
+        ],
+        { stdio: 'ignore' },
       );
-      assert.ok(beatAt(path) - before >= 500, `expected ~1s of beats, got ${beatAt(path) - before}ms`);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 150)); // let it start sampling
+
+        const blockedFrom = Date.now();
+        blockEventLoop(1200); // our loop is gone; no timer of ours can run
+        const blockedUntil = Date.now();
+
+        await new Promise((resolve) => setTimeout(resolve, 150)); // let the last samples land
+        const rows = readFileSync(samples, 'utf8')
+          .split('\n')
+          .filter((l) => l !== '')
+          .map((l) => JSON.parse(l) as [number, number]);
+
+        const inWindow = rows.filter(([at]) => at >= blockedFrom && at <= blockedUntil);
+        assert.ok(inWindow.length > 5, `watcher barely sampled during the block (${inWindow.length})`);
+        const distinct = new Set(inWindow.map(([, beat]) => beat));
+        // The whole finding in one number. An in-process beat would show ONE value here -- the
+        // one written before the block -- because nothing of ours ran until the block ended.
+        assert.ok(
+          distinct.size >= 2,
+          `only ${distinct.size} distinct beatAtMs during a 1.2s block: the beat did not run while blocked`,
+        );
+      } finally {
+        watcher.kill('SIGKILL');
+      }
     } finally {
       beater.stop();
       handle.release();

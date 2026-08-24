@@ -311,16 +311,20 @@ const resume: Handler = async (ctx) => {
   if (feedback === '') throw new CliError('resume needs --feedback "<what to fix>"', 2);
   const result = await resumeTask(deps, id, feedback);
   const mism = result.resume_session_mismatch === true;
-  const v = result.verifier?.result ?? 'FAILED';
+  // `null` when the verifier never ran, exactly as `dispatch` already reports it. A session
+  // mismatch or a failed closeout skips verification entirely, and collapsing "never attempted"
+  // into a machine-readable "FAILED" is the dressed-up gap the assurance rules forbid.
+  // dispatchOutput was fixed for this; resume was missed.
+  const verifierResult = result.verifier?.result ?? null;
   emit(
     ctx.json,
     {
-      ok: !mism && v === 'PASSED',
+      ok: !mism && verifierResult === 'PASSED',
       id,
       resumed: true,
       session_mismatch: mism,
       session_id: result.session_id ?? null,
-      verifier: v,
+      verifier: verifierResult,
       exit_class: result.exit_class,
     },
     () => {
@@ -329,13 +333,25 @@ const resume: Handler = async (ctx) => {
           result.resume_reported_session == null
             ? 'reported no session id at all'
             : `reported a different session id (${result.resume_reported_session})`;
-        return `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; nothing committed. Re-dispatch, or check the resume invocation.`;
+        // Not "nothing committed" -- that was false. A resumed executor writes and commits to the
+        // task branch before we ever learn which session it was; what the mismatch stops is
+        // VERIFICATION. Telling the user nothing was committed sent them looking at a clean tree
+        // while the branch had moved.
+        return (
+          `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; NOT verified. ` +
+          `Anything it committed is on ${result.branch ?? `router/${id}`} and has cleared no gate: ` +
+          `review or reset that branch, then re-dispatch, or check the resume invocation.`
+        );
       }
-      const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      return `${id}: resumed -> ${v} (${result.exit_class}); ${next}`;
+      const next =
+        verifierResult === 'PASSED'
+          ? `review the diff, then \`router land ${id}\``
+          : `see \`router result ${id}\``;
+      // "not verified" reads differently from "FAILED", and the difference is the whole point.
+      return `${id}: resumed -> ${verifierResult ?? 'not verified'} (${result.exit_class}); ${next}`;
     },
   );
-  return !mism && v === 'PASSED' ? 0 : 1;
+  return !mism && verifierResult === 'PASSED' ? 0 : 1;
 };
 
 const land: Handler = (ctx) => {

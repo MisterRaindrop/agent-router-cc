@@ -51,7 +51,11 @@ test('dispatch then resume: re-attaches to the same session and commits the foll
   }
 });
 
-test('resume is fail-loud: a mismatched session id commits nothing and exits non-zero', () => {
+// Review finding 11. This test was named "commits nothing" and never looked at HEAD, while the
+// fake it drives commits on both runs -- so the real behaviour was "the branch moved and nothing
+// verified it", and the CLI told the user `nothing committed`. The test's own title was the claim
+// it failed to check, and it kept a false message green.
+test('resume is fail-loud: a mismatched session id verifies nothing, and says so truthfully', () => {
   chmodSync(FAKE_CODEX_MISMATCH, 0o755);
   const dir = fx.initRepo();
   fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
@@ -66,6 +70,21 @@ test('resume is fail-loud: a mismatched session id commits nothing and exits non
     assert.equal(rj.session_mismatch, true, r.out);
     assert.equal(rj.ok, false, r.out);
     assert.equal(r.code, 1, r.out);
+    // Nothing was VERIFIED -- that is the actual guarantee.
+    assert.equal(rj.verifier, null, r.out);
+
+    // And the branch DID move, which is why the old message was a lie. Assert the state rather
+    // than the wording alone, since the wording is what was wrong.
+    const head = fx.git(dir, ['rev-parse', 'HEAD']).trim();
+    const base = fx.git(dir, ['rev-parse', 'HEAD~1']).trim();
+    assert.notEqual(head, base);
+    assert.match(fx.git(dir, ['log', '-1', '--pretty=%s']).trim(), /fake/);
+
+    // The human-readable line must not claim otherwise.
+    const text = router(dir, ['resume', 'demo', '--feedback', 'x'], env);
+    assert.doesNotMatch(text.out, /nothing committed/);
+    assert.match(text.out, /NOT verified/);
+    assert.match(text.out, /has cleared no gate/);
   } finally {
     fx.cleanup(dir);
   }
