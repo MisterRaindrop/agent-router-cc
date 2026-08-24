@@ -33,7 +33,7 @@ import {
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
-import { acquireLock } from '../io/lock.ts';
+import { acquireLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import { loadGateConfig } from './gateConfig.ts';
@@ -485,26 +485,31 @@ export class CheckoutBusyError extends Error {
 export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunResult> {
   const { paths } = deps;
   const gateConfig = loadGateConfig(paths);
-  const lock = acquireLock(paths.gateLock(), {
-    waitMs: (gateConfig.lock_wait_minutes ?? 0) * 60_000,
-  });
-  if ('blocked' in lock) {
-    const held = lock.holder;
-    throw new CheckoutBusyError(
-      `the checkout is held by pid ${held?.pid ?? 'unknown'}` +
-        (held ? `, last active ${new Date(held.beatAtMs).toISOString()}` : '') +
-        `; router runs one task at a time`,
-      held?.pid ?? null,
-      held?.beatAtMs ?? null,
-    );
-  }
   // acquireLock has already reaped any orphan executor left by a dead holder (step 3) -- it
   // will not hand back a handle while one is still writing to this checkout.
+  const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
+  return withCheckoutLock(lock, async (onExecPgid) => {
+    const prep = prepareRun(deps, id);
+    return runPrepared(deps, prep, gateConfig, onExecPgid);
+  });
+}
+
+/**
+ * Run `body` while holding `lock`, with the out-of-process heartbeat running and the executor's
+ * process group published into the lock -- then kill that group BEFORE releasing.
+ *
+ * Extracted because `resume` had none of it (review finding 6). Both paths start an executor in
+ * the user's own checkout, so both need the same envelope; having it inline in one of them was
+ * what let the other quietly do without.
+ */
+async function withCheckoutLock(
+  lock: LockHandle,
+  body: (onExecPgid: (pgid: number) => void) => Promise<RunResult>,
+): Promise<RunResult> {
   const beater = startHeartbeat(lock.path, lock.ownerToken);
   let execPgid: number | null = null;
   try {
-    const prep = prepareRun(deps, id);
-    return await runPrepared(deps, prep, gateConfig, (pgid) => {
+    return await body((pgid) => {
       execPgid = pgid;
       lock.recordExecPgid(pgid);
     });
@@ -517,6 +522,22 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
     beater.stop();
     lock.release();
   }
+}
+
+/** Take the checkout lock, or throw CheckoutBusyError naming the holder. */
+function takeCheckoutLock(paths: RouterPaths, waitMinutes: number): LockHandle {
+  const lock = acquireLock(paths.gateLock(), { waitMs: waitMinutes * 60_000 });
+  if ('blocked' in lock) {
+    const held = lock.holder;
+    throw new CheckoutBusyError(
+      `the checkout is held by pid ${held?.pid ?? 'unknown'}` +
+        (held ? `, last active ${new Date(held.beatAtMs).toISOString()}` : '') +
+        `; router runs one task at a time`,
+      held?.pid ?? null,
+      held?.beatAtMs ?? null,
+    );
+  }
+  return lock;
 }
 
 /**
@@ -580,6 +601,25 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
  */
 export async function resumeTask(deps: DispatchDeps, id: string, feedback: string): Promise<RunResult> {
   const { paths } = deps;
+  // Review finding 6: resume ran an executor in the user's checkout with NO transaction at all --
+  // no lock, no heartbeat, no published process group, no identity assertion before verification,
+  // and without reading gate.yaml. Measured by the reviewer: a fresh dispatch was FAILED by a
+  // deliberately failing gate while a resume on the same fixture reported PASSED, because it
+  // verified with `task.verify` and never saw the gate. It could also run concurrently with a
+  // dispatch, both writing the same files.
+  const gateConfig = loadGateConfig(paths);
+  const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
+  return withCheckoutLock(lock, (onExecPgid) => resumeInLock(deps, id, feedback, gateConfig, onExecPgid));
+}
+
+async function resumeInLock(
+  deps: DispatchDeps,
+  id: string,
+  feedback: string,
+  gateConfig: GateConfig,
+  onExecPgid: (pgid: number) => void,
+): Promise<RunResult> {
+  const { paths } = deps;
   const prev = store.readResult(paths, id);
   if (prev === null) throw new Error(`no prior dispatch for ${id}; run \`router dispatch ${id}\` first`);
   const priorSession = prev.session_id ?? null;
@@ -619,6 +659,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
     watchPaths: [refPath],
     maxWallMs: task.max_wall_minutes * 60_000,
     stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
+    onPgid: onExecPgid,
   });
   const log = safeRead(logPath);
   const exitClass: ExitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -684,6 +725,10 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
       appendMetric(deps, result, task, null);
       return result;
     }
+    // Same identity assertion the fresh path makes before it verifies. Resume checked identity
+    // once BEFORE launching the executor and never again, so an executor (or a human) that moved
+    // the branch mid-run would have had its diff verified against the wrong base.
+    assertTaskIdentity(workDir, { branch, baseSha });
     result.closeout = { ok: true };
     const patch = rawDiff(workDir, baseSha, 'HEAD');
     writeFileSync(paths.diffPatch(id), patch);
@@ -698,6 +743,11 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
       ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
       verify: task.verify ?? [],
       env: verifyEnv,
+      uncommittedExclude: ROUTER_STATE_EXCLUDE,
+      // The project's gate, which resume used to skip entirely -- so a resume could report PASSED
+      // on a diff the same gate had just FAILED on a fresh dispatch.
+      gate: gateConfig,
+      gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
     });
     attachEffectiveRisk(result, task, workDir, baseSha);
   }

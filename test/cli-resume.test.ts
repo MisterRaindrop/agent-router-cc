@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -197,6 +197,72 @@ test('resume refuses from the wrong branch instead of continuing there (8e)', ()
     assert.match(r.out, /on branch main, but task requires router\/demo/);
     // Nothing ran: no new commit on either branch.
     assert.equal(fx.git(dir, ['branch', '--show-current']).trim(), 'main');
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Review finding 6. Resume ran an executor in the user's own checkout with no transaction at
+// all: no lock, no heartbeat, no published process group, no identity assertion before
+// verification, and without reading gate.yaml. The reviewer measured the sharpest consequence --
+// a deliberately failing project gate FAILED a fresh dispatch while a resume on the same fixture
+// reported PASSED, because resume verified with `task.verify` and never saw the gate.
+test('resume honours the project gate instead of bypassing it (finding 6)', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.write(dir, '.gitignore', '.router/\n');
+  fx.addCommit(dir, 'base');
+  const env = baseEnv(dir);
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    // A gate that passes, so the first dispatch can succeed and produce a session to resume.
+    writeFileSync(
+      join(dir, '.router', 'gate.yaml'),
+      `mode: worktree\ngate:\n  - ${JSON.stringify([NODE, '-e', 'process.exit(0)'])}\n`,
+    );
+    assert.equal(router(dir, ['dispatch', 'demo', '--json'], env).code, 0);
+
+    // Now the gate fails. A resume must see that.
+    writeFileSync(
+      join(dir, '.router', 'gate.yaml'),
+      `mode: worktree\ngate:\n  - ${JSON.stringify([NODE, '-e', 'process.exit(4)'])}\n`,
+    );
+    const r = router(dir, ['resume', 'demo', '--feedback', 'another pass', '--json'], env);
+    const out = jsonLine(r.out);
+    assert.equal(out.verifier, 'FAILED', `resume bypassed the gate: ${r.out}`);
+    assert.notEqual(r.code, 0);
+
+    const result = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'demo', 'result.json'), 'utf8'),
+    ) as { verifier: { checks: { id: string; ok: boolean }[] } };
+    const ids = result.verifier.checks.map((c) => c.id);
+    assert.ok(ids.includes('gate:task'), `resume ran no project gate: ${ids.join(',')}`);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The other half: resume must hold the checkout lock, or it can run beside a dispatch.
+test('resume refuses while another process holds the checkout (finding 6)', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = baseEnv(dir);
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(router(dir, ['dispatch', 'demo', '--json'], env).code, 0);
+
+    // A live holder: our own pid, beating now, so it is neither dead nor stale.
+    writeFileSync(
+      join(dir, '.router', 'gate.lock'),
+      `${JSON.stringify({ pid: process.pid, startedAtMs: Date.now(), beatAtMs: Date.now(), ownerToken: 'someone-else' })}\n`,
+    );
+    const r = router(dir, ['resume', 'demo', '--feedback', 'try again'], env);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /the checkout is held by pid/);
+    assert.match(r.out, /router runs one task at a time/);
   } finally {
     fx.cleanup(dir);
   }
