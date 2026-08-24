@@ -775,16 +775,26 @@ const setupStatusline: Handler = (ctx) => {
       statusline_exists: !missing,
     },
     () => {
+      // The actions are past participles ("chained"), so a bare `would ${action}` reads as
+      // "would chained". Map to the infinitive for the dry-run voice.
+      const verb: Record<string, string> = { created: 'create', chained: 'chain', repointed: 'repoint' };
       const head =
         plan.action === 'already-configured'
           ? `already configured (${settingsPath})`
           : dryRun
-            ? `would ${plan.action} statusLine in ${settingsPath}`
+            ? `would ${verb[plan.action] ?? plan.action} the statusLine in ${settingsPath}`
             : `${plan.action} statusLine in ${settingsPath}`;
       const chain = plan.inner ? `\n  chained your existing statusline: ${plan.inner}` : '';
+      // "repointed" means nothing on its own; say what was wrong, or the user cannot tell
+      // whether their setup was broken or is merely being tidied.
+      const why =
+        plan.action === 'repointed'
+          ? '\n  the previous command pointed at one specific plugin version, which would keep' +
+            '\n  running that version after an upgrade; it now resolves the newest at startup'
+          : '';
       const warn = missing ? `\n  WARNING: ${statuslinePath} not found (pass --statusline <path>)` : '';
       const note = changed && !dryRun ? '\n  restart Claude Code (or reload) for it to take effect' : '';
-      return `${head}\n  command: ${plan.command}${chain}${warn}${note}`;
+      return `${head}\n  command: ${plan.command}${why}${chain}${warn}${note}`;
     },
   );
   return 0;

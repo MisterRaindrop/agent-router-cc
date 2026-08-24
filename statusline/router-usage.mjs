@@ -16,7 +16,7 @@
 // script runs standalone under Claude Code and cannot import the bundle).
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 const num = (x) => (typeof x === 'number' ? x : null);
 function findRateLimits(x) {
@@ -140,11 +140,15 @@ if (snap && existsSync(routerDir)) {
 }
 const inner = process.env.ROUTER_INNER_STATUSLINE;
 if (inner) {
-  try {
-    process.stdout.write(execSync(inner, { input: raw, encoding: 'utf8' }));
-  } catch {
-    process.stdout.write('router');
-  }
+  // spawnSync, not execSync: an inner statusline that does not READ stdin makes the parent's
+  // write to it fail with EPIPE, and execSync turns that into a throw -- so the user's whole HUD
+  // line was replaced by the word "router" because their HUD exited before draining a pipe it
+  // never wanted. dash does this where bash does not, which is why it only showed up on Linux.
+  // spawnSync reports the error instead of raising it, and still hands back what the child
+  // printed, so output survives a stdin it ignored.
+  const r = spawnSync(inner, { shell: true, input: raw, encoding: 'utf8' });
+  const text = typeof r.stdout === 'string' ? r.stdout : '';
+  process.stdout.write(text.trim() === '' ? 'router' : text.replace(/\n+$/, ''));
 } else {
   process.stdout.write(snap ? `router: claude ${snap.used_percent}% used` : 'router');
 }

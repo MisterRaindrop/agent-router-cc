@@ -9579,7 +9579,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.10.1" : "0.0.0-dev";
+var VERSION = true ? "0.10.2" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -13934,23 +13934,44 @@ function renderRouting(report) {
 
 // src/core/statuslineSetup.ts
 var MARKER = "router-usage.mjs";
+var VERSIONED_PLUGIN_SCRIPT = /^(?<cache>.*[/\\]plugins[/\\]cache[/\\][^/\\]+[/\\][^/\\]+)[/\\][^/\\]+[/\\](?<tail>statusline[/\\]router-usage\.mjs)$/;
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
+function statusLineInvocation(statuslinePath) {
+  const m = VERSIONED_PLUGIN_SCRIPT.exec(statuslinePath);
+  if (m?.groups === void 0) return `node ${shQuote(statuslinePath)}`;
+  const { cache: cache2, tail } = m.groups;
+  const pipeline = `d=$(ls -d ${shQuote(cache2)}/*/ 2>/dev/null | awk -F/ '{ print $(NF-1) "	" $0 }' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 | cut -f2-); exec node "\${d}${tail.replaceAll("\\", "/")}"`;
+  return `sh -c ${shQuote(pipeline)}`;
+}
 function planStatusLine(existingCommand, statuslinePath) {
-  const wrapped = `node ${shQuote(statuslinePath)}`;
+  const wrapped = statusLineInvocation(statuslinePath);
   const current = existingCommand?.trim();
   if (current === void 0 || current === "") {
     return { command: wrapped, action: "created", inner: null };
   }
   if (current.includes(MARKER)) {
-    return { command: current, action: "already-configured", inner: null };
+    if (current === wrapped || current.endsWith(` ${wrapped}`)) {
+      return { command: current, action: "already-configured", inner: null };
+    }
+    const inner = extractInner(current);
+    return {
+      command: inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
+      action: "repointed",
+      inner
+    };
   }
   return {
     command: `ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`,
     action: "chained",
     inner: current
   };
+}
+function extractInner(command) {
+  const m = /^ROUTER_INNER_STATUSLINE='((?:[^']|'\\'')*)'\s/.exec(command);
+  if (m?.[1] === void 0) return null;
+  return m[1].replaceAll(`'\\''`, `'`);
 }
 
 // src/cli/output.ts
@@ -14551,14 +14572,16 @@ var setupStatusline = (ctx) => {
       statusline_exists: !missing
     },
     () => {
-      const head = plan.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${plan.action} statusLine in ${settingsPath}` : `${plan.action} statusLine in ${settingsPath}`;
+      const verb = { created: "create", chained: "chain", repointed: "repoint" };
+      const head = plan.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${verb[plan.action] ?? plan.action} the statusLine in ${settingsPath}` : `${plan.action} statusLine in ${settingsPath}`;
       const chain = plan.inner ? `
   chained your existing statusline: ${plan.inner}` : "";
+      const why = plan.action === "repointed" ? "\n  the previous command pointed at one specific plugin version, which would keep\n  running that version after an upgrade; it now resolves the newest at startup" : "";
       const warn = missing ? `
   WARNING: ${statuslinePath} not found (pass --statusline <path>)` : "";
       const note = changed && !dryRun ? "\n  restart Claude Code (or reload) for it to take effect" : "";
       return `${head}
-  command: ${plan.command}${chain}${warn}${note}`;
+  command: ${plan.command}${why}${chain}${warn}${note}`;
     }
   );
   return 0;
