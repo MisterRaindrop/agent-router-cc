@@ -333,6 +333,15 @@ export function branchExists(cwd: string, branch: string): boolean {
   return tryGit(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
 }
 
+/**
+ * Point `ref` at `sha`. Used to make a salvage commit reachable before a reset discards the
+ * branch tip that held it -- an unreachable commit is recoverable only by sha, and only until
+ * `git gc` runs. A ref survives both.
+ */
+export function updateRef(cwd: string, ref: string, sha: string): void {
+  git(cwd, ['update-ref', ref, sha]);
+}
+
 export function deleteBranch(cwd: string, branch: string): void {
   tryGit(cwd, ['branch', '-D', branch]);
 }

@@ -127,3 +127,36 @@ test('writeResult puts the record directly under tasks/<id>', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Review finding 8. A pre-fold record has no `branch` field, and every consumer -- land, resume,
+// the queue gate, list -- falls back to `router/<id>`. But that run's branch was actually
+// `router/<id>/<run_id>`, so a task that was PASSED and waiting to be merged before the upgrade
+// could not be merged after it. Read-only compatibility that cannot read the thing it exists for
+// is not compatibility.
+test('a legacy record gets its branch derived from run_id (finding 8)', () => {
+  const dir = tmp();
+  try {
+    const p = routerPaths(join(dir, '.router'));
+    const legacy = p.legacyResultJson('old-task');
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(
+      legacy,
+      JSON.stringify({ task_id: 'old-task', run_id: 'run-001', exit_class: 'ok', verifier: { result: 'PASSED', checks: [] } }),
+    );
+    const got = store.readResult(p, 'old-task');
+    assert.equal(got?.branch, 'router/old-task/run-001', 'the real pre-fold branch name');
+    assert.equal(got?.exit_class, 'ok');
+
+    // A current record is never rewritten -- its own branch wins.
+    store.writeResult(p, 'new-task', { task_id: 'new-task', exit_class: 'ok', branch: 'router/new-task' } as never);
+    assert.equal(store.readResult(p, 'new-task')?.branch, 'router/new-task');
+
+    // A legacy record with no run_id at all is left alone rather than guessed at.
+    const bare = p.legacyResultJson('bare');
+    mkdirSync(dirname(bare), { recursive: true });
+    writeFileSync(bare, JSON.stringify({ task_id: 'bare', exit_class: 'ok' }));
+    assert.equal(store.readResult(p, 'bare')?.branch, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

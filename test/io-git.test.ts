@@ -25,6 +25,7 @@ import {
   TaskIdentityError,
   uncommittedSourceFiles,
   uncommittedSourceFilesOrUnknown,
+  updateRef,
   worktreeAdd,
   worktreeAddDetached,
   worktreeRemove,
@@ -525,6 +526,35 @@ test('uncommittedSourceFiles throws rather than reporting a broken repo as clean
     // The reporting variant says "unknown" -- distinct from "nothing", and never masks the
     // failure it is being used to describe.
     assert.equal(uncommittedSourceFilesOrUnknown(dir), null);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Review finding 2. The salvage commit made before a destructive reset used to be remembered
+// only in memory until the whole run wrote result.json -- so a crash in between lost the only
+// pointer to a commit that existed precisely so nothing would be lost, and `git gc` would then
+// collect it. A ref survives both.
+test('a salvage ref keeps the commit reachable across a reset and a gc (finding 2)', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'a.txt', 'v1\n');
+    const base = fx.addCommit(dir, 'base');
+    createBranchStrict(dir, 'router/t1');
+    fx.write(dir, 'user-file.txt', 'work the human did mid-run\n');
+
+    const salvage = rescueCommit(dir, 'router: salvage', ['.router']);
+    assert.ok(salvage !== null);
+    updateRef(dir, 'refs/router/salvage/t1/1', salvage.sha);
+    resetHardTracked(dir, base);
+
+    // The branch tip no longer holds it...
+    assert.equal(resolveCommit(dir, 'HEAD'), base);
+    // ...but the ref does, and an aggressive gc cannot take it.
+    fx.git(dir, ['reflog', 'expire', '--expire=now', '--all']);
+    fx.git(dir, ['gc', '--prune=now', '--quiet']);
+    assert.equal(resolveCommit(dir, 'refs/router/salvage/t1/1'), salvage.sha);
+    assert.equal(fx.git(dir, ['show', `${salvage.sha}:user-file.txt`]), 'work the human did mid-run\n');
   } finally {
     fx.cleanup(dir);
   }

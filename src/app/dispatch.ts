@@ -18,12 +18,14 @@ import { effectiveRisk } from '../core/risk.ts';
 import {
   assertTaskIdentity,
   branchExists,
+  checkoutRef,
   collectDiff,
   createBranchStrict,
   currentBranch,
   rawDiff,
   rescueCommit,
   resetHardTracked,
+  updateRef,
   resolveCommit,
   submoduleDirty,
   uncommittedSourceFiles,
@@ -306,7 +308,15 @@ async function runPreparedObserved(
         `router: salvage ${id} before executor switch`,
         ROUTER_STATE_EXCLUDE,
       );
-      if (salvage !== null) discarded.push(salvage.sha);
+      if (salvage !== null) {
+        // Make it REACHABLE before the reset, not merely remembered. The sha used to go into an
+        // in-memory array and reach disk only when the whole run finished writing result.json --
+        // so a crash anywhere in between lost the only pointer to a commit that was made
+        // precisely so nothing would be lost, and `git gc` would then collect it. A ref survives
+        // both the crash and the gc.
+        updateRef(workDir, `refs/router/salvage/${id}/${discarded.length + 1}`, salvage.sha);
+        discarded.push(salvage.sha);
+      }
       resetHardTracked(workDir, baseSha);
       continue;
     }
@@ -523,6 +533,7 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
  * at branches created from a HEAD that later tasks have already moved.
  */
 export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]): Promise<RunResult[]> {
+  const { paths } = deps;
   if (ids.length === 0) throw new Error('cannot dispatch an empty task list');
   const seen = new Set<string>();
   for (const id of ids) {
@@ -530,9 +541,18 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
     seen.add(id);
   }
 
+  // Where the batch started. Each task is cut from HERE, not from the previous task's tip.
+  //
+  // Stacking was the earlier behaviour and it was wrong in a way the scope gate hid: task 2's
+  // recorded diff correctly contained only its own files, because that is computed from its own
+  // base_sha -- but its BRANCH contained task 1's commits. So `land p2` alone merged p1 as well,
+  // silently, past p1's own review and past the explicit land decision that is supposed to be
+  // the user's. PLAN §5.3 never listed that as an accepted limit.
+  const startedOn = currentBranch(paths.repoRoot);
   const results: RunResult[] = [];
   const faults: { id: string; message: string }[] = [];
-  for (const id of ids) {
+  for (const [index, id] of ids.entries()) {
+    if (index > 0 && startedOn !== null) checkoutRef(paths.repoRoot, startedOn);
     try {
       results.push(await dispatchTask(deps, id));
     } catch (e) {

@@ -92,8 +92,18 @@ test('batch dispatch runs one task at a time, in input order', () => {
     const branches = fx.git(dir, ['branch', '--format=%(refname:short)']);
     assert.match(branches, /^router\/p1$/m);
     assert.match(branches, /^router\/p2$/m);
-    // Serial dispatch stacks: p2 was cut from p1, and we are left standing on p2.
+    // Review finding 7: each task is cut from where the BATCH started, not from the previous
+    // task's tip. Stacking was the earlier behaviour and the scope gate hid it -- p2's recorded
+    // diff correctly held only its own files (computed from its own base_sha) while its BRANCH
+    // held p1's commits, so `land p2` alone merged p1 too, past p1's review and past the
+    // explicit land decision that belongs to the user.
     assert.equal(fx.git(dir, ['branch', '--show-current']).trim(), 'router/p2');
+    const p1Tip = fx.git(dir, ['rev-parse', 'router/p1']).trim();
+    assert.doesNotMatch(
+      fx.git(dir, ['log', '--format=%H', 'router/p2']),
+      new RegExp(p1Tip),
+      'router/p2 contains p1 commits: landing p2 would silently land p1',
+    );
     const metrics = readFileSync(join(dir, '.router', 'metrics.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(metrics.length, 2);
     assert.deepEqual(new Set(metrics.map((row: { task_id: string }) => row.task_id)), new Set(['p1', 'p2']));
@@ -148,12 +158,20 @@ test('batch land --json stays one document listing every merge', () => {
     assert.equal(router(dir, ['dispatch', 'p1', 'p2', '--json'], env).code, 0);
     // Off the task branch first: choosing what to merge into is the user's decision.
     fx.git(dir, ['checkout', '-q', 'main']);
-    const l = router(dir, ['land', 'p1', 'p2', '--json'], env);
+    // Landing ONLY p2 must bring only p2 (finding 7).
+    const onlyP2 = router(dir, ['land', 'p2', '--json'], env);
+    assert.equal(onlyP2.code, 0, onlyP2.out);
+    assert.ok(existsSync(join(dir, 'src', 'p2.ts')));
+    assert.ok(!existsSync(join(dir, 'src', 'p1.ts')), 'landing p2 also landed p1');
+
+    const l = router(dir, ['land', 'p1', '--json'], env);
     assert.equal(l.code, 0, l.out);
-    const out = JSON.parse(l.out) as { ok: boolean; landed: { id: string; merge_commit: string }[] };
+    assert.equal(l.code, 0, l.out);
+    const out = JSON.parse(l.out) as { ok: boolean; id: string; merge_commit: string };
     assert.equal(out.ok, true);
-    assert.deepEqual(out.landed.map((entry) => entry.id), ['p1', 'p2']);
-    for (const entry of out.landed) assert.match(entry.merge_commit, /^[0-9a-f]{40}$/);
+    assert.equal(out.id, 'p1');
+    assert.match(out.merge_commit, /^[0-9a-f]{40}$/);
+    assert.ok(existsSync(join(dir, 'src', 'p1.ts')));
   } finally {
     fx.cleanup(dir);
   }

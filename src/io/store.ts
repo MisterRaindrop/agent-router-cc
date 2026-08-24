@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import type { MetricRecord, RunResult } from '../domain/types.ts';
-import type { RouterPaths } from './paths.ts';
+import { runBranch, type RouterPaths } from './paths.ts';
 import { writeJsonAtomic } from './atomicWrite.ts';
 import { appendJsonl } from './jsonl.ts';
 
@@ -24,7 +24,22 @@ function readJson<T>(path: string): T | null {
  * result vanish, and `land` / `result` / `usage` all read this.
  */
 export function readResult(p: RouterPaths, id: string): RunResult | null {
-  return readJson<RunResult>(p.resultJson(id)) ?? readJson<RunResult>(p.legacyResultJson(id));
+  const current = readJson<RunResult>(p.resultJson(id));
+  if (current !== null) return current;
+  const legacy = readJson<RunResult & { run_id?: string }>(p.legacyResultJson(id));
+  if (legacy === null) return null;
+  // Normalize the one field the pre-fold schema lacks. A record written before the fold has no
+  // `branch`, and every consumer -- land, resume, the queue gate, list -- falls back to
+  // `router/<id>`. But the branch that record's run actually created was `router/<id>/<run_id>`,
+  // so a task that was PASSED and waiting to be merged before the upgrade could not be merged
+  // after it: `land` reported "not something we can merge" while the real branch sat right there.
+  //
+  // Read-only compatibility that cannot read the thing it exists for is not compatibility, so
+  // the derivation happens here, once, rather than in each of the four consumers.
+  if (legacy.branch === undefined && typeof legacy.run_id === 'string' && legacy.run_id !== '') {
+    return { ...legacy, branch: runBranch(id, legacy.run_id) };
+  }
+  return legacy;
 }
 export function writeResult(p: RouterPaths, id: string, result: RunResult): void {
   writeJsonAtomic(p.resultJson(id), result);
