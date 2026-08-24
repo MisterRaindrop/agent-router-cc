@@ -330,6 +330,21 @@ export function acquireLock(
           atMs = clock();
           continue;
         }
+        // REAP FIRST, THEN UNLINK. The previous order was unlink-then-reap, and the comment
+        // there claimed the opposite of what the code did: reaping can wait out a SIGTERM grace
+        // and escalate to SIGKILL, and for that whole span the lock path did not exist -- so a
+        // third process could `openSync(path, 'wx')` straight through the hole while the orphan
+        // it was being protected from was still running.
+        //
+        // Keeping the (stale) file in place until the group is gone means a third arrival sees a
+        // lock, re-reads it, and makes its own staleness decision. If it also decides to reclaim,
+        // it kills the same already-dying group -- idempotent -- and only one of them can win the
+        // exclusive create afterwards.
+        const holder = confirmed.kind === 'valid' ? confirmed.info : null;
+        const reaped =
+          holder?.execPgid !== undefined
+            ? reapExecutorGroup(holder.execPgid, reapGraceMs)
+            : undefined;
         let removed = false;
         try {
           unlinkSync(path);
@@ -339,23 +354,9 @@ export function acquireLock(
             throw new Error(`cannot reclaim stale lock ${path}: ${(unlinkErr as Error).message}`);
           }
         }
-        if (removed) {
-          const holder = confirmed.kind === 'valid' ? confirmed.info : null;
-          // Order matters: the orphan dies before we hand the checkout to anyone else. Doing
-          // this after acquisition would leave a window in which both executors are live.
-          const reaped =
-            holder?.execPgid !== undefined
-              ? reapExecutorGroup(holder.execPgid, reapGraceMs)
-              : undefined;
-          takeover = {
-            atMs,
-            reason: confirmedReason,
-            holder,
-            ...(reaped !== undefined ? { reaped } : {}),
-          };
-        } else {
-          takeover = undefined;
-        }
+        takeover = removed
+          ? { atMs, reason: confirmedReason, holder, ...(reaped !== undefined ? { reaped } : {}) }
+          : undefined;
         atMs = clock();
         continue;
       }

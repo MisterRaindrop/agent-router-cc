@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -291,6 +291,96 @@ test('recordExecPgid refuses once the lock has been taken over', () => {
     assert.ok(!('blocked' in second));
     assert.throws(() => first.recordExecPgid(4242), /ownership was lost/);
     second.release();
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+// Review finding 1. The reclaim used to unlink the stale lock and only then kill the orphan
+// executor group -- and the comment there claimed the opposite of what the code did. Reaping can
+// wait out a SIGTERM grace and escalate to SIGKILL, so for that whole span the lock path did not
+// exist and a third process could take it while the orphan was still writing the checkout.
+test('the lock file stays in place until the orphan group is dead (finding 1)', async () => {
+  const fixture = freshLock();
+  try {
+    const first = acquireLock(fixture.path, { waitMs: 0, now: () => 0 });
+    assert.ok(!('blocked' in first));
+
+    // An orphan that does NOT die on SIGTERM, so the reap is forced to wait and escalate. That
+    // wait is the window the old order left open. Written to a file rather than nested inside
+    // another `-e`: the handler silently failed to register through three layers of quoting, and
+    // the test then passed for the wrong reason (SIGTERM was enough, so there was no wait).
+    const stubDir = mkdtempSync(join(tmpdir(), 'router-orphan-'));
+    const stub = join(stubDir, 'orphan.mjs');
+    const ready = join(stubDir, 'ready');
+    // It announces readiness AFTER installing the handler. Without that the reap raced node's
+    // startup: SIGTERM arrived before the handler existed, the orphan died on the default
+    // disposition, the reap reported SIGTERM, and the test measured nothing -- there was no wait,
+    // so there was no window to observe.
+    writeFileSync(
+      stub,
+      "import { writeFileSync as w } from 'node:fs';\n" +
+        "process.on('SIGTERM', () => {});\n" +
+        `w(${JSON.stringify(ready)}, '1');\n` +
+        'setInterval(() => {}, 1000);\n',
+    );
+    const launcher = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        "const {spawn}=require('node:child_process');" +
+          `const c=spawn(process.execPath,[${JSON.stringify(stub)}],{detached:true,stdio:'ignore'});` +
+          'c.unref();console.log(c.pid);',
+      ],
+      { encoding: 'utf8' },
+    );
+    const pgid = Number(launcher.stdout.trim());
+    assert.ok(Number.isInteger(pgid) && pgid > 1, launcher.stdout);
+    const readyDeadline = Date.now() + 5000;
+    while (!existsSync(ready) && Date.now() < readyDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(existsSync(ready), 'the orphan never installed its SIGTERM handler');
+    first.recordExecPgid(pgid);
+
+    // While the reclaim is inside the reap, the lock must still exist. Observed from a separate
+    // process so it is the real filesystem answer, not ours.
+    const watcher = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const fs=require('node:fs');let gone=0,seen=0;` +
+          `const t=setInterval(()=>{seen++;if(!fs.existsSync(${JSON.stringify(fixture.path)}))gone++;},20);` +
+          `setTimeout(()=>{clearInterval(t);console.log(JSON.stringify({seen,gone}));},1500);`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    let out = '';
+    watcher.stdout.on('data', (c: Buffer) => (out += c.toString()));
+    const watched = new Promise<void>((resolve) => watcher.on('exit', () => resolve()));
+
+    const second = acquireLock(fixture.path, {
+      waitMs: 0,
+      staleMs: 50,
+      now: () => 100,
+      reapGraceMs: 400, // forces SIGTERM grace -> SIGKILL, i.e. a real wait
+    });
+    assert.ok(!('blocked' in second));
+    // The orphan is dead by the time we hold the lock, and it took a SIGKILL to do it.
+    assert.throws(() => process.kill(-pgid, 0), /ESRCH|no such process/i);
+    assert.equal(second.takeover?.reaped?.pgid, pgid);
+    // SIGKILL, not SIGTERM: the orphan ignored SIGTERM, so the reap really did wait. That wait is
+    // the window, and it existed -- which is what makes the next assertion meaningful.
+    assert.equal(second.takeover?.reaped?.signal, 'SIGKILL');
+
+    await watched;
+    const { seen, gone } = JSON.parse(out.trim()) as { seen: number; gone: number };
+    assert.ok(seen > 10, `watcher barely sampled (seen=${seen})`);
+    // The whole finding in one number. Under the old unlink-then-reap order the file was absent
+    // for the entire ~800ms reap and this would be in the tens.
+    assert.equal(gone, 0, `lock file vanished during the reap on ${gone}/${seen} samples`);
+    second.release();
+    rmSync(stubDir, { recursive: true, force: true });
   } finally {
     fixture.cleanup();
   }
