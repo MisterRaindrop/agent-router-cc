@@ -143,8 +143,35 @@ test('an inner statusline is preserved and router appends after it', () => {
   const fx = repo();
   try {
     fx.task('alpha', live(3, 8));
-    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: "printf 'my-hud: ctx 42%%'" });
+    // Reads stdin, as a real statusline does -- it needs the session JSON.
+    const inner = "cat >/dev/null; printf 'my-hud: ctx 42%%'";
+    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: inner });
     assert.match(out, /^my-hud: ctx 42% \| router ▶ alpha /);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// The case that only failed on Linux. A statusline that exits without draining stdin makes the
+// parent's write fail with EPIPE; dash does this where bash does not. That used to be caught and
+// turned into the bare word "router", so the user silently lost their whole HUD line because
+// their HUD ignored a pipe it never asked for.
+test('an inner statusline that ignores stdin still has its output kept', () => {
+  const fx = repo();
+  try {
+    fx.task('alpha', live(3, 8));
+    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: "printf 'no-stdin-hud'" });
+    assert.match(out, /^no-stdin-hud \| router ▶ alpha /);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('an inner statusline that prints nothing falls back to the plain marker', () => {
+  const fx = repo();
+  try {
+    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: 'true' });
+    assert.equal(out.trim(), 'router');
   } finally {
     fx.cleanup();
   }
