@@ -9579,7 +9579,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.10.0" : "0.0.0-dev";
+var VERSION = true ? "0.10.1" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -14344,6 +14344,7 @@ ${leftover} task branch(es) still present. \`router land <id>\` merges and delet
   return 0;
 };
 var DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+var BRAINSTORM_STATUSES = /* @__PURE__ */ new Set(["brainstorming", "converged", "rejected"]);
 var DESIGN_STATUSES = /* @__PURE__ */ new Set(["design_draft", "design_approved"]);
 var PLAN_STATUSES = /* @__PURE__ */ new Set(["plan_draft", "plan_approved", "executing", "done"]);
 function documentFrontmatter(text2) {
@@ -14363,6 +14364,13 @@ function scalarText(value) {
 }
 function planRevision(frontmatter) {
   return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
+}
+function planDocumentFrontmatter(paths, planId, name) {
+  try {
+    return documentFrontmatter(readFileSync14(join12(paths.planDir(planId), name), "utf8"));
+  } catch {
+    return null;
+  }
 }
 function documentStage(frontmatter, allowed) {
   const status = frontmatter?.status;
@@ -14399,7 +14407,9 @@ var plans = (ctx) => {
       designRevision = scalarText(designFrontmatter?.revision);
     } catch {
     }
-    if (!hasPlan) stage = documentStage(designFrontmatter, DESIGN_STATUSES);
+    if (!hasPlan) {
+      stage = documentStage(designFrontmatter, DESIGN_STATUSES) ?? documentStage(planDocumentFrontmatter(paths, id, "BRAINSTORM.md"), BRAINSTORM_STATUSES);
+    }
     let critiqueRound = null;
     try {
       critiqueRound = highestCritiqueRound(readdirSync5(paths.planDir(id)));

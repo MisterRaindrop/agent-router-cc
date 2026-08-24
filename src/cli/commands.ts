@@ -508,6 +508,7 @@ const list: Handler = (ctx) => {
 };
 
 const DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const BRAINSTORM_STATUSES = new Set(['brainstorming', 'converged', 'rejected']);
 const DESIGN_STATUSES = new Set(['design_draft', 'design_approved']);
 const PLAN_STATUSES = new Set(['plan_draft', 'plan_approved', 'executing', 'done']);
 
@@ -532,6 +533,19 @@ function scalarText(value: unknown): string | null {
 // by the legacy flow. Malformed or missing frontmatter degrades only this row.
 function planRevision(frontmatter: Record<string, unknown> | null): string | null {
   return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
+}
+
+/** Frontmatter of one document in a plan directory, or null when absent or unreadable. */
+function planDocumentFrontmatter(
+  paths: RouterPaths,
+  planId: string,
+  name: string,
+): Record<string, unknown> | null {
+  try {
+    return documentFrontmatter(readFileSync(join(paths.planDir(planId), name), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 function documentStage(frontmatter: Record<string, unknown> | null, allowed: Set<string>): string | null {
@@ -584,7 +598,19 @@ const plans: Handler = (ctx) => {
     } catch {
       /* missing or unreadable DESIGN.md -- no design revision to report */
     }
-    if (!hasPlan) stage = documentStage(designFrontmatter, DESIGN_STATUSES);
+    // Furthest recognized document wins: work plan, else design, else brainstorm. The brainstorm
+    // level was missing, so a converged brainstorm -- a finished stage with its direction and
+    // rejected alternatives on disk -- reported no stage at all and looked like an empty
+    // directory. Same class of blind spot as the design revision being unreadable here.
+    //
+    // An existing but unparseable work plan still owns the stage (it stays unknown) rather than
+    // falling through: a plan on disk means the earlier stages are done, and reporting
+    // "brainstorming" over a broken plan would read as regress rather than as damage.
+    if (!hasPlan) {
+      stage =
+        documentStage(designFrontmatter, DESIGN_STATUSES) ??
+        documentStage(planDocumentFrontmatter(paths, id, 'BRAINSTORM.md'), BRAINSTORM_STATUSES);
+    }
     let critiqueRound: number | null = null;
     try {
       critiqueRound = highestCritiqueRound(readdirSync(paths.planDir(id)));
