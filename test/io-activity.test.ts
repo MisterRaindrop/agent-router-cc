@@ -111,7 +111,7 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
   const moduleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
   let owner: ChildProcess | undefined;
   try {
-    owner = spawn(
+    const spawnedOwner = spawn(
       process.execPath,
       [
         '--input-type=module',
@@ -128,8 +128,9 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
       ],
       { stdio: ['ignore', 'pipe', 'inherit'] },
     );
+    owner = spawnedOwner;
     let stdout = '';
-    owner.stdout!.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    spawnedOwner.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     assert.ok(await waitUntil(() => stdout.trim() !== ''), 'owner never initialized its activity');
     const startedAt = (JSON.parse(stdout.trim()) as { started_at: string }).started_at;
 
@@ -144,8 +145,11 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
     assert.ok(blocked !== null);
     assert.equal(activityState(blocked), 'running');
 
-    owner.kill('SIGKILL');
-    assert.ok(await waitUntil(() => owner.exitCode !== null || owner.signalCode !== null), 'owner survived SIGKILL');
+    spawnedOwner.kill('SIGKILL');
+    assert.ok(
+      await waitUntil(() => spawnedOwner.exitCode !== null || spawnedOwner.signalCode !== null),
+      'owner survived SIGKILL',
+    );
     assert.equal(activityState(readActivity(path)), 'disconnected');
   } finally {
     if (owner !== undefined && owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
