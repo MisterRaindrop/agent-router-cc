@@ -199,6 +199,10 @@ test('a running activity renders its label, spinner, and status enhancements', (
 test('a status_path outside the current task directory is ignored', () => {
   const fx = repo();
   try {
+    // Every real repository has this directory. Without it, lstat on `.router/tasks` throws and
+    // the path is rejected for the wrong reason -- which let a mutation that removes the in-tree
+    // rule entirely keep this test green (main-session mutation, 2026-08-25).
+    mkdirSync(join(fx.dir, '.router', 'tasks'), { recursive: true });
     const outside = join(fx.dir, 'outside-status.json');
     writeFileSync(outside, JSON.stringify({ phase: 'outside-secret-phase' }));
     fx.activity('outside', activity('task:outside', { statusPath: outside }));
@@ -206,6 +210,31 @@ test('a status_path outside the current task directory is ignored', () => {
     const out = render(fx.dir, { cwd: fx.dir }, pinned());
     assert.match(out, /task:outside/);
     assert.doesNotMatch(out, /outside-secret-phase/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// The name alone is not the rule: a file genuinely called status.json, sitting anywhere other
+// than `.router/tasks/<id>/`, must still be ignored. This is the case the basename check cannot
+// decide and only the parent-directory check can.
+test('a file named status.json outside .router/tasks is still ignored', () => {
+  const fx = repo();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'tasks'), { recursive: true });
+    const decoy = join(fx.dir, 'status.json');
+    writeFileSync(decoy, JSON.stringify({ phase: 'decoy-secret-phase' }));
+    fx.activity('decoy', activity('task:decoy', { statusPath: decoy }));
+
+    const sibling = join(fx.dir, '.router', 'status.json');
+    writeFileSync(sibling, JSON.stringify({ phase: 'sibling-secret-phase' }));
+    fx.activity('sibling', activity('task:sibling', { statusPath: sibling }));
+
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    assert.match(out, /task:decoy/);
+    assert.match(out, /task:sibling/);
+    assert.doesNotMatch(out, /decoy-secret-phase/);
+    assert.doesNotMatch(out, /sibling-secret-phase/);
   } finally {
     fx.cleanup();
   }
