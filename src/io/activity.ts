@@ -30,8 +30,9 @@ const MAX_PID = 0x7fff_ffff;
 // is not evidence of a fresh heartbeat. Keep the allowance deliberately much smaller than the
 // shared 90-second stale window.
 const MAX_FUTURE_BEAT_SKEW_MS = 5_000;
-// A reclaim is a short synchronous critical section. The lease exists so SIGKILL cannot leave
-// its mutex behind forever; unlike lock reclaim, activity reclaim has no slow reap loop to renew.
+// A reclaim is a synchronous critical section whose filesystem boundaries may still be delayed.
+// Renew at every boundary so a live reclaimer keeps its mutex; the lease exists only so SIGKILL
+// cannot leave that mutex behind forever.
 const RECLAIM_LEASE_MS = 30_000;
 
 export type ActivityState = 'idle' | 'running' | 'disconnected';
@@ -324,6 +325,16 @@ function stillReclaiming(path: string, token: string): boolean {
   }
 }
 
+/** Push the lease out at a reclaim boundary. Silent if the guard is no longer ours. */
+function renewReclaimer(path: string, token: string): void {
+  if (!stillReclaiming(path, token)) return;
+  try {
+    writeFileSync(path, reclaimerText(token));
+  } catch {
+    /* a failed renewal only risks being overtaken; the token checks below still fail closed */
+  }
+}
+
 function releaseReclaimer(path: string, token: string): void {
   if (!stillReclaiming(path, token)) return;
   try {
@@ -354,14 +365,17 @@ function reclaimDisconnectedActivity(
   }
 
   try {
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-guard-established');
     const held = activitySnapshot(path);
     if (held === null || !sameSnapshot(held, expected)) return 'retry';
     if (activityState(held.record) !== 'disconnected') return 'retry';
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-liveness-confirmed');
 
     // The test point is intentionally before the final confirmation: a heartbeat resumed at the
     // last observable boundary must change the bytes and make this reclaim stand down.
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-before-unlink');
     if (!stillReclaiming(reclaimPath, token)) return 'retry';
     const confirmed = activitySnapshot(path);
@@ -379,6 +393,7 @@ function reclaimDisconnectedActivity(
       throw error;
     }
 
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-before-install');
     if (!stillReclaiming(reclaimPath, token)) return 'retry';
     try {

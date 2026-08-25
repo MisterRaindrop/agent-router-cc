@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -27,6 +27,7 @@ import {
   observeActivities,
   readActivities,
   readActivity,
+  setActivityTestHookForTesting,
   startActivityHeartbeat,
   writeActivity,
   type ActivityTestPoint,
@@ -218,6 +219,79 @@ test('a live reclaim lease is not broken, and an unparseable one is only cleared
     assert.equal(claimed.record.pid, process.pid);
     assert.equal(existsSync(`${aged}.reclaim`), false);
   } finally {
+    fx.cleanup();
+  }
+});
+
+test('a live reclaimer renews its lease across every claim boundary', () => {
+  const fx = fixture();
+  const paths = routerPaths(join(fx.root, '.router'));
+  const label = 'review:renewed-reclaimer';
+  const path = paths.activity(activityKey(label));
+  const reclaimPath = `${path}.reclaim`;
+  const activityModuleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  const pathsModuleUrl = new URL('../src/io/paths.ts', import.meta.url).href;
+  const boundaries: ActivityTestPoint[] = [
+    'reclaim-guard-established',
+    'reclaim-liveness-confirmed',
+    'reclaim-before-unlink',
+    'reclaim-before-install',
+  ];
+  const seen: ActivityTestPoint[] = [];
+  try {
+    const at = new Date(Date.now() - DEFAULT_STALE_MS - 1_000).toISOString();
+    writeActivity(path, { label, pid: 2_147_483_647, started_at: at, beat_at: at });
+
+    setActivityTestHookForTesting((point) => {
+      if (!boundaries.includes(point)) return;
+      seen.push(point);
+      const guard = JSON.parse(readFileSync(reclaimPath, 'utf8')) as {
+        pid: number;
+        beatAtMs: number;
+        token: string;
+      };
+      assert.ok(
+        Date.now() - guard.beatAtMs < 5_000,
+        `${point} crossed with an expired reclaim lease`,
+      );
+
+      const contender = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { ActivityAlreadyExistsError, claimActivity } = await import(${JSON.stringify(activityModuleUrl)});\n` +
+            `const { routerPaths } = await import(${JSON.stringify(pathsModuleUrl)});\n` +
+            `try {\n` +
+            `  claimActivity(routerPaths(${JSON.stringify(join(fx.root, '.router'))}), ${JSON.stringify(label)});\n` +
+            `  process.exit(91);\n` +
+            `} catch (error) {\n` +
+            `  if (error instanceof ActivityAlreadyExistsError) process.exit(23);\n` +
+            `  console.error(error); process.exit(92);\n` +
+            `}\n`,
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(contender.status, 23, contender.stderr);
+
+      if (point !== 'reclaim-before-install') {
+        writeFileSync(
+          reclaimPath,
+          `${JSON.stringify({ ...guard, beatAtMs: Date.now() - 60_000 })}\n`,
+        );
+      }
+    });
+
+    const claimed = claimActivity(paths, label);
+    assert.deepEqual(seen, boundaries);
+    assert.equal(claimed.record.pid, process.pid);
+    assert.equal(activityState(readActivity(path)), 'running');
+    assert.equal(existsSync(reclaimPath), false);
+    const diagnostics: string[] = [];
+    finishActivity(claimed, 'ok', diagnostics);
+    assert.deepEqual(diagnostics, []);
+  } finally {
+    setActivityTestHookForTesting(undefined);
     fx.cleanup();
   }
 });
