@@ -104,6 +104,43 @@ test('updated: corrects a user-supplied refreshInterval to the required value 2'
   }
 });
 
+// "updated" alone does not say what changed, and the one field it overwrites may be a value the
+// user picked on purpose. The same argument the code already makes for "repointed".
+test('updated: names the refreshInterval it overwrote, so a deliberate value is not lost silently', () => {
+  const dir = tmp();
+  try {
+    const settings = join(dir, 'settings.json');
+    writeFileSync(
+      settings,
+      JSON.stringify({ statusLine: { type: 'command', command: configuredCommand, refreshInterval: 10 } }),
+    );
+
+    const r = router(['setup-statusline', '--settings', settings, '--statusline', SL]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /refreshInterval: was 10 -> 2/);
+    assert.match(r.out, /lower it back by hand/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('updated: says the interval was not set when the field was simply absent', () => {
+  const dir = tmp();
+  try {
+    const settings = join(dir, 'settings.json');
+    writeFileSync(
+      settings,
+      JSON.stringify({ statusLine: { type: 'command', command: configuredCommand } }),
+    );
+
+    const r = router(['setup-statusline', '--settings', settings, '--statusline', SL]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /refreshInterval: was not set -> 2/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('already-configured: leaves content and mtime unchanged when all managed fields match', () => {
   const dir = tmp();
   try {

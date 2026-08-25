@@ -875,11 +875,20 @@ const setupStatusline: Handler = (ctx) => {
       const chain = plan.inner ? `\n  chained your existing statusline: ${plan.inner}` : '';
       // "repointed" means nothing on its own; say what was wrong, or the user cannot tell
       // whether their setup was broken or is merely being tidied.
+      // Same argument for `updated`: the word alone does not say WHAT changed, and the one
+      // field it overwrites may be a value the user chose on purpose. Name it and name the
+      // old value, so a deliberate 10 is not silently replaced by a 2 the user never sees.
+      const previousInterval =
+        typeof current?.refreshInterval === 'number' ? current.refreshInterval : null;
       const why =
         plan.action === 'repointed'
           ? '\n  the previous command pointed at one specific plugin version, which would keep' +
             '\n  running that version after an upgrade; it now resolves the newest at startup'
-          : '';
+          : plan.action === 'updated'
+            ? `\n  refreshInterval: ${previousInterval === null ? 'was not set' : `was ${previousInterval}`} -> ${plan.statusLine.refreshInterval}` +
+              '\n  the liveness segment only reads as moving at this rate; lower it back by hand' +
+              '\n  if you would rather trade the motion for the CPU'
+            : '';
       const warn = missing ? `\n  WARNING: ${statuslinePath} not found (pass --statusline <path>)` : '';
       const note = changed && !dryRun ? '\n  restart Claude Code (or reload) for it to take effect' : '';
       return `${head}\n  command: ${plan.command}${why}${chain}${warn}${note}`;

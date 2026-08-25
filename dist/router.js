@@ -15523,7 +15523,11 @@ var setupStatusline = (ctx) => {
       const head = plan2.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${verb[plan2.action] ?? plan2.action} the statusLine in ${settingsPath}` : `${plan2.action} statusLine in ${settingsPath}`;
       const chain = plan2.inner ? `
   chained your existing statusline: ${plan2.inner}` : "";
-      const why = plan2.action === "repointed" ? "\n  the previous command pointed at one specific plugin version, which would keep\n  running that version after an upgrade; it now resolves the newest at startup" : "";
+      const previousInterval = typeof current?.refreshInterval === "number" ? current.refreshInterval : null;
+      const why = plan2.action === "repointed" ? "\n  the previous command pointed at one specific plugin version, which would keep\n  running that version after an upgrade; it now resolves the newest at startup" : plan2.action === "updated" ? `
+  refreshInterval: ${previousInterval === null ? "was not set" : `was ${previousInterval}`} -> ${plan2.statusLine.refreshInterval}
+  the liveness segment only reads as moving at this rate; lower it back by hand
+  if you would rather trade the motion for the CPU` : "";
       const warn = missing ? `
   WARNING: ${statuslinePath} not found (pass --statusline <path>)` : "";
       const note = changed && !dryRun ? "\n  restart Claude Code (or reload) for it to take effect" : "";
