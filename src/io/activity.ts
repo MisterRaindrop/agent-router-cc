@@ -16,6 +16,10 @@ import type { RouterPaths } from './paths.ts';
 
 const OUTCOMES = new Set<ActivityOutcome>(['ok', 'failed', 'timed_out', 'stalled']);
 const MAX_PID = 0x7fff_ffff;
+// Wall clocks may differ slightly across related processes, but a timestamp far in the future
+// is not evidence of a fresh heartbeat. Keep the allowance deliberately much smaller than the
+// shared 90-second stale window.
+const MAX_FUTURE_BEAT_SKEW_MS = 5_000;
 
 export type ActivityState = 'idle' | 'running' | 'disconnected';
 
@@ -357,7 +361,8 @@ export function activityState(
   staleMs: number = DEFAULT_STALE_MS,
 ): ActivityState {
   if (activity === null || activity.ended_at !== undefined) return 'idle';
-  const fresh = nowMs - Date.parse(activity.beat_at) <= staleMs;
+  const beatAgeMs = nowMs - Date.parse(activity.beat_at);
+  const fresh = beatAgeMs >= -MAX_FUTURE_BEAT_SKEW_MS && beatAgeMs <= staleMs;
   return pidIsAlive(activity.pid) && fresh ? 'running' : 'disconnected';
 }
 

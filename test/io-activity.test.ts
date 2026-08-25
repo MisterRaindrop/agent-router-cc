@@ -112,6 +112,16 @@ test('the three-state rule requires both a live pid and a fresh heartbeat', () =
     activityState({ ...fresh, beat_at: new Date(now - DEFAULT_STALE_MS - 1).toISOString() }, now),
     'disconnected',
   );
+  assert.equal(
+    activityState({ ...fresh, beat_at: new Date(now + 5_000).toISOString() }, now),
+    'running',
+    'small clock skew should stay within the explicit tolerance',
+  );
+  assert.equal(
+    activityState({ ...fresh, beat_at: new Date(now + 5_001).toISOString() }, now),
+    'disconnected',
+    'a far-future heartbeat must not remain fresh indefinitely',
+  );
   assert.equal(activityState({ ...fresh, pid: 2_147_483_647 }, now), 'disconnected');
   assert.equal(activityState({ ...fresh, pid: 2_147_483_648 }, now), 'disconnected');
 });
