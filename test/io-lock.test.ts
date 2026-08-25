@@ -385,3 +385,121 @@ test('the lock file stays in place until the orphan group is dead (finding 1)', 
     fixture.cleanup();
   }
 });
+
+// The reclaim used to be: judge the file stale, spend up to two grace periods killing the dead
+// holder's executor, then `unlinkSync(path)` -- with nothing in between asking whether the file
+// at that path was still the one that had been judged. The reviewer hit it from the other end
+// (two racing reclaimers, `bothAcquired: true`); this hits the same code from the victim's side,
+// which is the half that can be made deterministic: while one reclaim is inside its reap,
+// somebody else legitimately takes the lock, and the reclaim must not delete it.
+test('a slow reclaim does not delete a lock that appeared while it was reaping (finding: stale-lock-double-reclaimer)', async () => {
+  const fixture = freshLock();
+  const stubDir = mkdtempSync(join(tmpdir(), 'router-reclaim-victim-'));
+  try {
+    const first = acquireLock(fixture.path, { waitMs: 0, now: () => 0 });
+    assert.ok(!('blocked' in first));
+
+    // An orphan that ignores SIGTERM and then exits on its own ~900ms later. Its whole job is to
+    // hold the reap open long enough for something to happen underneath it; the grace below is
+    // far larger, so nothing here depends on a SIGKILL landing at a particular millisecond.
+    const stub = join(stubDir, 'orphan.mjs');
+    const ready = join(stubDir, 'ready');
+    writeFileSync(
+      stub,
+      "import { writeFileSync as w } from 'node:fs';\n" +
+        "process.on('SIGTERM', () => {});\n" +
+        `w(${JSON.stringify(ready)}, '1');\n` +
+        'setTimeout(() => process.exit(0), 900);\n' +
+        'setInterval(() => {}, 1000);\n',
+    );
+    const launcher = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        "const {spawn}=require('node:child_process');" +
+          `const c=spawn(process.execPath,[${JSON.stringify(stub)}],{detached:true,stdio:'ignore'});` +
+          'c.unref();console.log(c.pid);',
+      ],
+      { encoding: 'utf8' },
+    );
+    const pgid = Number(launcher.stdout.trim());
+    assert.ok(Number.isInteger(pgid) && pgid > 1, launcher.stdout);
+    const readyDeadline = Date.now() + 5000;
+    while (!existsSync(ready) && Date.now() < readyDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(existsSync(ready), 'the orphan never installed its SIGTERM handler');
+    first.recordExecPgid(pgid);
+
+    // 300ms into the ~900ms reap, a second router finishes its own reclaim and installs a live
+    // lock -- exactly what the loser of the reviewer's race saw. It runs in its own process
+    // because acquireLock blocks this one's event loop for the whole reap.
+    const usurper = { pid: process.pid, startedAtMs: 100, beatAtMs: 100, ownerToken: 'usurper' };
+    const helper = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const fs=require('node:fs');` +
+          `setTimeout(()=>{try{fs.unlinkSync(${JSON.stringify(fixture.path)})}catch{};` +
+          `fs.writeFileSync(${JSON.stringify(fixture.path)}, ${JSON.stringify(JSON.stringify(usurper) + '\n')});},300);`,
+      ],
+      { stdio: 'ignore' },
+    );
+    const helperDone = new Promise<void>((resolve) => helper.on('exit', () => resolve()));
+
+    const second = acquireLock(fixture.path, {
+      waitMs: 0,
+      staleMs: 50,
+      now: () => 100,
+      reapGraceMs: 3_000, // never reached; the orphan exits on its own well inside it
+    });
+    await helperDone;
+
+    // The whole finding. The old code unlinked whatever was at the path once the reap returned,
+    // so it deleted the usurper's live lock and handed back a handle -- two processes, one
+    // checkout. Now the file is re-confirmed before removal, so the usurper's lock survives and
+    // this caller is told the checkout is taken.
+    assert.equal(
+      readFileSync(fixture.path, 'utf8').trim(),
+      JSON.stringify(usurper),
+      'the reclaim deleted a lock that was installed while it was reaping',
+    );
+    assert.ok(
+      'blocked' in second,
+      `acquired the checkout while another process held it: ${JSON.stringify(second)}`,
+    );
+    assert.equal(second.holder?.pid, process.pid);
+  } finally {
+    rmSync(stubDir, { recursive: true, force: true });
+    fixture.cleanup();
+  }
+});
+
+// The mutex has to be recoverable, or a reclaimer killed at the wrong moment would leave the
+// checkout permanently unacquirable -- trading a rare double-acquire for a guaranteed deadlock.
+test('a live reclaimer mutex blocks a second reclaim; a dead one does not', () => {
+  const fixture = freshLock();
+  try {
+    const first = acquireLock(fixture.path, { waitMs: 0, now: () => 0 });
+    assert.ok(!('blocked' in first));
+    const before = readFileSync(fixture.path, 'utf8');
+    const mutexPath = `${fixture.path}.reclaim`;
+
+    // Someone else is mid-reclaim: this caller must not judge, reap or unlink anything.
+    writeFileSync(mutexPath, `${JSON.stringify({ pid: process.pid, startedAtMs: Date.now() })}\n`);
+    const blocked = acquireLock(fixture.path, { waitMs: 0, staleMs: 50, now: () => 100 });
+    assert.ok('blocked' in blocked, 'reclaimed a stale lock while another reclaimer held the mutex');
+    assert.equal(readFileSync(fixture.path, 'utf8'), before, 'the stale lock was touched anyway');
+
+    // The reclaimer died. `pid: 1` stands in for a pid that is alive but is not a router -- the
+    // lease is what settles it, so an ancient mutex is broken even when its pid still answers.
+    writeFileSync(mutexPath, `${JSON.stringify({ pid: 1, startedAtMs: Date.now() - 600_000 })}\n`);
+    const recovered = acquireLock(fixture.path, { waitMs: 0, staleMs: 50, now: () => 100 });
+    assert.ok(!('blocked' in recovered), 'a dead reclaimer mutex wedged the checkout for good');
+    assert.equal(recovered.takeover?.reason, 'stale-heartbeat');
+    assert.equal(existsSync(mutexPath), false, 'the reclaim left its mutex behind');
+    recovered.release();
+  } finally {
+    fixture.cleanup();
+  }
+});

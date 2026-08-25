@@ -1,7 +1,7 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { killProcessGroup } from './signals.ts';
+import { killProcessGroup, processGroupIsGone } from './signals.ts';
 import {
   closeSync,
   fstatSync,
@@ -86,6 +86,13 @@ type LockRead =
 const DEFAULT_STALE_MS = 90_000;
 const DEFAULT_POLL_MS = 100;
 const DEFAULT_REAP_GRACE_MS = 3_000;
+/**
+ * How long one reclaim attempt may hold the reclaimer mutex before another process is allowed
+ * to break it. Comfortably above two full reap escalations, so a slow-but-live reclaimer is
+ * never overtaken; the mutex is normally cleared by its own holder, and this bound only exists
+ * so a reclaimer killed mid-reclaim cannot wedge the checkout forever.
+ */
+const RECLAIM_LEASE_MS = 60_000;
 let ownerCounter = 0;
 
 function ownerToken(): string {
@@ -175,24 +182,6 @@ function pidIsGone(pid: number): boolean {
   }
 }
 
-function groupIsGone(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return false;
-  } catch (err) {
-    const code = errorCode(err);
-    // ESRCH: nothing left in the group. EPERM: it exists but is not ours to signal, which we
-    // must NOT read as gone -- that would be exactly the "two writers, one checkout" case.
-    //
-    // One nuance, in case this ever looks like a bug: a SIGKILLed process still answers
-    // signal 0 while it is a zombie, i.e. until its parent reaps it. That cannot happen to the
-    // process this function is aimed at -- the executor's parent is the router that died, so it
-    // has already been reparented to init, which reaps immediately. A caller that is itself the
-    // orphan's parent would have to reap it, and this loop (which blocks the event loop) would
-    // never let Node do so.
-    return code === 'ESRCH';
-  }
-}
 
 /**
  * Kill a dead holder's executor group and do not return until it is actually gone.
@@ -207,23 +196,185 @@ function groupIsGone(pgid: number): boolean {
  * safe way to share the checkout with a process we cannot stop.
  */
 function reapExecutorGroup(pgid: number, graceMs: number): TakeoverInfo['reaped'] | undefined {
-  if (groupIsGone(pgid)) return undefined;
+  if (processGroupIsGone(pgid)) return undefined;
   killProcessGroup(pgid, 'SIGTERM');
   const termDeadline = Date.now() + graceMs;
   while (Date.now() < termDeadline) {
-    if (groupIsGone(pgid)) return { pgid, signal: 'SIGTERM' };
+    if (processGroupIsGone(pgid)) return { pgid, signal: 'SIGTERM' };
     sleepSync(50);
   }
   killProcessGroup(pgid, 'SIGKILL');
   const killDeadline = Date.now() + graceMs;
   while (Date.now() < killDeadline) {
-    if (groupIsGone(pgid)) return { pgid, signal: 'SIGKILL' };
+    if (processGroupIsGone(pgid)) return { pgid, signal: 'SIGKILL' };
     sleepSync(50);
   }
   throw new Error(
     `cannot reclaim lock: the previous holder's executor group ${pgid} survived SIGKILL. ` +
       `Proceeding would put two executors in one checkout; kill it manually and retry.`,
   );
+}
+
+/** The lock file's exact bytes together with the identity of the inode they came from. */
+interface LockSnapshot {
+  text: string;
+  identity: FileIdentity;
+}
+
+/**
+ * Read the bytes and the inode identity through ONE descriptor.
+ *
+ * Two separate calls would be two different files under a rename, which is the whole thing this
+ * type exists to make impossible: every later comparison against a snapshot is a claim about one
+ * specific file, not about whatever currently answers to that path.
+ */
+function readSnapshot(path: string): LockSnapshot | null {
+  let fd: number;
+  try {
+    fd = openSync(path, 'r');
+  } catch (err) {
+    if (errorCode(err) === 'ENOENT') return null;
+    throw new Error(`cannot read lock ${path}: ${(err as Error).message}`);
+  }
+  try {
+    return { text: readFileSync(fd, 'utf8'), identity: identity(fd) };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Interpret a snapshot the way readForAcquire interprets a path. */
+function snapshotRead(snapshot: LockSnapshot): Exclude<LockRead, { kind: 'missing' }> {
+  const parsed = parseStored(snapshot.text);
+  return parsed === null ? { kind: 'corrupt' } : { kind: 'valid', ...parsed };
+}
+
+/** Whether `path` currently holds exactly the file `snapshot` was taken from. */
+function stillTheSameFile(path: string, snapshot: LockSnapshot): boolean {
+  const now = readSnapshot(path);
+  return (
+    now !== null && now.text === snapshot.text && sameIdentity(now.identity, snapshot.identity)
+  );
+}
+
+type ReclaimOutcome =
+  | { kind: 'removed'; takeover: TakeoverInfo }
+  /** Nothing to do here any more; look at the path again. */
+  | { kind: 'retry' }
+  /** Another reclaimer is inside, and it is alive. Waiting on it is the caller's decision. */
+  | { kind: 'busy' }
+  /** A reclaimer that died mid-reclaim was cleared away; the reclaim itself has yet to happen. */
+  | { kind: 'recovered' };
+
+/**
+ * Remove a reclaimer mutex whose owner is demonstrably not coming back.
+ *
+ * Recoverability is the point: without this, a reclaimer killed between creating the mutex and
+ * releasing it would make the checkout permanently unacquirable by anyone.
+ */
+function clearDeadReclaimer(mutexPath: string): boolean {
+  const snapshot = readSnapshot(mutexPath);
+  if (snapshot === null) return true; // already gone: whatever held it is not holding it now
+  let dead: boolean;
+  try {
+    const held = JSON.parse(snapshot.text) as { pid?: unknown; startedAtMs?: unknown };
+    dead =
+      !Number.isInteger(held.pid) ||
+      pidIsGone(held.pid as number) ||
+      !Number.isFinite(held.startedAtMs) ||
+      Date.now() - (held.startedAtMs as number) > RECLAIM_LEASE_MS;
+  } catch {
+    dead = true; // a half-written mutex names nobody, so it can hold nothing
+  }
+  // Re-confirm the bytes right before removing them: a live reclaimer may have replaced this
+  // file since the read above, and deleting THAT one would put two reclaimers back in the race.
+  if (!dead || !stillTheSameFile(mutexPath, snapshot)) return false;
+  try {
+    unlinkSync(mutexPath);
+  } catch {
+    /* someone else cleared it first, which is the outcome we wanted anyway */
+  }
+  return true;
+}
+
+/**
+ * Reclaim one confirmed-stale lock, with reap and unlink serialised behind a mutex of their own.
+ *
+ * Why a second lock file to take the first one: reaping is SLOW -- up to two full grace periods
+ * while a SIGTERM is waited out and escalated -- and every step of the reclaim used to run
+ * concurrently in every process that had spotted the same stale lock. Two of them would reap the
+ * same (already dying) group, which is harmless, and then both unlink: the second `unlinkSync`
+ * deletes the BRAND NEW lock the first one had already installed, and both walk away holding a
+ * LockHandle for the same checkout. Measured by the reviewer: `bothAcquired: true`.
+ *
+ * Serialising fixes it at the root -- only the mutex holder may reap, unlink, or judge the file
+ * stale -- and the exclusive-create the caller does afterwards still decides who actually gets
+ * the lock, so nothing here needs to be trusted for correctness beyond "at most one reclaimer".
+ */
+function reclaimStaleLock(
+  path: string,
+  expected: LockSnapshot,
+  atMs: number,
+  staleMs: number,
+  reapGraceMs: number,
+): ReclaimOutcome {
+  const mutexPath = `${path}.reclaim`;
+  let mutexFd: number;
+  try {
+    mutexFd = openSync(mutexPath, 'wx');
+  } catch (err) {
+    if (errorCode(err) !== 'EEXIST') {
+      throw new Error(`cannot reclaim stale lock ${path}: ${(err as Error).message}`);
+    }
+    // Someone else is reclaiming. If they are alive, that is their turn and not ours; if they
+    // died holding the mutex, clearing it is the only thing standing between this checkout and
+    // being unacquirable forever, and the caller must come straight back rather than treat the
+    // recovery as a failed attempt.
+    return clearDeadReclaimer(mutexPath) ? { kind: 'recovered' } : { kind: 'busy' };
+  }
+  try {
+    writeSync(mutexFd, `${JSON.stringify({ pid: process.pid, startedAtMs: Date.now() })}\n`);
+    fsyncSync(mutexFd);
+
+    // Everything below re-derives its facts under the mutex. What the caller saw outside it is
+    // only a reason to look, never a licence to delete.
+    const held = readSnapshot(path);
+    if (held === null) return { kind: 'retry' }; // already reclaimed by whoever went before us
+    if (held.text !== expected.text || !sameIdentity(held.identity, expected.identity)) {
+      return { kind: 'retry' }; // a different lock lives here now, and it is not ours to judge
+    }
+    const read = snapshotRead(held);
+    const reason = staleReason(read, atMs, staleMs);
+    if (reason === null) return { kind: 'retry' }; // it beat while we were getting the mutex
+
+    const holder = read.kind === 'valid' ? read.info : null;
+    const reaped =
+      holder?.execPgid !== undefined ? reapExecutorGroup(holder.execPgid, reapGraceMs) : undefined;
+
+    // The reap above can take seconds. No other reclaimer can have moved the file in that time,
+    // but a still-live holder could have released it and a fresh acquirer taken its place -- so
+    // the last thing before the unlink is proof that the file is still the one we judged.
+    if (!stillTheSameFile(path, held)) return { kind: 'retry' };
+    try {
+      unlinkSync(path);
+    } catch (err) {
+      if (errorCode(err) !== 'ENOENT') {
+        throw new Error(`cannot reclaim stale lock ${path}: ${(err as Error).message}`);
+      }
+      return { kind: 'retry' };
+    }
+    return {
+      kind: 'removed',
+      takeover: { atMs, reason, holder, ...(reaped !== undefined ? { reaped } : {}) },
+    };
+  } finally {
+    closeSync(mutexFd);
+    try {
+      unlinkSync(mutexPath);
+    } catch {
+      /* only a lease-breaker could have removed it, and it is going away either way */
+    }
+  }
 }
 
 function staleReason(
@@ -298,6 +449,9 @@ export function acquireLock(
   const waitingStartedAt = clock();
   let atMs = waitingStartedAt;
   let takeover: TakeoverInfo | undefined;
+  // Breaking a dead reclaimer's lease earns one free retry, not an unlimited supply: a caller
+  // that asked not to wait still must not spin here if something keeps re-creating the mutex.
+  let recoveries = 0;
 
   for (;;) {
     const token = ownerToken();
@@ -318,45 +472,42 @@ export function acquireLock(
       if (reason !== null) {
         // Confirm immediately before removal: the owner may have completed an
         // in-progress heartbeat between our first read and this decision.
-        const confirmed = readForAcquire(path);
-        if (confirmed.kind === 'missing') {
+        const confirmed = readSnapshot(path);
+        if (confirmed === null) {
           takeover = undefined;
           atMs = clock();
           continue;
         }
-        const confirmedReason = staleReason(confirmed, atMs, staleMs);
-        if (confirmedReason === null) {
+        if (staleReason(snapshotRead(confirmed), atMs, staleMs) === null) {
           takeover = undefined;
           atMs = clock();
           continue;
         }
-        // REAP FIRST, THEN UNLINK. The previous order was unlink-then-reap, and the comment
-        // there claimed the opposite of what the code did: reaping can wait out a SIGTERM grace
-        // and escalate to SIGKILL, and for that whole span the lock path did not exist -- so a
-        // third process could `openSync(path, 'wx')` straight through the hole while the orphan
-        // it was being protected from was still running.
-        //
-        // Keeping the (stale) file in place until the group is gone means a third arrival sees a
-        // lock, re-reads it, and makes its own staleness decision. If it also decides to reclaim,
-        // it kills the same already-dying group -- idempotent -- and only one of them can win the
-        // exclusive create afterwards.
-        const holder = confirmed.kind === 'valid' ? confirmed.info : null;
-        const reaped =
-          holder?.execPgid !== undefined
-            ? reapExecutorGroup(holder.execPgid, reapGraceMs)
-            : undefined;
-        let removed = false;
-        try {
-          unlinkSync(path);
-          removed = true;
-        } catch (unlinkErr) {
-          if (errorCode(unlinkErr) !== 'ENOENT') {
-            throw new Error(`cannot reclaim stale lock ${path}: ${(unlinkErr as Error).message}`);
+        // REAP FIRST, THEN UNLINK, and BOTH behind the reclaimer mutex. The order matters
+        // because reaping can wait out a SIGTERM grace and escalate to SIGKILL: with the old
+        // unlink-then-reap the lock path did not exist for that whole span, so a third process
+        // could `openSync(path, 'wx')` straight through the hole while the orphan it was being
+        // protected from was still running. The mutex matters because leaving the file in place
+        // is not enough on its own -- a second process re-reads it, agrees it is stale, and ends
+        // up deleting the replacement lock the first one has meanwhile installed.
+        const outcome = reclaimStaleLock(path, confirmed, atMs, staleMs, reapGraceMs);
+        takeover = outcome.kind === 'removed' ? outcome.takeover : undefined;
+        if (outcome.kind === 'recovered' && recoveries === 0) {
+          recoveries += 1;
+          atMs = clock();
+          continue;
+        }
+        if (outcome.kind === 'busy' || outcome.kind === 'recovered') {
+          // Another process is inside the reclaim. Waiting for it is exactly what `waitMs` is
+          // for, and counting it is what stops this from becoming an unbounded spin: a caller
+          // that asked not to wait must be told the checkout is taken, not loop until it is.
+          if (atMs - waitingStartedAt >= opts.waitMs) {
+            return { blocked: true, holder: readLock(path) };
+          }
+          if (usesRealClock) {
+            sleepSync(Math.min(pollMs, opts.waitMs - (atMs - waitingStartedAt)));
           }
         }
-        takeover = removed
-          ? { atMs, reason: confirmedReason, holder, ...(reaped !== undefined ? { reaped } : {}) }
-          : undefined;
         atMs = clock();
         continue;
       }
