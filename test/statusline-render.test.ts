@@ -15,8 +15,15 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,8 +55,27 @@ function renderScript(
   return execFileSync(process.execPath, [script], {
     input: JSON.stringify(payload),
     encoding: 'utf8',
+    cwd,
     env: { ...process.env, ROUTER_INNER_STATUSLINE: '', ...env },
   });
+}
+
+function renderRaw(
+  cwd: string,
+  raw: string,
+  env: NodeJS.ProcessEnv = {},
+  timeout: number = 5_000,
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [SCRIPT], {
+    input: raw,
+    encoding: 'utf8',
+    cwd,
+    env: { ...process.env, ROUTER_INNER_STATUSLINE: '', ...env },
+    timeout,
+    killSignal: 'SIGKILL',
+  });
+  assert.equal(result.error, undefined);
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 function render(cwd: string, payload: unknown = {}, env: NodeJS.ProcessEnv = {}): string {
@@ -107,7 +133,11 @@ function activity(
 }
 
 function pinned(now: number = NOW): NodeJS.ProcessEnv {
-  return { ROUTER_STATUSLINE_NOW: String(now) };
+  return {
+    NODE_ENV: 'test',
+    ROUTER_STATUSLINE_TEST_CLOCK: '1',
+    ROUTER_STATUSLINE_NOW: String(now),
+  };
 }
 
 function spinnerIn(output: string): string | undefined {
@@ -166,6 +196,79 @@ test('a running activity renders its label, spinner, and status enhancements', (
   }
 });
 
+test('a status_path outside the current task directory is ignored', () => {
+  const fx = repo();
+  try {
+    const outside = join(fx.dir, 'outside-status.json');
+    writeFileSync(outside, JSON.stringify({ phase: 'outside-secret-phase' }));
+    fx.activity('outside', activity('task:outside', { statusPath: outside }));
+
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    assert.match(out, /task:outside/);
+    assert.doesNotMatch(out, /outside-secret-phase/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a FIFO status_path is rejected without blocking the statusline', () => {
+  const fx = repo();
+  try {
+    const taskDir = join(fx.dir, '.router', 'tasks', 'fifo');
+    mkdirSync(taskDir, { recursive: true });
+    const fifo = join(taskDir, 'status.json');
+    execFileSync('mkfifo', [fifo]);
+    fx.activity('fifo', activity('task:fifo', { statusPath: fifo }));
+
+    const result = renderRaw(
+      fx.dir,
+      JSON.stringify({ cwd: fx.dir }),
+      pinned(),
+      1_500,
+    );
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /task:fifo/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a symbolic-link status_path is ignored', () => {
+  const fx = repo();
+  try {
+    const target = join(fx.dir, 'symlink-target.json');
+    writeFileSync(target, JSON.stringify({ phase: 'symlink-secret-phase' }));
+    const taskDir = join(fx.dir, '.router', 'tasks', 'linked');
+    mkdirSync(taskDir, { recursive: true });
+    const link = join(taskDir, 'status.json');
+    symlinkSync(target, link);
+    fx.activity('linked', activity('task:linked', { statusPath: link }));
+
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    assert.match(out, /task:linked/);
+    assert.doesNotMatch(out, /symlink-secret-phase/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a status file over the read limit is ignored', () => {
+  const fx = repo();
+  try {
+    const path = fx.status('oversized', {
+      phase: 'oversized-secret-phase',
+      padding: 'x'.repeat(64 * 1024),
+    });
+    fx.activity('oversized', activity('task:oversized', { statusPath: path }));
+
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    assert.match(out, /task:oversized/);
+    assert.doesNotMatch(out, /oversized-secret-phase/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('the running spinner changes across two-second refreshes', () => {
   const fx = repo();
   try {
@@ -175,6 +278,24 @@ test('the running spinner changes across two-second refreshes', () => {
     assert.ok(first);
     assert.ok(second);
     assert.notEqual(first, second);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('the production entry ignores ROUTER_STATUSLINE_NOW without both test-only gates', () => {
+  const fx = repo();
+  try {
+    const actualNow = Date.now();
+    fx.activity('clock', activity('review:clock', { now: actualNow }));
+    const out = render(fx.dir, { cwd: fx.dir }, {
+      NODE_ENV: 'production',
+      ROUTER_STATUSLINE_TEST_CLOCK: '',
+      ROUTER_STATUSLINE_NOW: String(actualNow + 24 * 60 * 60 * 1000),
+    });
+    assert.ok(spinnerIn(out), `expected a live spinner in: ${out}`);
+    assert.match(out, /review:clock/);
+    assert.doesNotMatch(out, /已失联/);
   } finally {
     fx.cleanup();
   }
@@ -261,6 +382,69 @@ test('an inner statusline that prints nothing falls back to the plain marker', (
     fx.cleanup();
   }
 });
+
+test('a hung inner statusline returns within the refresh period and keeps prior stdout', () => {
+  const fx = repo();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    const startedAt = Date.now();
+    const result = renderRaw(
+      fx.dir,
+      JSON.stringify({ cwd: fx.dir }),
+      {
+        ...pinned(),
+        ROUTER_INNER_STATUSLINE: "printf 'partial-hud'; sleep 10",
+      },
+      2_500,
+    );
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, 'partial-hud | router ▶ idle');
+    assert.ok(Date.now() - startedAt < 2_000, 'statusline exceeded its two-second refresh period');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+function assertMalformedInputKeepsHud(raw: string): void {
+  const fx = repo();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    const result = renderRaw(fx.dir, raw, {
+      ...pinned(),
+      ROUTER_INNER_STATUSLINE: "printf 'malformed-input-hud'",
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, 'malformed-input-hud | router ▶ idle');
+  } finally {
+    fx.cleanup();
+  }
+}
+
+test('literal null stdin preserves the complete inner HUD and exits zero', () => {
+  assertMalformedInputKeepsHud('null');
+});
+
+test('a numeric cwd preserves the complete inner HUD and exits zero', () => {
+  assertMalformedInputKeepsHud('{"cwd":42}');
+});
+
+test('a numeric workspace current_dir preserves the complete inner HUD and exits zero', () => {
+  assertMalformedInputKeepsHud('{"workspace":{"current_dir":123}}');
+});
+
+for (const [name, raw] of [
+  ['numeric', '42'],
+  ['array', '[]'],
+  ['non-JSON', 'not json'],
+  ['empty', ''],
+  ['oversized', 'x'.repeat(2 * 1024 * 1024)],
+] as const) {
+  test(`${name} stdin preserves the complete inner HUD and exits zero`, () => {
+    assertMalformedInputKeepsHud(raw);
+  });
+}
 
 test('a missing activity bundle omits only the activity segment and preserves the inner output', () => {
   const fx = repo();

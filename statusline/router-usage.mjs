@@ -14,28 +14,43 @@
 //
 // NOTE: extraction mirrors src/core/usageExtract.ts (kept intentionally in sync; this
 // script runs standalone under Claude Code and cannot import the executable CLI bundle).
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const SPINNER_FRAMES = [...'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'];
+const MAX_STDIN_JSON_BYTES = 1024 * 1024;
+const MAX_STATUS_BYTES = 64 * 1024;
+const INNER_STATUSLINE_TIMEOUT_MS = 1000;
 
-let activityApi = null;
-try {
-  // This script also runs from old installed plugin versions whose sibling dist/ directory has
-  // no activity bundle. Keep the import best-effort so their inner HUD remains fully usable.
-  const { observeActivities, activityState, readActivities } = await import(
-    new URL('../dist/statusline-activity.mjs', import.meta.url).href
-  );
-  if (
-    typeof observeActivities === 'function' &&
-    typeof activityState === 'function' &&
-    typeof readActivities === 'function'
-  ) {
-    activityApi = { observeActivities, activityState, readActivities };
+async function loadActivityApi() {
+  try {
+    // This script also runs from old installed plugin versions whose sibling dist/ directory has
+    // no activity bundle. Keep the import best-effort so their inner HUD remains fully usable.
+    const { observeActivities, activityState, readActivities } = await import(
+      new URL('../dist/statusline-activity.mjs', import.meta.url).href
+    );
+    if (
+      typeof observeActivities === 'function' &&
+      typeof activityState === 'function' &&
+      typeof readActivities === 'function'
+    ) {
+      return { observeActivities, activityState, readActivities };
+    }
+  } catch {
+    /* no activity segment when the separately published observer cannot be loaded */
   }
-} catch {
-  /* no activity segment when the separately published observer cannot be loaded */
+  return null;
 }
 
 const num = (x) => (typeof x === 'number' ? x : null);
@@ -84,19 +99,95 @@ function elapsedAge(ageMs) {
   return seconds < 120 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
 }
 
-// Test-only clock seam: production has no reason to set this, while pinned instants let the
-// script-level tests prove the spinner advances without sleeping on wall-clock timing.
+// The pinned clock requires two explicit test-only gates. ROUTER_STATUSLINE_NOW by itself is
+// ignored so an inherited production environment variable cannot freeze liveness rendering.
 function currentTimeMs() {
-  if (process.env.ROUTER_STATUSLINE_NOW !== undefined) {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    process.env.ROUTER_STATUSLINE_TEST_CLOCK === '1' &&
+    process.env.ROUTER_STATUSLINE_NOW !== undefined
+  ) {
     const pinned = Number(process.env.ROUTER_STATUSLINE_NOW);
     if (Number.isFinite(pinned)) return pinned;
   }
   return Date.now();
 }
 
-function statusDetails(statusPath, now) {
+function statusFilePath(statusPath, routerDir) {
+  if (typeof statusPath !== 'string' || statusPath.length === 0) return null;
+
+  const workspaceDir = dirname(resolve(routerDir));
+  const resolvedRouterDir = resolve(workspaceDir, '.router');
+  const tasksDir = join(resolvedRouterDir, 'tasks');
+  const candidate = resolve(workspaceDir, statusPath);
+  const taskDir = dirname(candidate);
+
+  if (
+    basename(candidate) !== 'status.json' ||
+    dirname(taskDir) !== tasksDir ||
+    basename(taskDir).length === 0
+  ) {
+    return null;
+  }
+
+  for (const directory of [resolvedRouterDir, tasksDir, taskDir]) {
+    const entry = lstatSync(directory);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) return null;
+  }
+
+  const entry = lstatSync(candidate);
+  if (entry.isSymbolicLink() || !entry.isFile() || entry.size > MAX_STATUS_BYTES) return null;
+  return { candidate, entry };
+}
+
+function readStatusFile(statusPath, routerDir) {
+  let file = null;
+  let fd = null;
   try {
-    const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+    file = statusFilePath(statusPath, routerDir);
+    if (file === null) return null;
+
+    fd = openSync(
+      file.candidate,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
+    const opened = fstatSync(fd);
+    if (
+      !opened.isFile() ||
+      opened.dev !== file.entry.dev ||
+      opened.ino !== file.entry.ino ||
+      opened.size > MAX_STATUS_BYTES
+    ) {
+      return null;
+    }
+
+    const bytes = Buffer.allocUnsafe(MAX_STATUS_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_STATUS_BYTES) return null;
+    return bytes.subarray(0, length).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* best-effort close on a display-only read */
+      }
+    }
+  }
+}
+
+function statusDetails(statusPath, routerDir, now) {
+  try {
+    const contents = readStatusFile(statusPath, routerDir);
+    if (contents === null) return '';
+    const status = JSON.parse(contents);
     if (!status || typeof status !== 'object') return '';
 
     const details = [];
@@ -124,7 +215,7 @@ function statusDetails(statusPath, now) {
   }
 }
 
-function routerSegment(routerDir, now) {
+function routerSegment(routerDir, now, activityApi) {
   if (activityApi === null) return '';
   try {
     const activities = activityApi.observeActivities(join(routerDir, 'activity'), now);
@@ -135,7 +226,9 @@ function routerSegment(routerDir, now) {
         return `${record.label} 已失联 ${elapsedAge(beatAgeMs)}`;
       }
       const details =
-        typeof record.status_path === 'string' ? statusDetails(record.status_path, now) : '';
+        typeof record.status_path === 'string'
+          ? statusDetails(record.status_path, routerDir, now)
+          : '';
       return `${spinner} ${record.label}${details}`;
     }).join(' | ')}`;
   } catch {
@@ -144,44 +237,89 @@ function routerSegment(routerDir, now) {
   }
 }
 
-let raw = '';
-try {
-  raw = readFileSync(0, 'utf8');
-} catch {
-  /* no stdin */
-}
-let data = {};
-try {
-  data = JSON.parse(raw || '{}');
-} catch {
-  /* not json */
-}
-const cwd = (data.workspace && data.workspace.current_dir) || data.cwd || process.cwd();
-const routerDir = join(cwd, '.router');
-const snap = extractUsage(data);
-if (snap && existsSync(routerDir)) {
+function readStdin() {
   try {
-    writeFileSync(join(routerDir, 'usage.json'), JSON.stringify(snap));
+    return readFileSync(0, 'utf8');
   } catch {
-    /* best-effort */
+    return '';
   }
 }
-const inner = process.env.ROUTER_INNER_STATUSLINE;
-if (inner) {
-  // spawnSync, not execSync: an inner statusline that does not READ stdin makes the parent's
-  // write to it fail with EPIPE, and execSync turns that into a throw -- so the user's whole HUD
-  // line was replaced by the word "router" because their HUD exited before draining a pipe it
-  // never wanted. dash does this where bash does not, which is why it only showed up on Linux.
-  // spawnSync reports the error instead of raising it, and still hands back what the child
-  // printed, so output survives a stdin it ignored.
-  const r = spawnSync(inner, { shell: true, input: raw, encoding: 'utf8' });
-  const text = typeof r.stdout === 'string' ? r.stdout : '';
-  process.stdout.write(text.trim() === '' ? 'router' : text.replace(/\n+$/, ''));
-} else {
-  process.stdout.write(snap ? `router: claude ${snap.used_percent}% used` : 'router');
+
+function parsePayload(raw) {
+  if (Buffer.byteLength(raw) > MAX_STDIN_JSON_BYTES) return {};
+  try {
+    return JSON.parse(raw || '{}');
+  } catch {
+    return {};
+  }
 }
-const live = routerSegment(routerDir, currentTimeMs());
-if (live) process.stdout.write(` | ${live}`);
+
+function payloadCwd(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return process.cwd();
+  const workspace = data.workspace;
+  if (
+    workspace &&
+    typeof workspace === 'object' &&
+    !Array.isArray(workspace) &&
+    typeof workspace.current_dir === 'string' &&
+    workspace.current_dir.length > 0
+  ) {
+    return workspace.current_dir;
+  }
+  return typeof data.cwd === 'string' && data.cwd.length > 0 ? data.cwd : process.cwd();
+}
+
+function innerOutput(raw) {
+  const inner = process.env.ROUTER_INNER_STATUSLINE;
+  if (!inner) return null;
+  try {
+    // spawnSync, not execSync: an inner statusline that does not READ stdin makes the parent's
+    // write to it fail with EPIPE, and execSync turns that into a throw -- so the user's whole
+    // HUD line was replaced by the word "router" because their HUD exited before draining a
+    // pipe it never wanted. dash does this where bash does not, which is why it only showed up
+    // on Linux. spawnSync reports the error instead of raising it and preserves stdout.
+    const result = spawnSync(inner, {
+      shell: true,
+      input: raw,
+      encoding: 'utf8',
+      timeout: INNER_STATUSLINE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
+    const text = typeof result.stdout === 'string' ? result.stdout : '';
+    return text.trim() === '' ? 'router' : text.replace(/\n+$/, '');
+  } catch {
+    /* the router marker is the last-resort output when an inner HUD cannot be started */
+  }
+  return 'router';
+}
+
+const raw = readStdin();
+const chainedOutput = innerOutput(raw);
+
+// The user's inner HUD is the primary product of this wrapper. Deliver it before parsing or
+// observing router state so malformed input and optional router integrations cannot replace it.
+if (chainedOutput !== null) process.stdout.write(chainedOutput);
+
+try {
+  const data = parsePayload(raw);
+  const routerDir = join(payloadCwd(data), '.router');
+  const snap = extractUsage(data);
+  if (chainedOutput === null) {
+    process.stdout.write(snap ? `router: claude ${snap.used_percent}% used` : 'router');
+  }
+  if (snap && existsSync(routerDir)) {
+    try {
+      writeFileSync(join(routerDir, 'usage.json'), JSON.stringify(snap));
+    } catch {
+      /* best-effort */
+    }
+  }
+  const live = routerSegment(routerDir, currentTimeMs(), await loadActivityApi());
+  if (live) process.stdout.write(` | ${live}`);
+} catch {
+  // Router usage and activity rendering are optional. The inner HUD was already delivered.
+  if (chainedOutput === null) process.stdout.write('router');
+}
 
 /*
 This script is covered by test/statusline-render.test.ts, which RUNS it: fixed clock, fixture
