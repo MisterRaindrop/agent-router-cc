@@ -36,20 +36,23 @@ test('a same-length overwrite with the mtime restored is still detected', () => 
   const fx = freshState();
   try {
     const victim = join(fx.paths.root, 'tasks', 'victim', 'result.json');
+    // A pinned timestamp rather than "read the old one and put it back": utimes round-trips
+    // through seconds+nanoseconds, so restoring a captured mtime lands within a millisecond of
+    // the original rather than exactly on it -- and asserting exact equality against a captured
+    // value made this test itself fail about one run in three. A fixed stamp applied to both
+    // writes is the same fixture without the coin toss.
+    const stamp = new Date(1_700_000_000_000);
     fx.write('tasks/victim/result.json', 'AAAA');
-    const original = statSync(victim);
+    utimesSync(victim, stamp, stamp);
+    const stampedAt = statSync(victim).mtimeMs;
 
     const before = fingerprintState(fx.paths, 'mine');
     writeFileSync(victim, 'BBBB'); // same byte length
-    utimesSync(victim, original.atime, original.mtime); // and the same timestamps
+    utimesSync(victim, stamp, stamp); // and the same timestamp
     const after = fingerprintState(fx.paths, 'mine');
 
-    assert.equal(statSync(victim).size, original.size, 'the fixture changed the size after all');
-    assert.equal(
-      Math.floor(statSync(victim).mtimeMs),
-      Math.floor(original.mtimeMs),
-      'the fixture did not actually restore the mtime',
-    );
+    assert.equal(statSync(victim).size, 4, 'the fixture changed the size after all');
+    assert.equal(statSync(victim).mtimeMs, stampedAt, 'the fixture did not restore the mtime');
     assert.deepEqual(stateDiff(before, after), ['modified tasks/victim/result.json']);
   } finally {
     fx.cleanup();

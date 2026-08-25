@@ -33,7 +33,7 @@ import {
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
-import { acquireLock, type LockHandle } from '../io/lock.ts';
+import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import { loadGateConfig } from './gateConfig.ts';
@@ -75,6 +75,20 @@ import { verifyTask } from './verifier.ts';
 export interface DispatchDeps {
   paths: RouterPaths;
   clock: Clock;
+}
+
+/**
+ * What the exclusive-lock envelope hands to the code running inside it.
+ *
+ * `stillOwned` exists because the state guard cannot watch `gate.lock`: our own out-of-process
+ * heartbeat rewrites it every few seconds, so it has to be excluded from the content diff -- and
+ * an exclusion is a write channel unless something else closes it. This is that something else.
+ */
+export interface RunEnvelope {
+  /** Publish the executor's process group into the lock, so a later reclaimer can reap it. */
+  onExecPgid: (pgid: number) => void;
+  /** Whether the checkout lock still names this run. False means somebody rewrote it. */
+  stillOwned: () => boolean;
 }
 
 export interface PreparedRun {
@@ -230,7 +244,7 @@ async function runPreparedObserved(
   deps: DispatchDeps,
   prep: PreparedRun,
   gateConfig?: GateConfig,
-  onExecPgid?: (pgid: number) => void,
+  envelope?: RunEnvelope,
 ): Promise<RunResult> {
   const { paths } = deps;
   const { id, task, contractMdText, workDir, branch, baseSha, context, workers, logPath } = prep;
@@ -249,6 +263,7 @@ async function runPreparedObserved(
   let exitClass: ExitClass = 'task_failed';
   let outcome = { rc: null as number | null, timedOut: false, stalled: false, startedAtMs: 0, endedAtMs: 0 };
   let switches = 0;
+  let groupSurvived = false;
   const discarded: string[] = [];
 
   for (let i = 0; i < order.length; i++) {
@@ -281,13 +296,22 @@ async function runPreparedObserved(
         // execPgid -- and a reclaimer therefore could not clean up the orphan it was supposed to
         // (Must NOT 6, fault injection 8c). The 8c test called the primitive by hand and so
         // passed straight over the gap.
-        onExecPgid?.(pgid);
+        envelope?.onExecPgid(pgid);
       },
     });
     prep.status.finishExecutor();
     outcome = o;
     const log = safeRead(logPath);
     exitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
+    if (o.groupSurvived) {
+      // Something in the executor's process group outlived SIGKILL and is still able to write
+      // this checkout. Nothing after this point may run: not a reset for the next executor, not
+      // the closeout check, and certainly not verification -- every one of them would be racing
+      // a writer we have already failed to stop.
+      groupSurvived = true;
+      exitClass = 'task_failed';
+      break;
+    }
     const parsedAttempt: ParsedLog = (launcher.parseLog ?? parseCodexLog)(log);
     if (detectContractConflict(parsedAttempt.finalMessage)) {
       exitClass = 'contract_conflict';
@@ -341,6 +365,13 @@ async function runPreparedObserved(
   // against the diff, it is a contract violation, and it is invisible to every gate because
   // `.router/` is gitignored.
   const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  // The one file the fingerprint cannot watch, checked the only way it can be: by identity
+  // rather than by content. Our heartbeat rewrites gate.lock constantly, so it is excluded from
+  // the diff -- and this is what stops that exclusion from being a free channel for an executor
+  // to write itself a lock and let a second process into the checkout.
+  if (envelope !== undefined && !envelope.stillOwned()) {
+    tampering.push('modified gate.lock (it no longer carries this run’s owner token)');
+  }
   if (tampering.length > 0 && exitClass === 'ok') exitClass = 'task_failed';
 
   let closeout: RunResult['closeout'];
@@ -390,6 +421,7 @@ async function runPreparedObserved(
     ...(prep.rescue !== null ? { rescue_sha: prep.rescue.sha } : {}),
     ...(discarded.length > 0 ? { discarded_shas: discarded } : {}),
     ...(closeout !== undefined ? { closeout } : {}),
+    ...(groupSurvived ? { executor_group_survived: true } : {}),
     ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
     ...(prep.dirtySubmodules.length > 0 ? { dirty_submodules: prep.dirtySubmodules } : {}),
     ...(context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {}),
@@ -420,6 +452,11 @@ async function runPreparedObserved(
       writeFileSync(paths.diffPatch(id), patch);
       result.diff_sha = createHash('sha256').update(patch).digest('hex');
     }
+    // Exactly which commit the verifier is about to judge. `land` refuses to merge a task branch
+    // whose tip has moved past it: a PASSED record used to authorize the BRANCH rather than a
+    // commit, so anything appended afterwards -- by a resume, or by hand -- was merged unverified
+    // on the strength of a verdict that had never seen it.
+    result.verified_head = resolveCommit(workDir, 'HEAD');
     prep.status.transition('verify');
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
@@ -455,10 +492,10 @@ export async function runPrepared(
   deps: DispatchDeps,
   prep: PreparedRun,
   gateConfig?: GateConfig,
-  onExecPgid?: (pgid: number) => void,
+  envelope?: RunEnvelope,
 ): Promise<RunResult> {
   try {
-    return await runPreparedObserved(deps, prep, gateConfig, onExecPgid);
+    return await runPreparedObserved(deps, prep, gateConfig, envelope);
   } catch (error) {
     prep.status.terminal('failed');
     throw error;
@@ -498,9 +535,9 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   // acquireLock has already reaped any orphan executor left by a dead holder (step 3) -- it
   // will not hand back a handle while one is still writing to this checkout.
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
-  return withCheckoutLock(lock, async (onExecPgid) => {
+  return withCheckoutLock(lock, async (envelope) => {
     const prep = prepareRun(deps, id);
-    return runPrepared(deps, prep, gateConfig, onExecPgid);
+    return runPrepared(deps, prep, gateConfig, envelope);
   });
 }
 
@@ -514,14 +551,17 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
  */
 async function withCheckoutLock(
   lock: LockHandle,
-  body: (onExecPgid: (pgid: number) => void) => Promise<RunResult>,
+  body: (envelope: RunEnvelope) => Promise<RunResult>,
 ): Promise<RunResult> {
   const beater = startHeartbeat(lock.path, lock.ownerToken);
   let execPgid: number | null = null;
   try {
-    return await body((pgid) => {
-      execPgid = pgid;
-      lock.recordExecPgid(pgid);
+    return await body({
+      onExecPgid: (pgid) => {
+        execPgid = pgid;
+        lock.recordExecPgid(pgid);
+      },
+      stillOwned: () => ownsLock(lock.path, lock.ownerToken),
     });
   } finally {
     // Step 12, in this order: kill the executor's process group, THEN release the lock. The
@@ -579,12 +619,22 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
   // base_sha -- but its BRANCH contained task 1's commits. So `land p2` alone merged p1 as well,
   // silently, past p1's own review and past the explicit land decision that is supposed to be
   // the user's. PLAN §5.3 never listed that as an accepted limit.
-  const startedOn = currentBranch(paths.repoRoot);
+  //
+  // A branch NAME is not enough to record that, which is what the follow-up review found: a
+  // batch started from a detached HEAD had nothing to restore, so it stacked exactly as before.
+  // The baseline is a ref: the branch when there is one, the commit itself when there is not.
+  const startedOnBranch = currentBranch(paths.repoRoot);
+  const baseline = startedOnBranch ?? resolveCommit(paths.repoRoot, 'HEAD');
+  const gateConfig = loadGateConfig(paths);
   const results: RunResult[] = [];
   const faults: { id: string; message: string }[] = [];
   for (const [index, id] of ids.entries()) {
-    if (index > 0 && startedOn !== null) checkoutRef(paths.repoRoot, startedOn);
     try {
+      // Inside the try, and this matters: restoring used to sit outside it, so a starting branch
+      // deleted between tasks threw straight out of the loop -- past the fault list, past the
+      // error that names which task failed and why -- and left the user standing on the previous
+      // task's branch with no explanation.
+      if (index > 0) restoreBaseline(deps, gateConfig.lock_wait_minutes ?? 0, baseline);
       results.push(await dispatchTask(deps, id));
     } catch (e) {
       faults.push({ id, message: e instanceof Error ? e.message : String(e) });
@@ -595,6 +645,31 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
     throw new Error(`dispatch runs failed: ${faults.map((f) => `${f.id}: ${f.message}`).join('; ')}`);
   }
   return results;
+}
+
+/**
+ * Put the checkout back on the batch's starting ref before the next task cuts its branch.
+ *
+ * Under the exclusive lock, because this writes the user's checkout and everything that does
+ * has to -- it is the same rule `prepareRun` follows, and this call used to sit outside it.
+ * Refuses on a dirty tree rather than dragging the previous task's leftovers onto a new base.
+ */
+function restoreBaseline(deps: DispatchDeps, waitMinutes: number, ref: string): void {
+  const { paths } = deps;
+  const lock = takeCheckoutLock(paths, waitMinutes);
+  try {
+    const leftover = uncommittedSourceFiles(paths.repoRoot, ROUTER_STATE_EXCLUDE);
+    if (leftover.length > 0) {
+      throw new Error(
+        `the checkout still has uncommitted changes from the previous task ` +
+          `(${leftover.slice(0, 5).join(', ')}${leftover.length > 5 ? ', …' : ''}); ` +
+          `commit or discard them before the batch continues`,
+      );
+    }
+    checkoutRef(paths.repoRoot, ref);
+  } finally {
+    lock.release();
+  }
 }
 
 /**
@@ -619,7 +694,7 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   // dispatch, both writing the same files.
   const gateConfig = loadGateConfig(paths);
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
-  return withCheckoutLock(lock, (onExecPgid) => resumeInLock(deps, id, feedback, gateConfig, onExecPgid));
+  return withCheckoutLock(lock, (envelope) => resumeInLock(deps, id, feedback, gateConfig, envelope));
 }
 
 async function resumeInLock(
@@ -627,7 +702,7 @@ async function resumeInLock(
   id: string,
   feedback: string,
   gateConfig: GateConfig,
-  onExecPgid: (pgid: number) => void,
+  envelope: RunEnvelope,
 ): Promise<RunResult> {
   const { paths } = deps;
   const prev = store.readResult(paths, id);
@@ -659,6 +734,10 @@ async function resumeInLock(
   writeFileSync(logPath, '');
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
+  // Must NOT 11 detection, which resume did not have at all. A fresh dispatch caught a forged
+  // `.router/tasks/<other>/result.json` and failed; the identical write through a resume was
+  // reported PASSED, because nothing on this path ever looked.
+  const stateBefore = fingerprintState(paths, id);
 
   const o = await superviseWorker({
     argv: launcher.buildResumeArgv(workDir, priorSession, feedback, task),
@@ -669,7 +748,7 @@ async function resumeInLock(
     watchPaths: [refPath],
     maxWallMs: task.max_wall_minutes * 60_000,
     stallMs: (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 60_000,
-    onPgid: onExecPgid,
+    onPgid: envelope.onExecPgid,
   });
   const log = safeRead(logPath);
   const exitClass: ExitClass = reclassifyEnvironmentFailure(reclassifyQuota(o.exitClass, log), log);
@@ -683,13 +762,20 @@ async function resumeInLock(
   // something went wrong.
   const mismatch = newSession !== priorSession;
 
+  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  if (!envelope.stillOwned()) {
+    tampering.push('modified gate.lock (it no longer carries this run’s owner token)');
+  }
+
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== 'ok' && !conflict && detectModelMismatch(log);
+  const blocked =
+    conflict || mismatch || o.groupSurvived || tampering.length > 0 || exitClass !== 'ok';
   const result: RunResult = {
     task_id: id,
     attempt_number: prev.attempt_number + 1,
-    exit_class: conflict ? 'contract_conflict' : mismatch ? 'task_failed' : exitClass,
+    exit_class: conflict ? 'contract_conflict' : blocked ? 'task_failed' : exitClass,
     rc: o.rc,
     timed_out: o.timedOut,
     stalled: o.stalled,
@@ -703,6 +789,8 @@ async function resumeInLock(
     resumed: true,
     session_id: newSession ?? priorSession,
     ...(mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {}),
+    ...(o.groupSurvived ? { executor_group_survived: true } : {}),
+    ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(conflict ? { conflict: true } : {}),
     ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
@@ -720,46 +808,64 @@ async function resumeInLock(
     if (leftoverOnFailure !== null && leftoverOnFailure.length > 0) result.uncommitted_changes = true;
   }
 
-  if (!conflict && !mismatch && exitClass === 'ok') {
-    // Same closing invariant as a fresh dispatch: the executor commits its own units, so a
-    // leftover file means the work is not finished, not that we should sweep it up.
-    const leftover = uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE);
-    if (leftover.length > 0) {
+  // Everything from here to the single writeResult below is wrapped, and that is the whole
+  // point. This block used to be able to throw -- `uncommittedSourceFiles` now reports a broken
+  // index by throwing rather than by answering "clean", and assertTaskIdentity, rawDiff and the
+  // verifier can all fail too. A throw here left resume with no record of the attempt at all,
+  // while the resumed executor's commits sat on the branch and the PREVIOUS run's PASSED
+  // result.json still pointed at it. Measured: resume exited 1, and `router land` then merged
+  // `x = 3` into main on the strength of a verdict that had never seen it. Turning a fail-open
+  // into a fail-closed check is only half the job; the other half is that the failure has to be
+  // written down.
+  if (!blocked) {
+    try {
+      // Same closing invariant as a fresh dispatch: the executor commits its own units, so a
+      // leftover file means the work is not finished, not that we should sweep it up.
+      const leftover = uncommittedSourceFiles(workDir, ROUTER_STATE_EXCLUDE);
+      if (leftover.length > 0) {
+        result.exit_class = 'task_failed';
+        result.closeout = {
+          ok: false,
+          reason: 'uncommitted source files remain after resume; the executor did not commit its last unit',
+          files: leftover,
+        };
+      } else {
+        // Same identity assertion the fresh path makes before it verifies. Resume checked identity
+        // once BEFORE launching the executor and never again, so an executor (or a human) that moved
+        // the branch mid-run would have had its diff verified against the wrong base.
+        assertTaskIdentity(workDir, { branch, baseSha });
+        result.closeout = { ok: true };
+        const patch = rawDiff(workDir, baseSha, 'HEAD');
+        writeFileSync(paths.diffPatch(id), patch);
+        result.diff_sha = createHash('sha256').update(patch).digest('hex');
+        result.verified_head = resolveCommit(workDir, 'HEAD');
+        result.verifier = verifyTask({
+          repoRoot: paths.repoRoot,
+          workDir,
+          baseSha,
+          head: 'HEAD',
+          allowedGlobs: task.allowed_globs,
+          ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
+          ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
+          verify: task.verify ?? [],
+          env: verifyEnv,
+          uncommittedExclude: ROUTER_STATE_EXCLUDE,
+          // The project's gate, which resume used to skip entirely -- so a resume could report
+          // PASSED on a diff the same gate had just FAILED on a fresh dispatch.
+          gate: gateConfig,
+          gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
+        });
+        attachEffectiveRisk(result, task, workDir, baseSha);
+      }
+    } catch (error) {
+      // The attempt is recorded as failed and NOT verified. Rethrowing instead would leave the
+      // branch ahead of a stale PASSED record, which is the merge hazard this catch exists for.
       result.exit_class = 'task_failed';
-      result.closeout = {
-        ok: false,
-        reason: 'uncommitted source files remain after resume; the executor did not commit its last unit',
-        files: leftover,
-      };
-      store.writeResult(paths, id, result);
-      appendMetric(deps, result, task, null);
-      return result;
+      result.closeout = { ok: false, reason: (error as Error).message, files: [] };
+      delete result.verifier;
+      delete result.verified_head;
+      delete result.diff_sha;
     }
-    // Same identity assertion the fresh path makes before it verifies. Resume checked identity
-    // once BEFORE launching the executor and never again, so an executor (or a human) that moved
-    // the branch mid-run would have had its diff verified against the wrong base.
-    assertTaskIdentity(workDir, { branch, baseSha });
-    result.closeout = { ok: true };
-    const patch = rawDiff(workDir, baseSha, 'HEAD');
-    writeFileSync(paths.diffPatch(id), patch);
-    result.diff_sha = createHash('sha256').update(patch).digest('hex');
-    result.verifier = verifyTask({
-      repoRoot: paths.repoRoot,
-      workDir,
-      baseSha,
-      head: 'HEAD',
-      allowedGlobs: task.allowed_globs,
-      ...(task.forbidden_globs !== undefined ? { forbiddenGlobs: task.forbidden_globs } : {}),
-      ...(task.max_changed_lines !== undefined ? { maxChangedLines: task.max_changed_lines } : {}),
-      verify: task.verify ?? [],
-      env: verifyEnv,
-      uncommittedExclude: ROUTER_STATE_EXCLUDE,
-      // The project's gate, which resume used to skip entirely -- so a resume could report PASSED
-      // on a diff the same gate had just FAILED on a fresh dispatch.
-      gate: gateConfig,
-      gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
-    });
-    attachEffectiveRisk(result, task, workDir, baseSha);
   }
 
   store.writeResult(paths, id, result);

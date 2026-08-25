@@ -1,6 +1,7 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -11,7 +12,7 @@ import type { RunResult, RunStatus } from '../domain/types.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { EXECUTOR_SANDBOX_ENV } from '../io/env.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
-import { branchExists, currentBranch, deleteBranch, mergeAbort, mergeNoFF, resolveCommit } from '../io/git.ts';
+import { branchExists, currentBranch, deleteBranch, mergeAbort, mergeNoFF, rawDiff, resolveCommit } from '../io/git.ts';
 import { findRouterDir, routerPaths, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
@@ -354,6 +355,51 @@ const resume: Handler = async (ctx) => {
   return !mism && verifierResult === 'PASSED' ? 0 : 1;
 };
 
+/**
+ * Refuse to merge a task branch that has moved past the commit its PASSED verdict judged.
+ *
+ * A stored `PASSED` used to authorize the BRANCH, and nothing tied it to a commit. So anything
+ * appended after the verdict -- a `router resume` whose own closeout failed, or the user
+ * committing by hand -- was merged on the strength of a verdict that had never seen it.
+ * Measured by the reviewer: resume exited 1, `land` exited 0, and unverified code reached main.
+ *
+ * `verified_head` is the exact check and is recorded from here on. A record written before this
+ * field existed falls back to re-deriving the diff and comparing it against the `diff_sha` the
+ * verifier recorded -- weaker (it cannot see an empty commit) but true of every stored run, so
+ * upgrading does not silently trust the very records the finding was about.
+ */
+function assertBranchIsWhatPassed(
+  paths: RouterPaths,
+  id: string,
+  branch: string,
+  result: RunResult,
+  prior: string,
+): void {
+  const refuse = (why: string): never => {
+    throw new CliError(
+      `${id}: ${why}; the PASSED result describes an earlier commit, so merging it would land ` +
+        `unverified work. Re-run \`router go\` (or \`router dispatch ${id}\`) to verify the ` +
+        `branch as it stands${prior}`,
+      1,
+    );
+  };
+  const tip = resolveCommit(paths.repoRoot, branch);
+  if (result.verified_head !== undefined) {
+    if (tip !== result.verified_head) {
+      refuse(`${branch} is at ${tip.slice(0, 12)} but ${result.verified_head.slice(0, 12)} was verified`);
+    }
+    return;
+  }
+  if (result.base_sha === undefined || result.diff_sha === undefined) {
+    refuse(`this run recorded no verified commit (it predates the check)`);
+    return;
+  }
+  const now = createHash('sha256')
+    .update(rawDiff(paths.repoRoot, result.base_sha, branch))
+    .digest('hex');
+  if (now !== result.diff_sha) refuse(`${branch} no longer matches the diff that was verified`);
+}
+
 const land: Handler = (ctx) => {
   const { paths } = depsFor(ctx);
   const ids = requireIds(ctx);
@@ -368,6 +414,7 @@ const land: Handler = (ctx) => {
     }
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
     const branch = result.branch ?? taskBranch(id);
+    assertBranchIsWhatPassed(paths, id, branch, result, prior);
     // Dispatch now leaves the user standing ON the task branch, so `land` has to say so rather
     // than attempt to merge a branch into itself (and then fail to delete the branch it is on).
     // Checking out the merge target is the user's decision: merging is irreversible, and

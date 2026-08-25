@@ -464,3 +464,49 @@ test('dispatch runs gate.yaml reset and picks the clean gate when a trigger is t
     fx.cleanup(dir);
   }
 });
+
+// A stored PASSED used to authorize the task BRANCH, not a commit. So anything appended to that
+// branch after the verdict -- a resume, or the user by hand -- was merged on the strength of a
+// verdict that had never seen it. Two records are checked here, because the fallback for runs
+// stored before `verified_head` existed is a different code path and it is the one that decides
+// whether upgrading silently trusts exactly the records this finding was about.
+test('land refuses a branch that has moved past the commit its verdict judged', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  const resultPath = join(dir, '.router', 'tasks', 'demo', 'result.json');
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(JSON.parse(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+    const passed = JSON.parse(readFileSync(resultPath, 'utf8')) as Record<string, unknown>;
+    assert.match(String(passed.verified_head), /^[0-9a-f]{40}$/);
+
+    // Somebody adds a commit the verifier never saw.
+    fx.write(dir, 'src/a.ts', 'export const x = 99; // never verified\n');
+    fx.addCommit(dir, 'unreviewed');
+    fx.git(dir, ['checkout', '-q', 'main']);
+
+    const l = router(dir, ['land', 'demo']);
+    assert.notEqual(l.code, 0, `land merged an unverified commit: ${l.out}`);
+    assert.match(l.out, /was verified|unverified/i, l.out);
+    assert.doesNotMatch(readFileSync(join(dir, 'src', 'a.ts'), 'utf8'), /never verified/);
+
+    // The same record without `verified_head` -- i.e. one written by the build that had the bug.
+    // It falls back to re-deriving the diff, and must reach the same answer.
+    delete passed.verified_head;
+    writeFileSync(resultPath, JSON.stringify(passed));
+    const legacy = router(dir, ['land', 'demo']);
+    assert.notEqual(legacy.code, 0, `a pre-upgrade record landed unverified work: ${legacy.out}`);
+    assert.match(legacy.out, /no longer matches the diff that was verified/, legacy.out);
+
+    // ...and an untouched branch still lands, so the guard is not simply refusing everything.
+    fx.git(dir, ['branch', '-f', 'router/demo', 'router/demo~1']);
+    const ok = router(dir, ['land', 'demo']);
+    assert.equal(ok.code, 0, ok.out);
+    assert.match(readFileSync(join(dir, 'src', 'a.ts'), 'utf8'), /fake codex/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});

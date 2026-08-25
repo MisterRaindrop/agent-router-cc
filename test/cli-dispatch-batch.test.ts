@@ -176,3 +176,85 @@ test('batch land --json stays one document listing every merge', () => {
     fx.cleanup(dir);
   }
 });
+
+// Follow-up review, `batch-branch-contamination` still partial: the baseline was recorded as a
+// branch NAME, so a batch started from a detached HEAD had `null` to restore and stacked exactly
+// as before -- `router/p2` contained `router/p1`, and landing p2 alone landed p1 too. A detached
+// HEAD is not exotic here: it is where `git checkout <sha>`, a bisect, and a rebase all leave you.
+test('a batch started from a detached HEAD still cuts every task from the same base', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    fx.git(dir, ['checkout', '-q', '--detach', 'HEAD']);
+    const detachedAt = fx.git(dir, ['rev-parse', 'HEAD']).trim();
+
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
+      ROUTER_CODEX_BIN: FAKE_SCOPED,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.equal(d.code, 0, d.out);
+
+    const p1Tip = fx.git(dir, ['rev-parse', 'router/p1']).trim();
+    assert.doesNotMatch(
+      fx.git(dir, ['log', '--format=%H', 'router/p2']),
+      new RegExp(p1Tip),
+      'router/p2 contains p1 commits: landing p2 would silently land p1',
+    );
+    // Both branches hang off the commit the batch started at, not off each other.
+    for (const id of ['p1', 'p2']) {
+      const base = JSON.parse(
+        readFileSync(join(dir, '.router', 'tasks', id, 'result.json'), 'utf8'),
+      ) as { base_sha: string };
+      assert.equal(base.base_sha, detachedAt, `${id} was not cut from the batch's starting commit`);
+    }
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The other half of the same finding: restoring the baseline sat OUTSIDE the loop's try, so a
+// starting branch deleted between tasks threw straight past the fault list -- no message naming
+// which task stopped and why, and the user left standing on the previous task's branch.
+test('a batch whose starting branch disappears fails by name, not by stack trace', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    fx.git(dir, ['checkout', '-q', '-b', 'scratch']);
+    // An executor that deletes the starting branch after committing its unit -- i.e. exactly
+    // between the two tasks, which is the window the finding is about.
+    const saboteur = join(dir, 'saboteur.mjs');
+    writeFileSync(
+      saboteur,
+      '#!/usr/bin/env node\n' +
+        "import { execFileSync } from 'node:child_process';\n" +
+        "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+        "const prompt = process.argv.slice(2).find((a) => /^task: \\S+$/m.test(a)) ?? '';\n" +
+        "const id = /^task: (\\S+)$/m.exec(prompt)?.[1] ?? 'p1';\n" +
+        "mkdirSync('src', { recursive: true });\n" +
+        'writeFileSync(`src/${id}.ts`, `export const ${id} = true;\\n`);\n' +
+        'execFileSync("git", ["add", "--", `src/${id}.ts`]);\n' +
+        'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", `fake: ${id}`]);\n' +
+        'try { execFileSync("git", ["branch", "-D", "scratch"], { stdio: "ignore" }); } catch {}\n' +
+        'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:`fake-session-${id}`})+"\\n");\n' +
+        'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+    );
+    chmodSync(saboteur, 0o755);
+
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
+      ROUTER_CODEX_BIN: saboteur,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.notEqual(d.code, 0, d.out);
+    // Names the task that could not start and why. The old path produced neither.
+    assert.match(d.out, /p2/, d.out);
+    assert.match(d.out, /scratch|checkout|pathspec|did not match/i, d.out);
+    // And p2 never got a branch cut from the wrong base.
+    assert.doesNotMatch(fx.git(dir, ['branch', '--format=%(refname:short)']), /^router\/p2$/m);
+  } finally {
+    fx.cleanup(dir);
+  }
+});

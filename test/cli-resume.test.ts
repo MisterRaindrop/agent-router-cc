@@ -286,3 +286,133 @@ test('resume refuses while another process holds the checkout (finding 6)', () =
     fx.cleanup(dir);
   }
 });
+
+// The follow-up review's `regressed` verdict, reproduced end to end.
+//
+// Making the closeout check fail CLOSED (throw on a broken index instead of answering "clean")
+// was only half a fix. On the resume path the throw escaped before anything was written, so the
+// attempt left NO record -- while the resumed executor's commit sat on the task branch and the
+// PREVIOUS run's PASSED result.json still pointed at that branch. Repair the repo, run
+// `router land`, and unverified code goes into main: measured as
+// `{"resumeCode":1,"storedVerifier":"PASSED","landCode":0}`. Against the pre-fix code this test
+// finds `attempt_number: 1, exit_class: "ok", verifier: PASSED` -- the failed resume simply is
+// not there.
+//
+// Two independent things have to hold now: the failed attempt is persisted, and `land` refuses a
+// branch whose tip has moved past the commit that was actually verified.
+test('a resume that cannot finish its closeout records the failure and cannot be landed', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  // Commits its unit and then leaves the index unreadable -- a crash mid-write, a concurrent git
+  // process, a full disk. The closeout check has to fail CLOSED on that; what this test is about
+  // is what happens after it does.
+  const wrecker = join(dir, 'fake-wrecker.mjs');
+  writeFileSync(
+    wrecker,
+    '#!/usr/bin/env node\n' +
+      "import { execFileSync } from 'node:child_process';\n" +
+      "import { writeFileSync } from 'node:fs';\n" +
+      "const resumed = process.argv.includes('resume');\n" +
+      "writeFileSync('src/a.ts', `export const x = ${resumed ? 3 : 2};\\n`);\n" +
+      'execFileSync("git", ["add", "--", "src/a.ts"]);\n' +
+      'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", "fake: unit a"]);\n' +
+      "if (resumed) writeFileSync('.git/index', 'not an index at all');\n" +
+      'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:"fake-session-demo"})+"\\n");\n' +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(wrecker, 0o755);
+  const env = { ROUTER_CODEX_BIN: wrecker, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'none') };
+  const resultPath = join(dir, '.router', 'tasks', 'demo', 'result.json');
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    const d = jsonLine(router(dir, ['dispatch', 'demo', '--json'], env).out);
+    assert.equal(d.verifier, 'PASSED', JSON.stringify(d));
+    const passed = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      attempt_number: number;
+      verified_head?: string;
+      branch: string;
+    };
+    assert.match(passed.verified_head ?? '', /^[0-9a-f]{40}$/, 'the verdict names no commit');
+
+    const r = router(dir, ['resume', 'demo', '--feedback', 'tighten it', '--json'], env);
+    assert.notEqual(r.code, 0, r.out);
+    // The user repairs their repo and carries on -- which is when the hazard bites.
+    execFileSync('git', ['read-tree', 'HEAD'], { cwd: dir, stdio: 'ignore' });
+
+    // 1. The failed attempt is on record, with the closeout failure that caused it.
+    const stored = JSON.parse(readFileSync(resultPath, 'utf8')) as {
+      attempt_number: number;
+      exit_class: string;
+      verifier: { result: string } | undefined;
+      closeout?: { ok: boolean; reason: string };
+    };
+    assert.equal(stored.attempt_number, passed.attempt_number + 1, JSON.stringify(stored));
+    assert.equal(stored.exit_class, 'task_failed', JSON.stringify(stored));
+    assert.equal(stored.verifier, undefined, 'a failed resume left a verifier verdict behind');
+    assert.equal(stored.closeout?.ok, false, JSON.stringify(stored));
+
+    // 2. And the branch cannot be landed on the old verdict either way, because the resumed
+    //    executor committed: the tip has moved past the commit that actually PASSED.
+    const tip = fx.git(dir, ['rev-parse', passed.branch]).trim();
+    assert.notEqual(tip, passed.verified_head, 'the fixture never moved the branch');
+    fx.git(dir, ['checkout', '-q', 'main']);
+    const l = router(dir, ['land', 'demo', '--json'], env);
+    assert.notEqual(l.code, 0, `land merged unverified work: ${l.out}`);
+    assert.match(l.out, /unverified|was verified|not PASSED/i, l.out);
+    // Nothing the executor committed reached main -- not the resumed commit, and not the first
+    // dispatch's either, since that branch was never landed. (main legitimately carries the
+    // rescue commit for the user's own untracked files, made before the branch was cut.)
+    assert.doesNotMatch(fx.git(dir, ['log', '--format=%s', 'main']), /fake: unit a/, 'main moved');
+    assert.equal(readFileSync(join(dir, 'src', 'a.ts'), 'utf8'), 'export const x = 1;\n');
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// `router-state-write-escape`, still partial after round 1: a fresh dispatch detected a forged
+// `.router/` write and failed, while the IDENTICAL write through a resume reported PASSED --
+// because resume never fingerprinted the state at all.
+test('a resume that forges router state fails the run, exactly as a fresh dispatch does', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const forger = join(dir, 'fake-forger.mjs');
+  writeFileSync(
+    forger,
+    '#!/usr/bin/env node\n' +
+      "import { execFileSync } from 'node:child_process';\n" +
+      "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+      "const resumed = process.argv.includes('resume');\n" +
+      "writeFileSync('src/a.ts', `export const x = ${resumed ? 3 : 2};\\n`);\n" +
+      'execFileSync("git", ["add", "--", "src/a.ts"]);\n' +
+      'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", "fake: unit a"]);\n' +
+      // The forgery, on the RESUME turn only, so the first dispatch is a clean PASSED.
+      'if (resumed) {\n' +
+      '  mkdirSync(".router/tasks/forged", { recursive: true });\n' +
+      '  writeFileSync(".router/tasks/forged/result.json", JSON.stringify({task_id:"forged",exit_class:"ok",verifier:{result:"PASSED",checks:[]}}));\n' +
+      '}\n' +
+      'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:"fake-session-demo"})+"\\n");\n' +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(forger, 0o755);
+  const env = { ROUTER_CODEX_BIN: forger, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'none') };
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(jsonLine(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+
+    const r = router(dir, ['resume', 'demo', '--feedback', 'again', '--json'], env);
+    assert.equal(jsonLine(r.out).verifier, null, `a forged resume was verified: ${r.out}`);
+    assert.notEqual(r.code, 0, r.out);
+    const stored = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'demo', 'result.json'), 'utf8'),
+    ) as { exit_class: string; state_tampering?: string[] };
+    assert.equal(stored.exit_class, 'task_failed', JSON.stringify(stored));
+    assert.ok(
+      stored.state_tampering?.some((line) => line.includes('tasks/forged/result.json')),
+      JSON.stringify(stored.state_tampering),
+    );
+  } finally {
+    fx.cleanup(dir);
+  }
+});

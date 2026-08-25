@@ -216,6 +216,15 @@ export interface RunResult {
   verifier?: VerifierReport;
   gate?: GateResult;
   diff_sha?: string;
+  /**
+   * The exact commit the verifier judged.
+   *
+   * A PASSED record used to authorize the task BRANCH, not a commit -- so anything appended to
+   * that branch afterwards (a resume, or the user by hand) was merged by `land` on the strength
+   * of a verdict that had never seen it. Recorded whenever a verifier ran; `land` refuses a
+   * branch whose tip has moved past it.
+   */
+  verified_head?: string;
   session_id?: string | null; // executor session/thread id, for a later `router resume`
   resumed?: boolean; // this run continued a prior executor session
   resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
@@ -239,6 +248,11 @@ export interface RunResult {
    * Present only when something was detected; its presence fails the run.
    */
   state_tampering?: string[];
+  /**
+   * Something in the executor's process group outlived SIGKILL and can still write the checkout.
+   * The run is failed rather than verified: every later step would be racing that writer.
+   */
+  executor_group_survived?: boolean;
   /** Submodule content dirt seen in the checkout. Not the user's work and not rescuable (it
    *  lives in another repository), so it is reported rather than acted on. */
   dirty_submodules?: string[];
