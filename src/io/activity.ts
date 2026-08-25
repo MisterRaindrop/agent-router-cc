@@ -4,12 +4,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
+  constants,
   fstatSync,
   fsyncSync,
   linkSync,
   openSync,
   readdirSync,
-  readFileSync,
+  readSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -30,6 +31,9 @@ const MAX_PID = 0x7fff_ffff;
 // is not evidence of a fresh heartbeat. Keep the allowance deliberately much smaller than the
 // shared 90-second stale window.
 const MAX_FUTURE_BEAT_SKEW_MS = 5_000;
+// Activity documents are a few hundred bytes. Bound every read so the 2-second statusline poll
+// cannot be made to synchronously consume an attacker-controlled file.
+const MAX_ACTIVITY_FILE_BYTES = 64 * 1024;
 // A reclaim is a synchronous critical section whose filesystem boundaries may still be delayed.
 // Renew at every boundary so a live reclaimer keeps its mutex; the lease exists only so SIGKILL
 // cannot leave that mutex behind forever.
@@ -183,7 +187,8 @@ export function writeActivity(path: string, activity: ActivityInput): ActivityRe
 /** Read one activity document; missing, torn, or schema-invalid contents are ignored. */
 export function readActivity(path: string): ActivityRecord | null {
   try {
-    return parseActivity(JSON.parse(readFileSync(path, 'utf8')));
+    const snapshot = fileSnapshot(path);
+    return snapshot === null ? null : parseActivity(JSON.parse(snapshot.text));
   } catch {
     return null;
   }
@@ -201,15 +206,27 @@ function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
 function fileSnapshot(path: string): FileSnapshot | null {
   let fd: number;
   try {
-    fd = openSync(path, 'r');
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return null;
     throw error;
   }
   try {
     const stat = fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || stat.size > BigInt(MAX_ACTIVITY_FILE_BYTES)) return null;
+    const bytes = Buffer.allocUnsafe(MAX_ACTIVITY_FILE_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_ACTIVITY_FILE_BYTES) return null;
     return {
-      text: readFileSync(fd, 'utf8'),
+      text: bytes.subarray(0, length).toString('utf8'),
       identity: { dev: stat.dev, ino: stat.ino },
       mtimeMs: Number(stat.mtimeNs / 1_000_000n),
     };

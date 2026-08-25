@@ -11,6 +11,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -112,6 +113,72 @@ test('activity storage round-trips the schema, removes ended records, and ignore
     });
     assert.equal(existsSync(completePath), false, 'ended activity was retained as unbounded history');
   } finally {
+    fx.cleanup();
+  }
+});
+
+test('oversized and symlink activity files are ignored without hiding a valid sibling', () => {
+  const fx = fixture();
+  try {
+    mkdirSync(fx.activityDir, { recursive: true });
+    const goodPath = join(fx.activityDir, 'good.json');
+    const hugePath = join(fx.activityDir, 'huge.json');
+    const symlinkPath = join(fx.activityDir, 'symlink.json');
+    const good = record({ label: 'good' });
+    writeActivity(goodPath, good);
+    writeFileSync(
+      hugePath,
+      `${JSON.stringify(record({ label: 'huge', status_path: 'x'.repeat(64 * 1024) }))}\n`,
+    );
+    symlinkSync(goodPath, symlinkPath);
+
+    assert.equal(readActivity(hugePath), null);
+    assert.equal(readActivity(symlinkPath), null);
+    assert.deepEqual(readActivities(fx.activityDir), [{ path: goodPath, record: good }]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a FIFO activity file is ignored without blocking or hiding a valid sibling', async () => {
+  const fx = fixture();
+  const moduleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  let reader: ChildProcess | undefined;
+  try {
+    mkdirSync(fx.activityDir, { recursive: true });
+    const goodPath = join(fx.activityDir, 'good.json');
+    const fifoPath = join(fx.activityDir, 'fifo.json');
+    const good = record({ label: 'good' });
+    writeActivity(goodPath, good);
+    const madeFifo = spawnSync('mkfifo', [fifoPath], { encoding: 'utf8' });
+    assert.equal(madeFifo.status, 0, madeFifo.stderr);
+
+    reader = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const { readActivity } = await import(${JSON.stringify(moduleUrl)});\n` +
+          `process.exit(readActivity(${JSON.stringify(fifoPath)}) === null ? 0 : 91);\n`,
+      ],
+      { stdio: 'ignore' },
+    );
+    const returned = await waitUntil(
+      () => reader!.exitCode !== null || reader!.signalCode !== null,
+      750,
+    );
+    if (!returned) {
+      reader.kill('SIGKILL');
+      await waitForExit(reader);
+    }
+    assert.ok(returned, 'readActivity blocked while opening a FIFO');
+    assert.equal(reader.exitCode, 0);
+    assert.deepEqual(readActivities(fx.activityDir), [{ path: goodPath, record: good }]);
+  } finally {
+    if (reader !== undefined && reader.exitCode === null && reader.signalCode === null) {
+      reader.kill('SIGKILL');
+      await waitForExit(reader).catch(() => undefined);
+    }
     fx.cleanup();
   }
 });
