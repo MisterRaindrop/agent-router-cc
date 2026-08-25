@@ -634,5 +634,8 @@ export function startActivityHeartbeat(
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,
     intervalMs,
+    // An old owner must not revive this inode inside the reclaimer's final-confirm/unlink window.
+    // Skipping, rather than exiting, lets it resume if reclaim ultimately stands down.
+    skipIfExists: `${path}.reclaim`,
   });
 }

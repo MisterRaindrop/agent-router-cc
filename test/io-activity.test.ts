@@ -393,7 +393,7 @@ test('every reclaim crash boundary leaves at most one owner and remains recovera
   }
 });
 
-test('an in-place heartbeat after stale detection makes reclaim stand down before unlink', async () => {
+test('an in-place owner update after stale detection makes reclaim stand down before unlink', async () => {
   const fx = fixture();
   const paths = routerPaths(join(fx.root, '.router'));
   const label = 'review:heartbeat-resumed';
@@ -411,7 +411,6 @@ test('an in-place heartbeat after stale detection makes reclaim stand down befor
   });
   const originalStat = statSync(path, { bigint: true });
   let contender: ChildProcess | undefined;
-  let heartbeat: ReturnType<typeof startActivityHeartbeat> | undefined;
   let stderr = '';
   try {
     contender = spawn(
@@ -442,12 +441,9 @@ test('an in-place heartbeat after stale detection makes reclaim stand down befor
     contender.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     assert.ok(await waitUntil(() => existsSync(marker)), `reclaimer never paused: ${stderr}`);
 
-    heartbeat = startActivityHeartbeat(path, stale, 20);
-    const started = await heartbeat.started;
-    if (!started.ok) assert.fail(started.error.message);
-    assert.ok(
-      await waitUntil(() => readActivity(path)?.beat_at !== staleBeat),
-      'old owner did not resume its heartbeat',
+    writeFileSync(
+      path,
+      `${JSON.stringify({ ...stale, beat_at: new Date().toISOString() }, null, 2)}\n`,
     );
     const resumed = readActivity(path);
     assert.ok(resumed);
@@ -465,11 +461,51 @@ test('an in-place heartbeat after stale detection makes reclaim stand down befor
     assert.equal(activityState(retained), 'running');
     assert.equal(existsSync(`${path}.reclaim`), false);
   } finally {
-    heartbeat?.stop();
     if (contender !== undefined && contender.exitCode === null && contender.signalCode === null) {
       contender.kill('SIGKILL');
       await waitForExit(contender).catch(() => undefined);
     }
+    fx.cleanup();
+  }
+});
+
+test('an activity heartbeat skips every beat while its reclaim guard exists, then resumes', async () => {
+  const fx = fixture();
+  const path = join(fx.activityDir, 'guarded-heartbeat.json');
+  const reclaimPath = `${path}.reclaim`;
+  const initialBeat = '2000-01-01T00:00:00.000Z';
+  try {
+    const activity = writeActivity(path, {
+      label: 'review:guarded-heartbeat',
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      beat_at: initialBeat,
+    });
+    writeFileSync(reclaimPath, 'reclaim in progress');
+    const heartbeat = startActivityHeartbeat(path, activity, 40);
+    try {
+      const started = await heartbeat.started;
+      if (!started.ok) assert.fail(started.error.message);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.equal(
+        readActivity(path)?.beat_at,
+        initialBeat,
+        'the old owner wrote through an active reclaim guard',
+      );
+      assert.doesNotThrow(
+        () => process.kill(heartbeat.pid!, 0),
+        'the skipped heartbeat exited instead of waiting for reclaim to finish',
+      );
+
+      rmSync(reclaimPath, { force: true });
+      assert.ok(
+        await waitUntil(() => readActivity(path)?.beat_at !== initialBeat),
+        'the old owner did not resume after reclaim stood down',
+      );
+    } finally {
+      heartbeat.stop();
+    }
+  } finally {
     fx.cleanup();
   }
 });

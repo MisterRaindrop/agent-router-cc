@@ -53,7 +53,7 @@ export interface HeartbeatHandle {
 // never as proof of staleness -- which is what acquireLock does before it reclaims anything.
 const CHILD_SOURCE = `
 const fs = require('node:fs');
-const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
+const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, skipIfExists, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
 const indent = Number(indentRaw);
 const interval = Number(intervalRaw);
 const parentPid = Number(parentRaw);
@@ -79,6 +79,7 @@ function beat() {
         }
       } catch { process.exit(0); }
     }
+    if (skipIfExists && fs.existsSync(skipIfExists)) return;
     stored[field] = valueFormat === 'iso' ? new Date().toISOString() : Date.now();
     const data = Buffer.from(JSON.stringify(stored, null, indent) + '\\n');
     let offset = 0;
@@ -113,6 +114,8 @@ export interface JsonHeartbeatOptions {
   /** JSON indentation used by lifecycle writes; matching it keeps each heartbeat the same size. */
   indent?: number;
   intervalMs?: number;
+  /** Skip this beat, without exiting, while this path exists. */
+  skipIfExists?: string;
   /** Fault-injection handshake used only to prove the open/read/write inode interleaving. */
   testPauseAfterRead?: { readyPath: string; resumePath: string; donePath: string };
 }
@@ -142,6 +145,7 @@ export function startJsonHeartbeat(
       String(options.indent ?? 0),
       String(intervalMs),
       String(process.pid),
+      options.skipIfExists ?? '',
       options.testPauseAfterRead?.readyPath ?? '',
       options.testPauseAfterRead?.resumePath ?? '',
       options.testPauseAfterRead?.donePath ?? '',
