@@ -13,10 +13,30 @@
 // recognizable rate_limits (router then uses codex quota + the reactive 429).
 //
 // NOTE: extraction mirrors src/core/usageExtract.ts (kept intentionally in sync; this
-// script runs standalone under Claude Code and cannot import the bundle).
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+// script runs standalone under Claude Code and cannot import the executable CLI bundle).
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+const SPINNER_FRAMES = [...'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'];
+
+let activityApi = null;
+try {
+  // This script also runs from old installed plugin versions whose sibling dist/ directory has
+  // no activity bundle. Keep the import best-effort so their inner HUD remains fully usable.
+  const { observeActivities, activityState, readActivities } = await import(
+    new URL('../dist/statusline-activity.mjs', import.meta.url).href
+  );
+  if (
+    typeof observeActivities === 'function' &&
+    typeof activityState === 'function' &&
+    typeof readActivities === 'function'
+  ) {
+    activityApi = { observeActivities, activityState, readActivities };
+  }
+} catch {
+  /* no activity segment when the separately published observer cannot be loaded */
+}
 
 const num = (x) => (typeof x === 'number' ? x : null);
 function findRateLimits(x) {
@@ -57,63 +77,71 @@ function minutesSince(iso, now) {
 function activityAge(iso, now) {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return null;
-  const seconds = Math.max(0, Math.floor((now - then) / 1000));
+  return elapsedAge(now - then);
+}
+function elapsedAge(ageMs) {
+  const seconds = Math.max(0, Math.floor(ageMs / 1000));
   return seconds < 120 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
 }
-// `.router/tasks/<id>/status.json`. It used to be `tasks/<id>/runs/<run>/status.json`; the run
-// dimension was folded away because it only ever held one value.
-//
-// Deliberately NO legacy fallback, unlike store.readResult which keeps one. That reads history,
-// where old records must stay visible; this reads only what is LIVE, and a live run cannot
-// predate the upgrade that moved the path. The single thing a fallback could surface here is a
-// stale pre-upgrade file, which is exactly what must not come back as a phantom run.
-function activeRuns(routerDir, now) {
-  const runs = [];
-  let tasks;
-  try {
-    tasks = readdirSync(join(routerDir, 'tasks'), { withFileTypes: true });
-  } catch {
-    return runs;
+
+// Test-only clock seam: production has no reason to set this, while pinned instants let the
+// script-level tests prove the spinner advances without sleeping on wall-clock timing.
+function currentTimeMs() {
+  if (process.env.ROUTER_STATUSLINE_NOW !== undefined) {
+    const pinned = Number(process.env.ROUTER_STATUSLINE_NOW);
+    if (Number.isFinite(pinned)) return pinned;
   }
-  for (const task of tasks) {
-    if (!task.isDirectory()) continue;
-    try {
-      const status = JSON.parse(readFileSync(join(routerDir, 'tasks', task.name, 'status.json'), 'utf8'));
-      if (
-        !status ||
-        typeof status !== 'object' ||
-        Object.prototype.hasOwnProperty.call(status, 'terminal_state') ||
-        typeof status.phase !== 'string' ||
-        typeof status.started_at !== 'string' ||
-        typeof status.budget_minutes !== 'number'
-      ) continue;
-      const elapsed = minutesSince(status.started_at, now);
-      const started = Date.parse(status.started_at);
-      if (elapsed === null || !Number.isFinite(started)) continue;
-      runs.push({ taskId: task.name, status, elapsed, started });
-    } catch {
-      /* one missing or malformed status must not hide other runs */
-    }
-  }
-  return runs.sort((a, b) => a.started - b.started);
+  return Date.now();
 }
-function routerSegment(routerDir) {
-  const now = Date.now();
-  const runs = activeRuns(routerDir, now);
-  if (runs.length === 0) return '';
-  return `router ▶ ${runs.map(({ taskId, status, elapsed }) => {
-    let line = `${taskId} ${status.phase} ${elapsed}m/${status.budget_minutes}m`;
-    if (status.last_output_at !== null) {
+
+function statusDetails(statusPath, now) {
+  try {
+    const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+    if (!status || typeof status !== 'object') return '';
+
+    const details = [];
+    if (typeof status.phase === 'string' && status.phase) details.push(status.phase);
+    if (typeof status.started_at === 'string' && typeof status.budget_minutes === 'number') {
+      const elapsed = minutesSince(status.started_at, now);
+      if (elapsed !== null) details.push(`${elapsed}m/${status.budget_minutes}m`);
+    }
+    if (typeof status.last_output_at === 'string') {
       const age = activityAge(status.last_output_at, now);
-      if (age !== null) line += ` ·log ${age}`;
+      if (age !== null) details.push(`·log ${age}`);
     }
-    if (status.stall_deadline !== null) {
+    if (typeof status.stall_deadline === 'string') {
       const remaining = (Date.parse(status.stall_deadline) - now) / 60000;
-      if (Number.isFinite(remaining) && remaining >= 0 && remaining <= 5) line += ` ·静默判死 ${Math.ceil(remaining)}m`;
+      if (Number.isFinite(remaining) && remaining >= 0 && remaining <= 5) {
+        details.push(`·静默判死 ${Math.ceil(remaining)}m`);
+      }
     }
-    if (typeof status.recent_action === 'string' && status.recent_action) line += ` · ${status.recent_action}`;
-    return line;
-  }).join(' | ')}`;
+    if (typeof status.recent_action === 'string' && status.recent_action) {
+      details.push(`· ${status.recent_action}`);
+    }
+    return details.length === 0 ? '' : ` ${details.join(' ')}`;
+  } catch {
+    return '';
+  }
+}
+
+function routerSegment(routerDir, now) {
+  if (activityApi === null) return '';
+  try {
+    const activities = activityApi.observeActivities(join(routerDir, 'activity'), now);
+    if (activities.length === 0) return 'router ▶ idle';
+    const spinner = SPINNER_FRAMES[Math.floor(now / 1000) % SPINNER_FRAMES.length];
+    return `router ▶ ${activities.map(({ record, state, beatAgeMs }) => {
+      if (state === 'disconnected') {
+        return `${record.label} 已失联 ${elapsedAge(beatAgeMs)}`;
+      }
+      const details =
+        typeof record.status_path === 'string' ? statusDetails(record.status_path, now) : '';
+      return `${spinner} ${record.label}${details}`;
+    }).join(' | ')}`;
+  } catch {
+    // Activity rendering is display-only. Never let it replace or truncate the inner HUD.
+    return '';
+  }
 }
 
 let raw = '';
@@ -152,7 +180,7 @@ if (inner) {
 } else {
   process.stdout.write(snap ? `router: claude ${snap.used_percent}% used` : 'router');
 }
-const live = routerSegment(routerDir);
+const live = routerSegment(routerDir, currentTimeMs());
 if (live) process.stdout.write(` | ${live}`);
 
 /*

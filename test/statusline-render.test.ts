@@ -10,39 +10,80 @@
 // identically to "nothing is running", which is the worst possible way for a liveness indicator
 // to break.
 //
-// The script is standalone (it runs under Claude Code and cannot import the bundle), so the only
-// honest way to test it is to spawn it.
+// The script is standalone and imports only its dedicated side-effect-free observer bundle, so
+// the honest way to test both pieces is to spawn it exactly as Claude Code does.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = fileURLToPath(new URL('../statusline/router-usage.mjs', import.meta.url));
+const ACTIVITY_MODULE = new URL('../dist/statusline-activity.mjs', import.meta.url).href;
+const SPINNER_FRAMES = [...'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'];
+const NOW = Date.parse('2026-08-25T12:00:00.000Z');
 
-/** Run the statusline the way Claude Code does: payload on stdin, output on stdout. */
-function render(cwd: string, payload: unknown = {}, env: NodeJS.ProcessEnv = {}): string {
-  return execFileSync(process.execPath, [SCRIPT], {
+test('the standalone activity bundle exposes the shared observation API', () => {
+  const source = [
+    `const activity = await import(${JSON.stringify(ACTIVITY_MODULE)});`,
+    "console.log(['observeActivities', 'activityState', 'readActivities']",
+    "  .map((name) => typeof activity[name]).join(','));",
+  ].join('\n');
+  const out = execFileSync(process.execPath, ['--input-type=module', '--eval', source], {
+    encoding: 'utf8',
+  });
+  assert.equal(out.trim(), 'function,function,function');
+});
+
+/** Run a statusline script the way Claude Code does: payload on stdin, output on stdout. */
+function renderScript(
+  script: string,
+  cwd: string,
+  payload: unknown = {},
+  env: NodeJS.ProcessEnv = {},
+): string {
+  return execFileSync(process.execPath, [script], {
     input: JSON.stringify(payload),
     encoding: 'utf8',
     env: { ...process.env, ROUTER_INNER_STATUSLINE: '', ...env },
   });
 }
 
-function repo(): { dir: string; task(id: string, status: Record<string, unknown>): void; legacy(id: string, status: Record<string, unknown>): void; cleanup(): void } {
+function render(cwd: string, payload: unknown = {}, env: NodeJS.ProcessEnv = {}): string {
+  return renderScript(SCRIPT, cwd, payload, env);
+}
+
+interface Fixture {
+  dir: string;
+  activity(name: string, record: Record<string, unknown>): void;
+  status(id: string, status: Record<string, unknown>): string;
+  copyWithoutBundle(): string;
+  cleanup(): void;
+}
+
+function repo(): Fixture {
   const dir = mkdtempSync(join(tmpdir(), 'router-statusline-'));
   return {
     dir,
-    task(id, status) {
-      mkdirSync(join(dir, '.router', 'tasks', id), { recursive: true });
-      writeFileSync(join(dir, '.router', 'tasks', id, 'status.json'), JSON.stringify(status));
+    activity(name, record) {
+      mkdirSync(join(dir, '.router', 'activity'), { recursive: true });
+      writeFileSync(join(dir, '.router', 'activity', `${name}.json`), JSON.stringify(record));
     },
-    legacy(id, status) {
-      mkdirSync(join(dir, '.router', 'tasks', id, 'runs', 'run-001'), { recursive: true });
-      writeFileSync(join(dir, '.router', 'tasks', id, 'runs', 'run-001', 'status.json'), JSON.stringify(status));
+    status(id, status) {
+      mkdirSync(join(dir, '.router', 'tasks', id), { recursive: true });
+      const path = join(dir, '.router', 'tasks', id, 'status.json');
+      writeFileSync(path, JSON.stringify(status));
+      return path;
+    },
+    copyWithoutBundle() {
+      const directory = join(dir, 'old-plugin', 'statusline');
+      mkdirSync(directory, { recursive: true });
+      const copy = join(directory, 'router-usage.mjs');
+      copyFileSync(SCRIPT, copy);
+      return copy;
     },
     cleanup() {
       rmSync(dir, { recursive: true, force: true });
@@ -50,88 +91,128 @@ function repo(): { dir: string; task(id: string, status: Record<string, unknown>
   };
 }
 
-/** A live run started `minutesAgo` ago, with its last output `logSecondsAgo` ago. */
-function live(minutesAgo: number, logSecondsAgo: number | null): Record<string, unknown> {
-  const now = Date.now();
-  const started = new Date(now - minutesAgo * 60_000).toISOString();
+function activity(
+  label: string,
+  options: { now?: number; beatAgeMs?: number; startedAgeMs?: number; statusPath?: string } = {},
+): Record<string, unknown> {
+  const now = options.now ?? NOW;
   return {
-    phase: 'executor_working',
-    started_at: started,
-    phase_started_at: started,
-    budget_minutes: 30,
-    last_output_at: logSecondsAgo === null ? null : new Date(now - logSecondsAgo * 1000).toISOString(),
-    stall_deadline: null,
+    label,
+    owner_token: `owner-${label}`,
+    pid: process.pid,
+    started_at: new Date(now - (options.startedAgeMs ?? 60_000)).toISOString(),
+    beat_at: new Date(now - (options.beatAgeMs ?? 1_000)).toISOString(),
+    ...(options.statusPath === undefined ? {} : { status_path: options.statusPath }),
   };
 }
 
-// The regression itself. A run's status at the CURRENT path must be found.
-test('a live run at tasks/<id>/status.json is rendered', () => {
+function pinned(now: number = NOW): NodeJS.ProcessEnv {
+  return { ROUTER_STATUSLINE_NOW: String(now) };
+}
+
+function spinnerIn(output: string): string | undefined {
+  return SPINNER_FRAMES.find((frame) => output.includes(frame));
+}
+
+test('an empty activity directory always renders idle', () => {
   const fx = repo();
   try {
-    fx.task('alpha', live(18, 45));
-    const out = render(fx.dir, { cwd: fx.dir });
-    assert.match(out, /router ▶ alpha executor_working 18m\/30m ·log 45s/);
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    assert.equal(render(fx.dir, { cwd: fx.dir }, pinned()).trim(), 'router | router ▶ idle');
   } finally {
     fx.cleanup();
   }
 });
 
-// The other half of the same regression: the pre-fold path must NOT resurrect anything. A live
-// run cannot predate the upgrade that moved the path, so anything found there is stale, and a
-// stale file rendered as a running task is a phantom that never goes away.
-test('a status file at the pre-fold runs/run-001 path is ignored', () => {
+test('task status files are enhancements, not an authoritative source of activity', () => {
   const fx = repo();
   try {
-    fx.legacy('ghost', live(5, 10));
-    const out = render(fx.dir, { cwd: fx.dir });
+    fx.status('ghost', {
+      phase: 'executor_working',
+      started_at: new Date(NOW - 5 * 60_000).toISOString(),
+      budget_minutes: 30,
+    });
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
     assert.doesNotMatch(out, /ghost/);
-    assert.doesNotMatch(out, /router ▶/);
+    assert.match(out, /router ▶ idle/);
   } finally {
     fx.cleanup();
   }
 });
 
-test('a finished run (terminal_state present) is not shown as running', () => {
+test('a running activity renders its label, spinner, and status enhancements', () => {
   const fx = repo();
   try {
-    fx.task('done', { ...live(60, 30), terminal_state: 'succeeded', phase: 'verify' });
-    assert.doesNotMatch(render(fx.dir, { cwd: fx.dir }), /router ▶/);
+    const statusPath = fx.status('alpha', {
+      phase: 'executor_working',
+      started_at: new Date(NOW - 18 * 60_000).toISOString(),
+      budget_minutes: 30,
+      last_output_at: new Date(NOW - 45_000).toISOString(),
+      stall_deadline: new Date(NOW + 3 * 60_000).toISOString(),
+      recent_action: 'Bash: npm test',
+    });
+    fx.activity('alpha', activity('task:alpha', { statusPath }));
+
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    const spinner = spinnerIn(out);
+    assert.ok(spinner, `expected a spinner frame in: ${out}`);
+    assert.ok(out.includes(`router ▶ ${spinner} task:alpha`));
+    assert.match(
+      out,
+      /task:alpha executor_working 18m\/30m ·log 45s ·静默判死 3m · Bash: npm test/,
+    );
   } finally {
     fx.cleanup();
   }
 });
 
-test('several live runs render in start order, separated', () => {
+test('the running spinner changes across two-second refreshes', () => {
   const fx = repo();
   try {
-    fx.task('later', live(10, null));
-    fx.task('earlier', live(20, 120));
-    const out = render(fx.dir, { cwd: fx.dir });
-    assert.match(out, /router ▶ earlier .* \| later /);
+    fx.activity('review', activity('review:architect'));
+    const first = spinnerIn(render(fx.dir, { cwd: fx.dir }, pinned(NOW)));
+    const second = spinnerIn(render(fx.dir, { cwd: fx.dir }, pinned(NOW + 2_000)));
+    assert.ok(first);
+    assert.ok(second);
+    assert.notEqual(first, second);
   } finally {
     fx.cleanup();
   }
 });
 
-// The stall countdown only appears when it is close, so it is a warning rather than noise.
-test('the stall countdown appears within five minutes and not before', () => {
+test('a disconnected activity renders its heartbeat age without spinner or stale phase', () => {
   const fx = repo();
   try {
-    fx.task('near', { ...live(5, 200), stall_deadline: new Date(Date.now() + 3 * 60_000).toISOString() });
-    fx.task('far', { ...live(5, 200), stall_deadline: new Date(Date.now() + 40 * 60_000).toISOString() });
-    const out = render(fx.dir, { cwd: fx.dir });
-    assert.match(out, /near[^|]*静默判死 3m/);
-    assert.doesNotMatch(out, /far[^|]*静默判死/);
+    const statusPath = fx.status('dead', {
+      phase: 'deceptive_verify_phase',
+      started_at: new Date(NOW - 20 * 60_000).toISOString(),
+      budget_minutes: 30,
+    });
+    fx.activity(
+      'dead',
+      activity('task:dead', { beatAgeMs: 3 * 60_000, startedAgeMs: 20 * 60_000, statusPath }),
+    );
+
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    assert.match(out, /router ▶ task:dead 已失联 3m/);
+    assert.doesNotMatch(out, /deceptive_verify_phase/);
+    for (const frame of SPINNER_FRAMES) assert.doesNotMatch(out, new RegExp(frame));
   } finally {
     fx.cleanup();
   }
 });
 
-test('recent_action is appended when the executor reported one', () => {
+test('a malformed activity file does not hide a valid activity', () => {
   const fx = repo();
   try {
-    fx.task('acting', { ...live(2, 5), recent_action: 'Bash: npm test' });
-    assert.match(render(fx.dir, { cwd: fx.dir }), /acting .*· Bash: npm test/);
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    writeFileSync(join(fx.dir, '.router', 'activity', 'broken.json'), '{ truncated');
+    fx.activity('healthy', activity('review:senior'));
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    const spinner = spinnerIn(out);
+    assert.ok(spinner);
+    assert.ok(out.includes(`router ▶ ${spinner} review:senior`));
+    assert.doesNotMatch(out, /broken/);
   } finally {
     fx.cleanup();
   }
@@ -142,11 +223,10 @@ test('recent_action is appended when the executor reported one', () => {
 test('an inner statusline is preserved and router appends after it', () => {
   const fx = repo();
   try {
-    fx.task('alpha', live(3, 8));
     // Reads stdin, as a real statusline does -- it needs the session JSON.
     const inner = "cat >/dev/null; printf 'my-hud: ctx 42%%'";
-    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: inner });
-    assert.match(out, /^my-hud: ctx 42% \| router ▶ alpha /);
+    const out = render(fx.dir, { cwd: fx.dir }, { ...pinned(), ROUTER_INNER_STATUSLINE: inner });
+    assert.equal(out, 'my-hud: ctx 42% | router ▶ idle');
   } finally {
     fx.cleanup();
   }
@@ -159,9 +239,11 @@ test('an inner statusline is preserved and router appends after it', () => {
 test('an inner statusline that ignores stdin still has its output kept', () => {
   const fx = repo();
   try {
-    fx.task('alpha', live(3, 8));
-    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: "printf 'no-stdin-hud'" });
-    assert.match(out, /^no-stdin-hud \| router ▶ alpha /);
+    const out = render(fx.dir, { cwd: fx.dir }, {
+      ...pinned(),
+      ROUTER_INNER_STATUSLINE: "printf 'no-stdin-hud'",
+    });
+    assert.equal(out, 'no-stdin-hud | router ▶ idle');
   } finally {
     fx.cleanup();
   }
@@ -170,32 +252,33 @@ test('an inner statusline that ignores stdin still has its output kept', () => {
 test('an inner statusline that prints nothing falls back to the plain marker', () => {
   const fx = repo();
   try {
-    const out = render(fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: 'true' });
-    assert.equal(out.trim(), 'router');
+    const out = render(fx.dir, { cwd: fx.dir }, {
+      ...pinned(),
+      ROUTER_INNER_STATUSLINE: 'true',
+    });
+    assert.equal(out.trim(), 'router | router ▶ idle');
   } finally {
     fx.cleanup();
   }
 });
 
-test('a malformed status file does not hide the other runs', () => {
+test('a missing activity bundle omits only the activity segment and preserves the inner output', () => {
   const fx = repo();
   try {
-    mkdirSync(join(fx.dir, '.router', 'tasks', 'broken'), { recursive: true });
-    writeFileSync(join(fx.dir, '.router', 'tasks', 'broken', 'status.json'), '{ truncated');
-    fx.task('alpha', live(4, 12));
-    const out = render(fx.dir, { cwd: fx.dir });
-    assert.match(out, /router ▶ alpha /);
-    assert.doesNotMatch(out, /broken/);
+    const script = fx.copyWithoutBundle();
+    const inner = "printf '%s' 'legacy-hud: ctx 42%'";
+    const out = renderScript(script, fx.dir, { cwd: fx.dir }, { ROUTER_INNER_STATUSLINE: inner });
+    assert.equal(out, 'legacy-hud: ctx 42%');
   } finally {
     fx.cleanup();
   }
 });
 
-test('no .router at all renders the plain marker, not a crash', () => {
+test('no .router at all still renders idle, not a crash', () => {
   const fx = repo();
   try {
-    const out = render(fx.dir, { cwd: fx.dir });
-    assert.equal(out.trim(), 'router');
+    const out = render(fx.dir, { cwd: fx.dir }, pinned());
+    assert.equal(out.trim(), 'router | router ▶ idle');
   } finally {
     fx.cleanup();
   }
