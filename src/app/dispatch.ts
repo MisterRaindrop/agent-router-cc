@@ -145,6 +145,27 @@ function uniqueStateChanges(...groups: ReadonlyArray<readonly string[] | undefin
 }
 
 /**
+ * Rebase entries the router itself writes between the two guard windows.
+ *
+ * The first window still guards the old entry and the verification window guards the new one;
+ * only the end-to-end comparison must not mistake the router's own handoff write for executor
+ * tampering.
+ */
+function baselineAfterRouterWrites(
+  original: Map<string, string>,
+  beforeVerify: Map<string, string>,
+  rels: readonly string[],
+): Map<string, string> {
+  const rebased = new Map(original);
+  for (const rel of rels) {
+    const fingerprint = beforeVerify.get(rel);
+    if (fingerprint === undefined) rebased.delete(rel);
+    else rebased.set(rel, fingerprint);
+  }
+  return rebased;
+}
+
+/**
  * Kept out of every rescue commit and every cleanliness check.
  *
  * `.router/` ships a `*` gitignore, so normally git never sees it -- but this flow commits on
@@ -517,7 +538,10 @@ async function runPreparedObserved(
     // `stateBeforeVerify` saw a stable file and let a changed identity pass. Keep the narrow
     // window as well -- it catches a record created in window one and forged in window two --
     // but make the original baseline part of the final decision.
-    const sinceDispatchStarted = classifyStateChanges(stateBefore, stateAfterVerify, id);
+    const originalAfterDelivery = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
+      join('tasks', id, 'DELIVERY.md'),
+    ]);
+    const sinceDispatchStarted = classifyStateChanges(originalAfterDelivery, stateAfterVerify, id);
     const reported = uniqueStateChanges(
       result.state_changes,
       sinceDispatchStarted.reported,
@@ -1010,17 +1034,20 @@ async function resumeInLock(
         });
         const stateAfterVerify = fingerprintState(paths, id);
         const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-        // Resume writes its own diff.patch between the original snapshot and the verification
-        // snapshot. Rebase only that known router write for the end-to-end comparison: the first
-        // window already guarded its old value, and the narrow verification window guards the
-        // new one. Every other entry, especially activity identities, stays anchored to the
-        // original baseline.
-        const originalWithOwnPatch = new Map(stateBefore);
-        const ownPatchRel = join('tasks', id, 'diff.patch');
-        const ownPatchFingerprint = stateBeforeVerify.get(ownPatchRel);
-        if (ownPatchFingerprint === undefined) originalWithOwnPatch.delete(ownPatchRel);
-        else originalWithOwnPatch.set(ownPatchRel, ownPatchFingerprint);
-        const sinceResumeStarted = classifyStateChanges(originalWithOwnPatch, stateAfterVerify, id);
+        // Resume writes its delivery report and diff.patch between the original snapshot and the
+        // verification snapshot. Rebase only those known router writes for the end-to-end
+        // comparison: the first window already guarded their old values, and the narrow
+        // verification window guards the new ones. Every other entry, especially activity
+        // identities, stays anchored to the original baseline.
+        const originalAfterRouterWrites = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
+          join('tasks', id, 'DELIVERY.md'),
+          join('tasks', id, 'diff.patch'),
+        ]);
+        const sinceResumeStarted = classifyStateChanges(
+          originalAfterRouterWrites,
+          stateAfterVerify,
+          id,
+        );
         const reported = uniqueStateChanges(
           result.state_changes,
           sinceResumeStarted.reported,
