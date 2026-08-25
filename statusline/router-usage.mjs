@@ -14,12 +14,24 @@
 //
 // NOTE: extraction mirrors src/core/usageExtract.ts (kept intentionally in sync; this
 // script runs standalone under Claude Code and cannot import the executable CLI bundle).
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const SPINNER_FRAMES = [...'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'];
 const MAX_STDIN_JSON_BYTES = 1024 * 1024;
+const MAX_STATUS_BYTES = 64 * 1024;
+const INNER_STATUSLINE_TIMEOUT_MS = 1000;
 
 async function loadActivityApi() {
   try {
@@ -97,9 +109,81 @@ function currentTimeMs() {
   return Date.now();
 }
 
-function statusDetails(statusPath, now) {
+function statusFilePath(statusPath, routerDir) {
+  if (typeof statusPath !== 'string' || statusPath.length === 0) return null;
+
+  const workspaceDir = dirname(resolve(routerDir));
+  const resolvedRouterDir = resolve(workspaceDir, '.router');
+  const tasksDir = join(resolvedRouterDir, 'tasks');
+  const candidate = resolve(workspaceDir, statusPath);
+  const taskDir = dirname(candidate);
+
+  if (
+    basename(candidate) !== 'status.json' ||
+    dirname(taskDir) !== tasksDir ||
+    basename(taskDir).length === 0
+  ) {
+    return null;
+  }
+
+  for (const directory of [resolvedRouterDir, tasksDir, taskDir]) {
+    const entry = lstatSync(directory);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) return null;
+  }
+
+  const entry = lstatSync(candidate);
+  if (entry.isSymbolicLink() || !entry.isFile() || entry.size > MAX_STATUS_BYTES) return null;
+  return { candidate, entry };
+}
+
+function readStatusFile(statusPath, routerDir) {
+  let file = null;
+  let fd = null;
   try {
-    const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+    file = statusFilePath(statusPath, routerDir);
+    if (file === null) return null;
+
+    fd = openSync(
+      file.candidate,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
+    const opened = fstatSync(fd);
+    if (
+      !opened.isFile() ||
+      opened.dev !== file.entry.dev ||
+      opened.ino !== file.entry.ino ||
+      opened.size > MAX_STATUS_BYTES
+    ) {
+      return null;
+    }
+
+    const bytes = Buffer.allocUnsafe(MAX_STATUS_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_STATUS_BYTES) return null;
+    return bytes.subarray(0, length).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* best-effort close on a display-only read */
+      }
+    }
+  }
+}
+
+function statusDetails(statusPath, routerDir, now) {
+  try {
+    const contents = readStatusFile(statusPath, routerDir);
+    if (contents === null) return '';
+    const status = JSON.parse(contents);
     if (!status || typeof status !== 'object') return '';
 
     const details = [];
@@ -138,7 +222,9 @@ function routerSegment(routerDir, now, activityApi) {
         return `${record.label} 已失联 ${elapsedAge(beatAgeMs)}`;
       }
       const details =
-        typeof record.status_path === 'string' ? statusDetails(record.status_path, now) : '';
+        typeof record.status_path === 'string'
+          ? statusDetails(record.status_path, routerDir, now)
+          : '';
       return `${spinner} ${record.label}${details}`;
     }).join(' | ')}`;
   } catch {
@@ -188,7 +274,13 @@ function innerOutput(raw) {
     // HUD line was replaced by the word "router" because their HUD exited before draining a
     // pipe it never wanted. dash does this where bash does not, which is why it only showed up
     // on Linux. spawnSync reports the error instead of raising it and preserves stdout.
-    const result = spawnSync(inner, { shell: true, input: raw, encoding: 'utf8' });
+    const result = spawnSync(inner, {
+      shell: true,
+      input: raw,
+      encoding: 'utf8',
+      timeout: INNER_STATUSLINE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
     const text = typeof result.stdout === 'string' ? result.stdout : '';
     return text.trim() === '' ? 'router' : text.replace(/\n+$/, '');
   } catch {
