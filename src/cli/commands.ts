@@ -383,6 +383,16 @@ function assertBranchIsWhatPassed(
       1,
     );
   };
+  if (!branchExists(paths.repoRoot, branch)) {
+    throw new CliError(
+      `${id}: branch ${branch} no longer exists` +
+        (result.merge_commit !== undefined
+          ? ` -- it was already landed as ${result.merge_commit.slice(0, 12)}`
+          : `; there is nothing to merge`) +
+        prior,
+      1,
+    );
+  }
   const tip = resolveCommit(paths.repoRoot, branch);
   if (result.verified_head !== undefined) {
     if (tip !== result.verified_head) {

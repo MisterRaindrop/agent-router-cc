@@ -510,3 +510,27 @@ test('land refuses a branch that has moved past the commit its verdict judged', 
     fx.cleanup(dir);
   }
 });
+
+// The new head-pinning check runs before the merge, so it is also the first thing to meet a
+// branch that is not there any more -- and `git rev-parse` on a missing ref throws a raw,
+// locale-dependent GitError with noise on stderr. Landing twice is the ordinary way to get here.
+test('landing an already-landed task says so instead of failing in git', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(JSON.parse(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+    fx.git(dir, ['checkout', '-q', 'main']);
+    assert.equal(router(dir, ['land', 'demo']).code, 0);
+
+    const again = router(dir, ['land', 'demo']);
+    assert.notEqual(again.code, 0);
+    assert.match(again.out, /no longer exists/, again.out);
+    assert.match(again.out, /already landed as [0-9a-f]{12}/, again.out);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
