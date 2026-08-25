@@ -11349,7 +11349,6 @@ function isOwnRunArtifact(rel, ownTaskId) {
   const top = parts[0] ?? "";
   if (top === "gate.lock" || top.startsWith("gate.lock.")) return true;
   if (top === "usage.json") return true;
-  if (top === "activity" && parts[1] === `${activityKey(`task:${ownTaskId}`)}.json`) return true;
   if (top === "symbols") return true;
   if (top !== "tasks" || parts[1] !== ownTaskId) return false;
   const leaf = parts[2] ?? "";
@@ -11423,6 +11422,20 @@ function stateDiff(before, after) {
   }
   for (const rel of before.keys()) if (!after.has(rel)) changes.push(`deleted ${rel}`);
   return changes.sort();
+}
+function classifyStateChanges(before, after, ownTaskId) {
+  const reported = [];
+  const fatal = [];
+  const ownActivity = join4("activity", `${activityKey(`task:${ownTaskId}`)}.json`);
+  for (const change of stateDiff(before, after)) {
+    const splitAt = change.indexOf(" ");
+    const kind = splitAt === -1 ? "" : change.slice(0, splitAt);
+    const rel = splitAt === -1 ? change : change.slice(splitAt + 1);
+    const top = rel.split(sep)[0] ?? "";
+    const nonFatal = top === "plans" || top === "activity" && kind !== "modified" && rel !== ownActivity;
+    (nonFatal ? reported : fatal).push(change);
+  }
+  return { reported, fatal };
 }
 
 // src/io/quota.ts
@@ -13124,7 +13137,8 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const conflict = detectContractConflict(parsed.finalMessage);
   if (conflict) exitClass = "contract_conflict";
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const stateChanges = classifyStateChanges(stateBefore, fingerprintState(paths, id), id);
+  const tampering = stateChanges.fatal;
   if (envelope !== void 0 && !envelope.stillOwned()) {
     tampering.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
   }
@@ -13172,6 +13186,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
     ...closeout !== void 0 ? { closeout } : {},
     ...groupSurvived ? { executor_group_survived: true } : {},
     ...tampering.length > 0 ? { state_tampering: tampering } : {},
+    ...stateChanges.reported.length > 0 ? { state_changes: stateChanges.reported } : {},
     ...prep.dirtySubmodules.length > 0 ? { dirty_submodules: prep.dirtySubmodules } : {},
     ...context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {},
     ...switches > 0 ? { executor_switches: switches } : {},
@@ -13213,12 +13228,19 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
       ...gateConfig !== void 0 ? { gate: gateConfig } : {},
       ...gateConfig !== void 0 ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
-    if (!(envelope?.stillOwned() ?? true)) {
-      duringVerify.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
+    const duringVerify = classifyStateChanges(
+      stateBeforeVerify,
+      fingerprintState(paths, id),
+      id
+    );
+    if (duringVerify.reported.length > 0) {
+      result2.state_changes = [...result2.state_changes ?? [], ...duringVerify.reported];
     }
-    if (duringVerify.length > 0) {
-      result2.state_tampering = [...result2.state_tampering ?? [], ...duringVerify];
+    if (!(envelope?.stillOwned() ?? true)) {
+      duringVerify.fatal.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
+    }
+    if (duringVerify.fatal.length > 0) {
+      result2.state_tampering = [...result2.state_tampering ?? [], ...duringVerify.fatal];
       result2.exit_class = "task_failed";
       delete result2.verifier;
       delete result2.verified_head;
@@ -13439,7 +13461,8 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
   const mismatch = newSession !== priorSession;
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const stateChanges = classifyStateChanges(stateBefore, fingerprintState(paths, id), id);
+  const tampering = stateChanges.fatal;
   if (!envelope.stillOwned()) {
     tampering.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
   }
@@ -13467,6 +13490,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
     ...mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {},
     ...o.groupSurvived ? { executor_group_survived: true } : {},
     ...tampering.length > 0 ? { state_tampering: tampering } : {},
+    ...stateChanges.reported.length > 0 ? { state_changes: stateChanges.reported } : {},
     ...modelMismatch ? { model_mismatch: true } : {},
     ...conflict ? { conflict: true } : {},
     ...parsed.commandsRun !== void 0 ? { commands_run: parsed.commandsRun } : {},
@@ -13514,12 +13538,19 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? [])
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
-        if (!envelope.stillOwned()) {
-          duringVerify.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
+        const duringVerify = classifyStateChanges(
+          stateBeforeVerify,
+          fingerprintState(paths, id),
+          id
+        );
+        if (duringVerify.reported.length > 0) {
+          result2.state_changes = [...result2.state_changes ?? [], ...duringVerify.reported];
         }
-        if (duringVerify.length > 0) {
-          result2.state_tampering = [...result2.state_tampering ?? [], ...duringVerify];
+        if (!envelope.stillOwned()) {
+          duringVerify.fatal.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
+        }
+        if (duringVerify.fatal.length > 0) {
+          result2.state_tampering = [...result2.state_tampering ?? [], ...duringVerify.fatal];
           result2.exit_class = "task_failed";
           delete result2.verifier;
           delete result2.verified_head;
