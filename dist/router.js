@@ -14366,37 +14366,37 @@ function buildUsageReport(paths, nowIso, opts = {}) {
   const byPlan = /* @__PURE__ */ new Map();
   for (const row of rows) {
     if (row.planId === null) continue;
-    const plan = byPlan.get(row.planId) ?? { planId: row.planId, executorRows: [], orchestrator: null };
+    const plan2 = byPlan.get(row.planId) ?? { planId: row.planId, executorRows: [], orchestrator: null };
     if (row.role === "orchestrator") {
-      if (plan.orchestrator === null) plan.orchestrator = row;
+      if (plan2.orchestrator === null) plan2.orchestrator = row;
     } else {
-      plan.executorRows.push(row);
+      plan2.executorRows.push(row);
     }
-    byPlan.set(row.planId, plan);
+    byPlan.set(row.planId, plan2);
   }
-  const plans2 = [...byPlan.values()].map((plan) => {
+  const plans2 = [...byPlan.values()].map((plan2) => {
     let executorCostUsd = 0;
     let savedUsd = 0;
     let wallSecondsExecutors = 0;
     let costComplete2 = true;
-    for (const row of plan.executorRows) {
+    for (const row of plan2.executorRows) {
       if (row.costUsd === null) costComplete2 = false;
       else executorCostUsd += row.costUsd;
       if (row.savingsUsd === null) costComplete2 = false;
       else savedUsd += row.savingsUsd;
       wallSecondsExecutors += row.wallSeconds;
     }
-    const orchestratorCostUsd = plan.orchestrator?.costUsd ?? 0;
+    const orchestratorCostUsd = plan2.orchestrator?.costUsd ?? 0;
     const actualTotalUsd = executorCostUsd + orchestratorCostUsd;
     return {
-      ...plan,
+      ...plan2,
       executorCostUsd,
       orchestratorCostUsd,
       actualTotalUsd,
       savedUsd,
       allBaselineUsd: actualTotalUsd + savedUsd,
       wallSecondsExecutors,
-      orchestratorMeasured: plan.orchestrator !== null,
+      orchestratorMeasured: plan2.orchestrator !== null,
       costComplete: costComplete2
     };
   });
@@ -14625,30 +14625,30 @@ No dispatches recorded yet.`;
   if (report.plans.length > 0) {
     lines.push(bar);
     lines.push("By plan:");
-    for (const plan of report.plans) {
-      lines.push(`  Plan ${plan.planId}`);
-      for (const row of plan.executorRows) {
+    for (const plan2 of report.plans) {
+      lines.push(`  Plan ${plan2.planId}`);
+      for (const row of plan2.executorRows) {
         lines.push(
           `    ${row.taskId} \xB7 ${row.model ?? "unknown model"} \xB7 in ${fmtTokens(row.tokensIn)} \xB7 out ${fmtTokens(row.tokensOut)} \xB7 ${fmtCost(row.costUsd, row.costSource)} \xB7 wall ${fmtWall(row.wallSeconds)}`
         );
       }
-      const executorTokens = plan.executorRows.reduce((sum, row) => sum + row.tokensTotal, 0);
+      const executorTokens = plan2.executorRows.reduce((sum, row) => sum + row.tokensTotal, 0);
       lines.push(
-        `    executors: ${plan.executorRows.length} \xB7 ${fmtTokens(executorTokens)} \xB7 ${fmtAggregateCost(plan.executorCostUsd, plan.executorRows, plan.costComplete)}`
+        `    executors: ${plan2.executorRows.length} \xB7 ${fmtTokens(executorTokens)} \xB7 ${fmtAggregateCost(plan2.executorCostUsd, plan2.executorRows, plan2.costComplete)}`
       );
-      if (plan.orchestrator !== null) {
+      if (plan2.orchestrator !== null) {
         lines.push(
-          `    orchestrator (${report.baselineModel}, main, approx): ${fmtTokens(plan.orchestrator.tokensTotal)} \xB7 ${fmtCost(plan.orchestrator.costUsd, plan.orchestrator.costSource)}`
+          `    orchestrator (${report.baselineModel}, main, approx): ${fmtTokens(plan2.orchestrator.tokensTotal)} \xB7 ${fmtCost(plan2.orchestrator.costUsd, plan2.orchestrator.costSource)}`
         );
       } else {
         lines.push("    orchestrator (main model): not measured \u2014 comparison is execution-side only");
       }
-      const actualRows = plan.orchestrator === null ? plan.executorRows : [...plan.executorRows, plan.orchestrator];
-      const actualCostComplete = plan.costComplete && plan.orchestrator?.costUsd !== null;
+      const actualRows = plan2.orchestrator === null ? plan2.executorRows : [...plan2.executorRows, plan2.orchestrator];
+      const actualCostComplete = plan2.costComplete && plan2.orchestrator?.costUsd !== null;
       lines.push(
-        `    actual total: ${fmtAggregateCost(plan.actualTotalUsd, actualRows, actualCostComplete)} ; if all on ${report.baselineModel} (est): ~$${plan.allBaselineUsd.toFixed(2)}${plan.costComplete ? "" : "+"} ; saved (est): ~$${plan.savedUsd.toFixed(2)}${plan.costComplete ? "" : "+"}`
+        `    actual total: ${fmtAggregateCost(plan2.actualTotalUsd, actualRows, actualCostComplete)} ; if all on ${report.baselineModel} (est): ~$${plan2.allBaselineUsd.toFixed(2)}${plan2.costComplete ? "" : "+"} ; saved (est): ~$${plan2.savedUsd.toFixed(2)}${plan2.costComplete ? "" : "+"}`
       );
-      lines.push(`    execution wall: ${fmtWall(plan.wallSecondsExecutors)}`);
+      lines.push(`    execution wall: ${fmtWall(plan2.wallSecondsExecutors)}`);
     }
   }
   return lines.join("\n");
@@ -14704,6 +14704,7 @@ function renderRouting(report) {
 
 // src/core/statuslineSetup.ts
 var MARKER = "router-usage.mjs";
+var REFRESH_INTERVAL_SECONDS = 2;
 var VERSIONED_PLUGIN_SCRIPT = /^(?<cache>.*[/\\]plugins[/\\]cache[/\\][^/\\]+[/\\][^/\\]+)[/\\][^/\\]+[/\\](?<tail>statusline[/\\]router-usage\.mjs)$/;
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -14715,27 +14716,32 @@ function statusLineInvocation(statuslinePath) {
   const pipeline = `d=$(ls -d ${shQuote(cache2)}/*/ 2>/dev/null | awk -F/ '{ print $(NF-1) "	" $0 }' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 | cut -f2-); exec node "\${d}${tail.replaceAll("\\", "/")}"`;
   return `sh -c ${shQuote(pipeline)}`;
 }
-function planStatusLine(existingCommand, statuslinePath) {
+function planStatusLine(existingCommand, statuslinePath, existingSettings) {
   const wrapped = statusLineInvocation(statuslinePath);
   const current = existingCommand?.trim();
   if (current === void 0 || current === "") {
-    return { command: wrapped, action: "created", inner: null };
+    return plan(wrapped, "created", null);
   }
   if (current.includes(MARKER)) {
     if (current === wrapped || current.endsWith(` ${wrapped}`)) {
-      return { command: current, action: "already-configured", inner: null };
+      const managedFieldsMatch = existingSettings?.type === "command" && existingSettings.refreshInterval === REFRESH_INTERVAL_SECONDS;
+      return plan(current, managedFieldsMatch ? "already-configured" : "updated", null);
     }
     const inner = extractInner(current);
-    return {
-      command: inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
-      action: "repointed",
+    return plan(
+      inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
+      "repointed",
       inner
-    };
+    );
   }
+  return plan(`ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`, "chained", current);
+}
+function plan(command, action, inner) {
   return {
-    command: `ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`,
-    action: "chained",
-    inner: current
+    command,
+    statusLine: { type: "command", command, refreshInterval: REFRESH_INTERVAL_SECONDS },
+    action,
+    inner
   };
 }
 function extractInner(command) {
@@ -15485,12 +15491,13 @@ var setupStatusline = (ctx) => {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }
   }
-  const current = settings.statusLine;
+  const rawCurrent = settings.statusLine;
+  const current = rawCurrent !== null && typeof rawCurrent === "object" && !Array.isArray(rawCurrent) ? rawCurrent : void 0;
   const existingCmd = typeof current?.command === "string" ? current.command : void 0;
-  const plan = planStatusLine(existingCmd, statuslinePath);
-  const changed = plan.action !== "already-configured";
+  const plan2 = planStatusLine(existingCmd, statuslinePath, current);
+  const changed = plan2.action !== "already-configured";
   if (changed && !dryRun) {
-    settings.statusLine = { type: "command", command: plan.command };
+    settings.statusLine = { ...current ?? {}, ...plan2.statusLine };
     writeJsonAtomic(settingsPath, settings);
   }
   const missing = !existsSync11(statuslinePath);
@@ -15498,25 +15505,30 @@ var setupStatusline = (ctx) => {
     ctx.json,
     {
       ok: true,
-      action: plan.action,
+      action: plan2.action,
       settings: settingsPath,
       statusline: statuslinePath,
-      command: plan.command,
-      chained: plan.inner,
+      command: plan2.command,
+      chained: plan2.inner,
       dry_run: dryRun,
       statusline_exists: !missing
     },
     () => {
-      const verb = { created: "create", chained: "chain", repointed: "repoint" };
-      const head = plan.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${verb[plan.action] ?? plan.action} the statusLine in ${settingsPath}` : `${plan.action} statusLine in ${settingsPath}`;
-      const chain = plan.inner ? `
-  chained your existing statusline: ${plan.inner}` : "";
-      const why = plan.action === "repointed" ? "\n  the previous command pointed at one specific plugin version, which would keep\n  running that version after an upgrade; it now resolves the newest at startup" : "";
+      const verb = {
+        created: "create",
+        chained: "chain",
+        repointed: "repoint",
+        updated: "update"
+      };
+      const head = plan2.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${verb[plan2.action] ?? plan2.action} the statusLine in ${settingsPath}` : `${plan2.action} statusLine in ${settingsPath}`;
+      const chain = plan2.inner ? `
+  chained your existing statusline: ${plan2.inner}` : "";
+      const why = plan2.action === "repointed" ? "\n  the previous command pointed at one specific plugin version, which would keep\n  running that version after an upgrade; it now resolves the newest at startup" : "";
       const warn = missing ? `
   WARNING: ${statuslinePath} not found (pass --statusline <path>)` : "";
       const note = changed && !dryRun ? "\n  restart Claude Code (or reload) for it to take effect" : "";
       return `${head}
-  command: ${plan.command}${why}${chain}${warn}${note}`;
+  command: ${plan2.command}${why}${chain}${warn}${note}`;
     }
   );
   return 0;

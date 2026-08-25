@@ -7,13 +7,26 @@
 // PURE: string-building only; the cli layer does the settings.json read/write.
 
 const MARKER = 'router-usage.mjs';
+const REFRESH_INTERVAL_SECONDS = 2 as const;
 
-export type StatusLineAction = 'created' | 'chained' | 'already-configured' | 'repointed';
+export type StatusLineAction = 'created' | 'chained' | 'already-configured' | 'repointed' | 'updated';
+
+export interface StatusLineSettings {
+  type: 'command';
+  command: string;
+  refreshInterval: typeof REFRESH_INTERVAL_SECONDS;
+}
 
 export interface StatusLinePlan {
   command: string; // the statusLine.command to write
+  statusLine: StatusLineSettings; // all fields owned by setup-statusline
   action: StatusLineAction;
   inner: string | null; // the pre-existing command we chained, if any
+}
+
+interface ExistingStatusLineSettings {
+  type?: unknown;
+  refreshInterval?: unknown;
 }
 
 /**
@@ -71,28 +84,37 @@ export function statusLineInvocation(statuslinePath: string): string {
 export function planStatusLine(
   existingCommand: string | undefined,
   statuslinePath: string,
+  existingSettings?: ExistingStatusLineSettings,
 ): StatusLinePlan {
   const wrapped = statusLineInvocation(statuslinePath);
   const current = existingCommand?.trim();
   if (current === undefined || current === '') {
-    return { command: wrapped, action: 'created', inner: null };
+    return plan(wrapped, 'created', null);
   }
   if (current.includes(MARKER)) {
     if (current === wrapped || current.endsWith(` ${wrapped}`)) {
-      return { command: current, action: 'already-configured', inner: null };
+      const managedFieldsMatch =
+        existingSettings?.type === 'command' &&
+        existingSettings.refreshInterval === REFRESH_INTERVAL_SECONDS;
+      return plan(current, managedFieldsMatch ? 'already-configured' : 'updated', null);
     }
     // Ours, but not what we would write now. Keep whatever it chained.
     const inner = extractInner(current);
-    return {
-      command: inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
-      action: 'repointed',
+    return plan(
+      inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
+      'repointed',
       inner,
-    };
+    );
   }
+  return plan(`ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`, 'chained', current);
+}
+
+function plan(command: string, action: StatusLineAction, inner: string | null): StatusLinePlan {
   return {
-    command: `ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`,
-    action: 'chained',
-    inner: current,
+    command,
+    statusLine: { type: 'command', command, refreshInterval: REFRESH_INTERVAL_SECONDS },
+    action,
+    inner,
   };
 }
 

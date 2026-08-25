@@ -12,6 +12,11 @@ test('created: no existing statusline -> bare wrapper command', () => {
   assert.equal(plan.action, 'created');
   assert.equal(plan.inner, null);
   assert.equal(plan.command, `node '${P}'`);
+  assert.deepEqual(plan.statusLine, {
+    type: 'command',
+    command: `node '${P}'`,
+    refreshInterval: 2,
+  });
 });
 
 test('empty existing command is treated as created', () => {
@@ -32,9 +37,32 @@ test('chaining shell-escapes single quotes in the existing command', () => {
 
 test('already-configured: a command that already runs our wrapper is left untouched', () => {
   const existing = `ROUTER_INNER_STATUSLINE='npx ccusage' node '${P}'`;
-  const plan = planStatusLine(existing, P);
+  const plan = planStatusLine(existing, P, { type: 'command', refreshInterval: 2 });
   assert.equal(plan.action, 'already-configured');
   assert.equal(plan.command, existing); // idempotent: never double-wrapped
+});
+
+test('updated: a current command missing refreshInterval is repaired', () => {
+  const current = `node '${P}'`;
+  const plan = planStatusLine(current, P, { type: 'command' });
+  assert.equal(plan.action, 'updated');
+  assert.deepEqual(plan.statusLine, {
+    type: 'command',
+    command: current,
+    refreshInterval: 2,
+  });
+});
+
+test('updated: a nonstandard refreshInterval is corrected to 2', () => {
+  const current = `node '${P}'`;
+  const plan = planStatusLine(current, P, { type: 'command', refreshInterval: 10 });
+  assert.equal(plan.action, 'updated');
+  assert.equal(plan.statusLine.refreshInterval, 2);
+});
+
+test('updated: all three managed fields must match for an idempotent plan', () => {
+  const current = `node '${P}'`;
+  assert.equal(planStatusLine(current, P, { type: 'prompt', refreshInterval: 2 }).action, 'updated');
 });
 
 // --- Surviving a plugin upgrade ------------------------------------------------------------
@@ -99,14 +127,16 @@ test('repointing survives a quote in the chained command', () => {
 // not, so re-running setup is free rather than churning settings.json.
 test('already-configured: the command we would write now is left untouched', () => {
   const current = statusLineInvocation(INSTALLED);
-  assert.deepEqual(planStatusLine(current, INSTALLED), {
+  assert.deepEqual(planStatusLine(current, INSTALLED, { type: 'command', refreshInterval: 2 }), {
     command: current,
+    statusLine: { type: 'command', command: current, refreshInterval: 2 },
     action: 'already-configured',
     inner: null,
   });
   const chained = `ROUTER_INNER_STATUSLINE='my-hud' ${current}`;
-  assert.deepEqual(planStatusLine(chained, INSTALLED), {
+  assert.deepEqual(planStatusLine(chained, INSTALLED, { type: 'command', refreshInterval: 2 }), {
     command: chained,
+    statusLine: { type: 'command', command: chained, refreshInterval: 2 },
     action: 'already-configured',
     inner: null,
   });
