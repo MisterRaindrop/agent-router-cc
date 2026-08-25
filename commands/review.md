@@ -46,12 +46,35 @@ codex is unavailable or out of quota, fall to the next same-strength entry (e.g.
 `claude ... --model <model> --effort <effort>`) -- keep the strength, don't drop to a weak
 model for adversarial review.
 
-**Run the reviewer in the background**, **redirecting its full output to a file** (e.g.
-`codex exec ... > .router/plans/<plan_id>/review-<lens>.md 2>&1`), and tell the user (e.g. "code
-review running in the background (<model>, effort <effort>); I'll surface the critique
-when it lands") -- reviews take minutes and running detached avoids the interactive
-timeout. `max` effort is opt-in, used only when the user explicitly asks for the deepest
-pass (still backgrounded).
+**Run each reviewer in the background through `router supervise`**, so a review that takes
+minutes is visible while it runs instead of being a silent process:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" supervise \
+  --label review:<lens> --log .router/plans/<plan_id>/review-<lens>.md \
+  -- codex exec -m <model> -c model_reasoning_effort=<effort> ... < /dev/null
+```
+
+`supervise` publishes an activity record with a cross-process heartbeat (the statusline then
+shows `review:<lens>` with a spinner while it is alive, and `已失联` if it dies), writes the
+child's stdout **and stderr** to `--log` byte-for-byte as `> file 2>&1` would, and passes the
+child's exit code through unchanged. It deliberately does **not** take `gate.lock`, so a review
+and a dispatch can run at the same time and two lenses never queue behind each other.
+
+`supervise` landed in 0.12.0. If the installed plugin is older -- run it once with `--help` and
+look, do not assume -- fall back to plain redirection (`codex exec ... > <file> 2>&1 < /dev/null`)
+for this round and say the review is running without a visible liveness line. Silently getting
+`unknown command 'supervise'` and reporting "review started" is the exact failure shape this
+whole plan exists to remove.
+
+Then tell the user (e.g. "code review running in the background (<model>, effort <effort>);
+I'll surface the critique when it lands"). `max` effort is opt-in, used only when the user
+explicitly asks for the deepest pass (still backgrounded).
+
+**Always redirect stdin from `/dev/null`.** Measured: an architect lens sat for 20 minutes and
+produced 39 bytes, ending in `Reading additional input from stdin...` -- it was waiting on a
+stdin that a background call never closes. From the outside that is indistinguishable from a
+slow review, so you wait out the whole budget and get nothing.
 
 **Give each reviewer its OWN background call.** Never `( reviewer_a & reviewer_b ) &` or any
 other shape that puts both in one process group: killing or timing out that group kills both,
@@ -85,6 +108,14 @@ does not own. Two independent lenses hit this at the same point, on the same fix
 report survived. If it happens: **say the review produced no verdicts** rather than presenting
 the passing tests it happened to run as confirmation, and either ask the reviewer for reproduction
 STEPS that you execute yourself, or switch to a reviewer not behind that filter.
+
+**On THIS codebase, treat the architect lens as expected to be blocked, not as bad luck.** It was
+blocked in three consecutive review rounds (packages A, B and C of the executor-observability
+plan), every time at the moment it emitted a fixture that spawns a detached child, kills a process
+group, or forges a state file -- which is what router's own subject matter makes any honest
+reproduction look like. Plan for one lens plus your own mutation testing, and **record in the
+adjudication that the second lens produced no conclusion**. "The architect lens raised nothing"
+is a false statement about a review that was cut off before it could speak.
 
 **`codex exec resume` is not `codex exec`.** It rejects `-C` outright and has no `-s`; pass the
 sandbox as `-c sandbox_mode=read-only` instead. `src/app/codexLauncher.ts` documents this; check
