@@ -9996,6 +9996,7 @@ function routerPaths(routerDir) {
     repoRoot: dirname2(root),
     metrics: join2(root, "metrics.jsonl"),
     tasksDir,
+    activityDir: join2(root, "activity"),
     worktreesDir: join2(root, "worktrees"),
     symbolsDir: join2(root, "symbols"),
     symbolLatest: join2(root, "symbols", "latest"),
@@ -10016,6 +10017,7 @@ function routerPaths(routerDir) {
     taskContext: (id) => join2(taskDir(id), "TASK_CONTEXT.md"),
     runsDir: (id) => join2(taskDir(id), "runs"),
     heartbeat: (id) => join2(taskDir(id), "heartbeat"),
+    activity: (key) => join2(root, "activity", `${key}.json`),
     runStatus: (id) => join2(taskDir(id), "status.json"),
     resultJson: (id) => join2(taskDir(id), "result.json"),
     diffPatch: (id) => join2(taskDir(id), "diff.patch"),
@@ -10252,19 +10254,34 @@ import { spawn } from "node:child_process";
 var DEFAULT_BEAT_MS = 15e3;
 var CHILD_SOURCE = `
 const fs = require('node:fs');
-const [lockPath, token, intervalRaw, parentRaw] = process.argv.slice(1);
+const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
+const indent = Number(indentRaw);
 const interval = Number(intervalRaw);
 const parentPid = Number(parentRaw);
+let guard;
+try { guard = JSON.parse(guardRaw); } catch { process.exit(0); }
 function beat() {
+  if (process.ppid !== parentPid) process.exit(0);
   try { process.kill(parentPid, 0); } catch { process.exit(0); }
   let fd;
-  try { fd = fs.openSync(lockPath, 'r+'); } catch { process.exit(0); }
+  try { fd = fs.openSync(filePath, 'r+'); } catch { process.exit(0); }
   try {
     let stored;
     try { stored = JSON.parse(fs.readFileSync(fd, 'utf8')); } catch { process.exit(0); }
-    if (stored === null || typeof stored !== 'object' || stored.ownerToken !== token) process.exit(0);
-    stored.beatAtMs = Date.now();
-    const data = Buffer.from(JSON.stringify(stored) + '\\n');
+    if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) process.exit(0);
+    for (const [key, value] of Object.entries(guard)) {
+      if (!Object.prototype.hasOwnProperty.call(stored, key) || stored[key] !== value) process.exit(0);
+    }
+    if (pauseReady) {
+      try {
+        fs.writeFileSync(pauseReady, 'ready');
+        while (!fs.existsSync(pauseResume)) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+      } catch { process.exit(0); }
+    }
+    stored[field] = valueFormat === 'iso' ? new Date().toISOString() : Date.now();
+    const data = Buffer.from(JSON.stringify(stored, null, indent) + '\\n');
     let offset = 0;
     while (offset < data.length) {
       const written = fs.writeSync(fd, data, offset, data.length - offset, offset);
@@ -10272,6 +10289,9 @@ function beat() {
       offset += written;
     }
     fs.ftruncateSync(fd, data.length);
+    if (pauseDone) {
+      try { fs.writeFileSync(pauseDone, 'done'); } catch { process.exit(0); }
+    }
   } finally {
     try { fs.closeSync(fd); } catch {}
   }
@@ -10279,10 +10299,24 @@ function beat() {
 beat();
 setInterval(beat, interval);
 `;
-function startHeartbeat(lockPath, ownerToken2, intervalMs = DEFAULT_BEAT_MS) {
+function startJsonHeartbeat(filePath, options) {
+  const intervalMs = options.intervalMs ?? DEFAULT_BEAT_MS;
   const child = spawn(
     process.execPath,
-    ["-e", CHILD_SOURCE, lockPath, ownerToken2, String(intervalMs), String(process.pid)],
+    [
+      "-e",
+      CHILD_SOURCE,
+      filePath,
+      options.field,
+      options.valueFormat,
+      JSON.stringify(options.guard),
+      String(options.indent ?? 0),
+      String(intervalMs),
+      String(process.pid),
+      options.testPauseAfterRead?.readyPath ?? "",
+      options.testPauseAfterRead?.resumePath ?? "",
+      options.testPauseAfterRead?.donePath ?? ""
+    ],
     { detached: true, stdio: "ignore" }
   );
   child.unref();
@@ -10303,6 +10337,14 @@ function startHeartbeat(lockPath, ownerToken2, intervalMs = DEFAULT_BEAT_MS) {
       return pid;
     }
   };
+}
+function startHeartbeat(lockPath, ownerToken2, intervalMs = DEFAULT_BEAT_MS) {
+  return startJsonHeartbeat(lockPath, {
+    field: "beatAtMs",
+    valueFormat: "milliseconds",
+    guard: { ownerToken: ownerToken2 },
+    intervalMs
+  });
 }
 
 // src/io/signals.ts
