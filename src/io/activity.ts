@@ -1,7 +1,8 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ActivityOutcome, ActivityRecord } from '../domain/types.ts';
 import { writeJsonAtomic } from './atomicWrite.ts';
@@ -13,6 +14,7 @@ import {
 import { DEFAULT_STALE_MS } from './lock.ts';
 
 const OUTCOMES = new Set<ActivityOutcome>(['ok', 'failed', 'timed_out', 'stalled']);
+const MAX_PID = 0x7fff_ffff;
 
 export type ActivityState = 'idle' | 'running' | 'disconnected';
 
@@ -30,11 +32,16 @@ function finiteDate(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
 }
 
+function validPid(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) > 0 && (value as number) <= MAX_PID;
+}
+
 function parseActivity(value: unknown): ActivityRecord | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const object = value as Record<string, unknown>;
   if (typeof object.label !== 'string' || object.label.length === 0) return null;
-  if (!Number.isInteger(object.pid) || (object.pid as number) <= 0) return null;
+  if (typeof object.owner_token !== 'string' || object.owner_token.length === 0) return null;
+  if (!validPid(object.pid)) return null;
   if (!finiteDate(object.started_at) || !finiteDate(object.beat_at)) return null;
   if (object.ended_at !== undefined && !finiteDate(object.ended_at)) return null;
   if (object.outcome !== undefined && !OUTCOMES.has(object.outcome as ActivityOutcome)) return null;
@@ -42,6 +49,7 @@ function parseActivity(value: unknown): ActivityRecord | null {
 
   const record: ActivityRecord = {
     label: object.label,
+    owner_token: object.owner_token,
     pid: object.pid as number,
     started_at: object.started_at,
     beat_at: object.beat_at,
@@ -55,18 +63,33 @@ function parseActivity(value: unknown): ActivityRecord | null {
 /** Deterministically turn a display label into one path-component-safe key. */
 export function activityKey(label: string): string {
   if (label.length === 0) throw new Error('activity label must not be empty');
-  // encodeURIComponent leaves !'()* unescaped; encode those too so the result is a conservative
-  // portable filename made only of URI unreserved characters and percent escapes.
-  return encodeURIComponent(label).replace(/[!'()*]/gu, (char) =>
-    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
+  // A fixed-size lowercase digest is portable under case-insensitive filesystems and keeps even
+  // arbitrarily long display labels comfortably below per-component filename limits.
+  return createHash('sha256').update(label).digest('hex');
 }
 
-/** Atomically install a complete activity document. Throws on a schema-invalid value. */
-export function writeActivity(path: string, activity: ActivityRecord): void {
-  const parsed = parseActivity(activity);
+export type ActivityInput = Omit<ActivityRecord, 'owner_token'> | ActivityRecord;
+
+/**
+ * Atomically install a complete live activity document and return its ownership-bearing record.
+ * Writing an ended record removes the display-only file instead of retaining unbounded history.
+ */
+export function writeActivity(path: string, activity: ActivityInput): ActivityRecord {
+  const candidate = Object.prototype.hasOwnProperty.call(activity, 'owner_token')
+    ? activity
+    : { ...activity, owner_token: randomUUID() };
+  const parsed = parseActivity(candidate);
   if (parsed === null) throw new Error(`cannot write invalid activity to ${path}`);
+  if (parsed.ended_at !== undefined) {
+    try {
+      unlinkSync(path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    return parsed;
+  }
   writeJsonAtomic(path, parsed);
+  return parsed;
 }
 
 /** Read one activity document; missing, torn, or schema-invalid contents are ignored. */
@@ -84,7 +107,7 @@ export function readActivity(path: string): ActivityRecord | null {
  * One corrupt file never hides its siblings. Atomic-write temp files and non-JSON directory
  * entries are ignored, and stable ordering keeps statusline rendering deterministic.
  */
-export function readActivities(directory: string): ActivityFile[] {
+function scanActivities(directory: string, includeEnded: boolean): ActivityFile[] {
   let entries;
   try {
     entries = readdirSync(directory, { withFileTypes: true });
@@ -96,7 +119,11 @@ export function readActivities(directory: string): ActivityFile[] {
     if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
     const path = join(directory, entry.name);
     const record = readActivity(path);
-    if (record !== null) activities.push({ path, record });
+    // Filter legacy ended records before sorting so old history cannot inflate every render's
+    // O(n log n) work. New ended records are removed by writeActivity above.
+    if (record !== null && (includeEnded || record.ended_at === undefined)) {
+      activities.push({ path, record });
+    }
   }
   return activities.sort(
     (left, right) =>
@@ -105,14 +132,18 @@ export function readActivities(directory: string): ActivityFile[] {
   );
 }
 
+export function readActivities(directory: string): ActivityFile[] {
+  return scanActivities(directory, true);
+}
+
 function pidIsAlive(pid: number): boolean {
+  if (!validPid(pid)) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    // EPERM still proves that a process occupies the pid. Only ESRCH proves it disappeared;
-    // other errors fail closed as alive rather than manufacturing a disconnection.
-    return (err as NodeJS.ErrnoException).code !== 'ESRCH';
+    // EPERM still proves that a process occupies the pid. Parameter and all other errors do not.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
@@ -134,7 +165,7 @@ export function observeActivities(
   staleMs: number = DEFAULT_STALE_MS,
 ): ObservedActivity[] {
   const observed: ObservedActivity[] = [];
-  for (const activity of readActivities(directory)) {
+  for (const activity of scanActivities(directory, false)) {
     const state = activityState(activity.record, nowMs, staleMs);
     if (state === 'idle') continue;
     observed.push({
@@ -155,11 +186,7 @@ export function startActivityHeartbeat(
   return startJsonHeartbeat(path, {
     field: 'beat_at',
     valueFormat: 'iso',
-    guard: {
-      label: activity.label,
-      pid: activity.pid,
-      started_at: activity.started_at,
-    },
+    guard: { owner_token: activity.owner_token },
     // writeJsonAtomic pretty-prints with two spaces. Matching that shape makes a heartbeat only
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,

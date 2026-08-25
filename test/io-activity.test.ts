@@ -22,6 +22,7 @@ import {
   observeActivities,
   readActivities,
   readActivity,
+  startActivityHeartbeat,
   writeActivity,
 } from '../src/io/activity.ts';
 import { DEFAULT_STALE_MS } from '../src/io/lock.ts';
@@ -41,6 +42,7 @@ function record(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
   const now = new Date().toISOString();
   return {
     label: 'task:p1',
+    owner_token: 'test-owner',
     pid: process.pid,
     started_at: now,
     beat_at: now,
@@ -57,12 +59,15 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<bo
   return predicate();
 }
 
-test('the paths getter stores a path-safe, deterministic key under .router/activity', () => {
+test('the paths getter uses a fixed lowercase digest under .router/activity', () => {
   const fx = fixture();
   try {
     const paths = routerPaths(join(fx.root, '.router'));
     const key = activityKey('../review:architect\\senior?');
-    assert.doesNotMatch(key, /[/\\]/u);
+    assert.match(key, /^[a-f0-9]{64}$/u);
+    assert.equal(activityKey('../review:architect\\senior?'), key);
+    assert.notEqual(activityKey('Review'), activityKey('review'));
+    assert.equal(activityKey('x'.repeat(256)).length, 64);
     assert.equal(paths.activityDir, fx.activityDir);
     assert.equal(paths.activity(key), join(fx.activityDir, `${key}.json`));
     assert.equal(dirname(paths.activity(key)), fx.activityDir);
@@ -71,14 +76,12 @@ test('the paths getter stores a path-safe, deterministic key under .router/activ
   }
 });
 
-test('activity storage round-trips the frozen schema and ignores a truncated sibling', () => {
+test('activity storage round-trips the schema, removes ended records, and ignores a truncated sibling', () => {
   const fx = fixture();
   try {
     const paths = routerPaths(join(fx.root, '.router'));
     const complete = record({
       status_path: paths.runStatus('p1'),
-      ended_at: '2026-08-25T01:02:03.000Z',
-      outcome: 'ok',
     });
     const completePath = paths.activity(activityKey(complete.label));
     writeActivity(completePath, complete);
@@ -87,6 +90,13 @@ test('activity storage round-trips the frozen schema and ignores a truncated sib
     assert.deepEqual(readActivity(completePath), complete);
     assert.deepEqual(readActivities(fx.activityDir), [{ path: completePath, record: complete }]);
     assert.equal(readActivity(join(fx.activityDir, 'missing.json')), null);
+
+    writeActivity(completePath, {
+      ...complete,
+      ended_at: '2026-08-25T01:02:03.000Z',
+      outcome: 'ok',
+    });
+    assert.equal(existsSync(completePath), false, 'ended activity was retained as unbounded history');
   } finally {
     fx.cleanup();
   }
@@ -103,6 +113,47 @@ test('the three-state rule requires both a live pid and a fresh heartbeat', () =
     'disconnected',
   );
   assert.equal(activityState({ ...fresh, pid: 2_147_483_647 }, now), 'disconnected');
+  assert.equal(activityState({ ...fresh, pid: 2_147_483_648 }, now), 'disconnected');
+});
+
+test('a replacement with the same label, pid, and millisecond gets a new heartbeat authority', async () => {
+  const fx = fixture();
+  const path = join(fx.activityDir, 'replaced.json');
+  const startedAt = '2026-08-25T00:00:00.000Z';
+  const initialBeat = '2000-01-01T00:00:00.000Z';
+  try {
+    const first = writeActivity(path, {
+      label: 'review:architect',
+      pid: process.pid,
+      started_at: startedAt,
+      beat_at: initialBeat,
+    });
+    const beater = startActivityHeartbeat(path, first, 40);
+    try {
+      assert.ok(
+        await waitUntil(() => readActivity(path)?.beat_at !== initialBeat),
+        'the original activity never beat',
+      );
+      const replacement = writeActivity(path, {
+        label: first.label,
+        pid: first.pid,
+        started_at: first.started_at,
+        beat_at: initialBeat,
+      });
+      assert.notEqual(replacement.owner_token, first.owner_token);
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(
+        readActivity(path)?.beat_at,
+        initialBeat,
+        'the old heartbeat refreshed a same-millisecond replacement',
+      );
+    } finally {
+      beater.stop();
+    }
+  } finally {
+    fx.cleanup();
+  }
 });
 
 test('owner stays running while spawnSync blocks it, then becomes disconnected after SIGKILL', async () => {
@@ -123,8 +174,7 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
         `const { spawnSync } = await import('node:child_process');\n` +
           `const { writeActivity, startActivityHeartbeat } = await import(${JSON.stringify(moduleUrl)});\n` +
           `const started_at = new Date().toISOString();\n` +
-          `const activity = { label: 'task:blocked', pid: process.pid, started_at, beat_at: started_at };\n` +
-          `writeActivity(${JSON.stringify(path)}, activity);\n` +
+          `const activity = writeActivity(${JSON.stringify(path)}, { label: 'task:blocked', pid: process.pid, started_at, beat_at: started_at });\n` +
           `const heartbeat = startActivityHeartbeat(${JSON.stringify(path)}, activity, 40);\n` +
           `console.log(JSON.stringify({ started_at, heartbeat_pid: heartbeat.pid }));\n` +
           `spawnSync(process.execPath, ['-e', ${JSON.stringify(blockerSource)}]);\n` +
@@ -170,7 +220,10 @@ test('observeActivities skips ended and corrupt files without hiding live or dis
     const now = Date.now();
     writeActivity(join(fx.activityDir, 'live.json'), record({ label: 'live', started_at: new Date(now - 3_000).toISOString(), beat_at: new Date(now).toISOString() }));
     writeActivity(join(fx.activityDir, 'lost.json'), record({ label: 'lost', pid: 2_147_483_647, started_at: new Date(now - 2_000).toISOString(), beat_at: new Date(now).toISOString() }));
-    writeActivity(join(fx.activityDir, 'ended.json'), record({ label: 'ended', ended_at: new Date(now).toISOString(), outcome: 'ok' }));
+    writeFileSync(
+      join(fx.activityDir, 'ended.json'),
+      `${JSON.stringify(record({ label: 'ended', ended_at: new Date(now).toISOString(), outcome: 'ok' }))}\n`,
+    );
     writeFileSync(join(fx.activityDir, 'broken.json'), '{ truncated');
 
     assert.deepEqual(

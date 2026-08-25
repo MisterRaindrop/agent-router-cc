@@ -294,6 +294,8 @@ export type ActivityOutcome = 'ok' | 'failed' | 'timed_out' | 'stalled';
 
 export interface ActivityRecord {
   label: string;
+  /** Unique authority for the heartbeat; labels, pids, and timestamps are not ownership. */
+  owner_token: string;
   /** The router process that owns the whole activity, not a worker it may have launched. */
   pid: number;
   started_at: string;
