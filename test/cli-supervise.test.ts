@@ -52,6 +52,23 @@ async function waitForExit(child: ChildProcess): Promise<{ code: number | null; 
   });
 }
 
+interface RunningRouter {
+  child: ChildProcess;
+  done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  stdout(): string;
+  stderr(): string;
+}
+
+function startRouter(dir: string, argv: string[]): RunningRouter {
+  const child = spawn(NODE, [ENTRY, ...argv], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  const done = waitForExit(child);
+  return { child, done, stdout: () => stdout, stderr: () => stderr };
+}
+
 function killGroup(pid: number): void {
   try {
     process.kill(-pid, 'SIGKILL');
@@ -392,46 +409,69 @@ test('a disconnected label is reclaimed, while an unreadable record stays fail-c
   }
 });
 
-test('a running supervise owns one moving activity, rejects its label peer, and never takes gate.lock', async () => {
+test('supervise wires a fast injectable activity heartbeat without production-scale wall-clock waits', async () => {
   const dir = tmp();
-  const label = 'review:architect';
-  const activityPath = join(dir, '.router', 'activity', `${activityKey(label)}.json`);
-  const workerPidPath = join(dir, 'worker.pid');
-  const firstLog = join(dir, 'first.log');
-  const secondLog = join(dir, 'second.log');
-  const childScript =
-    `require('node:fs').writeFileSync(${JSON.stringify(workerPidPath)}, String(process.pid));` +
-    'setTimeout(() => process.exit(0), 18000)';
-  let first: ChildProcess | undefined;
+  const paths = routerPaths(join(dir, '.router'));
+  const label = 'review:fast-heartbeat';
+  const activityPath = paths.activity(activityKey(label));
 
   try {
-    first = spawn(
-      NODE,
-      [ENTRY, 'supervise', '--label', label, '--log', firstLog, '--', NODE, '-e', childScript],
-      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
+    const running = superviseCommand({
+      paths,
+      label,
+      logPath: join(dir, 'fast-heartbeat.log'),
+      argv: [NODE, '-e', 'setTimeout(()=>process.exit(0),350)'],
+      cwd: dir,
+      env: process.env,
+      activityHeartbeatIntervalMs: 30,
+    });
+    await waitUntil(() => readActivity(activityPath) !== null);
     const initial = readActivity(activityPath);
     assert.ok(initial);
-    assert.equal(initial.label, label);
-    assert.equal(initial.pid, first.pid);
+    await waitUntil(() => {
+      const current = readActivity(activityPath);
+      return current !== null && current.beat_at !== initial.beat_at;
+    }, 1_000);
+    const result = await running;
+    assert.equal(result.exitCode, 0);
+    assert.equal(existsSync(activityPath), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
-    writeFileSync(secondLog, 'do not truncate the running report');
-    const duplicate = router(dir, [
-      'supervise',
-      '--label',
-      label,
-      '--log',
-      secondLog,
-      '--',
-      NODE,
-      '-e',
-      'process.exit(0)',
-    ]);
-    assert.equal(duplicate.status, 2, duplicate.stderr);
-    assert.match(duplicate.stderr, /review:architect/);
-    assert.match(duplicate.stderr, new RegExp(`pid ${initial.pid}`));
-    assert.equal(readFileSync(secondLog, 'utf8'), 'do not truncate the running report');
+test('simultaneous same-label callers have one winner, one holder identity, and no gate.lock', async () => {
+  const dir = tmp();
+  const paths = routerPaths(join(dir, '.router'));
+  const label = 'review:architect';
+  const activityPath = paths.activity(activityKey(label));
+  const releasePath = join(dir, 'release-winner');
+  const workerPidPath = join(dir, 'winner-worker.pid');
+  const childScript =
+    "const fs=require('node:fs');" +
+    `fs.writeFileSync(${JSON.stringify(workerPidPath)},String(process.pid));` +
+    `while(!fs.existsSync(${JSON.stringify(releasePath)})){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}`;
+  const runners: RunningRouter[] = [];
+
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      runners.push(
+        startRouter(dir, [
+          'supervise',
+          '--label',
+          label,
+          '--log',
+          `concurrent-${index}.log`,
+          '--',
+          NODE,
+          '-e',
+          childScript,
+        ]),
+      );
+    }
+    await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
+    const holder = readActivity(activityPath);
+    assert.ok(holder);
 
     const lockProbe = spawnSync(
       NODE,
@@ -449,17 +489,26 @@ test('a running supervise owns one moving activity, rejects its label peer, and 
     assert.equal(lockProbe.status, 0, lockProbe.stderr);
     assert.equal(existsSync(join(dir, '.router', 'gate.lock')), false);
 
-    await waitUntil(() => {
-      const current = readActivity(activityPath);
-      return current !== null && current.beat_at !== initial.beat_at;
-    }, 17_000);
-
-    const ended = await waitForExit(first);
-    assert.deepEqual(ended, { code: 0, signal: null });
+    await waitUntil(
+      () => runners.filter(({ child }) => child.exitCode !== null || child.signalCode !== null).length === 7,
+    );
+    writeFileSync(releasePath, 'release');
+    const outcomes = await Promise.all(runners.map(({ done }) => done));
+    assert.equal(outcomes.filter(({ code }) => code === 0).length, 1);
+    assert.equal(outcomes.filter(({ code }) => code === 2).length, 7);
+    assert.equal(runners.some(({ child }) => child.pid === holder.pid), true);
+    for (let index = 0; index < outcomes.length; index += 1) {
+      if (outcomes[index]?.code !== 2) continue;
+      assert.match(runners[index]!.stderr(), new RegExp(`pid ${holder.pid}`));
+      assert.match(runners[index]!.stderr(), /review:architect/);
+    }
     assert.equal(existsSync(activityPath), false);
     assert.deepEqual(readdirSync(join(dir, '.router', 'activity')), []);
   } finally {
-    if (first !== undefined && first.exitCode === null && first.pid !== undefined) first.kill('SIGKILL');
+    writeFileSync(releasePath, 'release');
+    for (const { child } of runners) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
     if (existsSync(workerPidPath)) killGroup(Number(readFileSync(workerPidPath, 'utf8')));
     rmSync(dir, { recursive: true, force: true });
   }
@@ -491,8 +540,25 @@ test('SIGKILL of the supervise owner leaves a disconnected activity instead of d
     assert.equal(activity.pid, owner.pid);
     assert.equal(existsSync(activityPath), true);
     assert.equal(activityState(activity), 'disconnected');
+
+    const workerPid = Number(readFileSync(workerPidPath, 'utf8'));
+    killGroup(workerPid);
+    await waitUntil(() => !processIsAlive(workerPid));
+    const retry = router(dir, [
+      'supervise',
+      '--label',
+      label,
+      '--log',
+      'killed-retry.log',
+      '--',
+      NODE,
+      '-e',
+      'process.exit(0)',
+    ]);
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.equal(existsSync(activityPath), false);
   } finally {
-    if (owner !== undefined && owner.exitCode === null) owner.kill('SIGKILL');
+    if (owner !== undefined && owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
     if (existsSync(workerPidPath)) killGroup(Number(readFileSync(workerPidPath, 'utf8')));
     rmSync(dir, { recursive: true, force: true });
   }
