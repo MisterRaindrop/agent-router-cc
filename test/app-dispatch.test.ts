@@ -122,21 +122,27 @@ interface RunningDispatch {
   stderr(): string;
 }
 
-function startDispatchProcess(
+function startTaskProcess(
   repo: string,
   paths: ReturnType<typeof routerPaths>,
   executor: string,
   heartbeatIntervalMs = 40,
+  resumeFeedback?: string,
 ): RunningDispatch {
+  const invocation =
+    resumeFeedback === undefined
+      ? `dispatchTask(deps,'t1')`
+      : `resumeTask(deps,'t1',${JSON.stringify(resumeFeedback)})`;
   const source =
-    `const [{dispatchTask},{routerPaths},{systemClock}]=await Promise.all([` +
+    `const [{dispatchTask,resumeTask},{routerPaths},{systemClock}]=await Promise.all([` +
     `import(${JSON.stringify(DISPATCH_MODULE)}),` +
     `import(${JSON.stringify(PATHS_MODULE)}),` +
     `import(${JSON.stringify(CLOCK_MODULE)})]);` +
     `try{` +
-    `const result=await dispatchTask({` +
+    `const deps={` +
     `paths:routerPaths(${JSON.stringify(paths.root)}),clock:systemClock,` +
-    `activityHeartbeatIntervalMs:${heartbeatIntervalMs}},'t1');` +
+    `activityHeartbeatIntervalMs:${heartbeatIntervalMs}};` +
+    `const result=await ${invocation};` +
     `process.stdout.write(JSON.stringify({` +
     `exit_class:result.exit_class,verifier:result.verifier?.result,` +
     `state_tampering:result.state_tampering})+'\\n');` +
@@ -724,7 +730,7 @@ test('an independent process observes running heartbeats strictly inside the spa
       TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`),
     );
     mkdirSync(observerDir, { recursive: true });
-    owner = startDispatchProcess(repo, paths, FAKE_CODEX);
+    owner = startTaskProcess(repo, paths, FAKE_CODEX);
     await waitUntil(() => readActivity(activityPath) !== null);
     const initial = readActivity(activityPath);
     assert.ok(initial);
@@ -808,6 +814,59 @@ test('an independent process observes running heartbeats strictly inside the spa
   }
 });
 
+test('resume publishes the same task activity and removes it after normal closeout', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths } = setup();
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const delayedExecutor = join(paths.taskDir('t1'), 'logs', 'delayed-resume.mjs');
+  let initial: RunningDispatch | undefined;
+  let resumed: RunningDispatch | undefined;
+
+  try {
+    stageTask(paths);
+    initial = startTaskProcess(repo, paths, FAKE_CODEX);
+    const initialExit = await initial.done;
+    assert.deepEqual(initialExit, { code: 0, signal: null }, initial.stderr());
+    assert.equal(existsSync(activityPath), false);
+
+    mkdirSync(join(paths.taskDir('t1'), 'logs'), { recursive: true });
+    writeFileSync(
+      delayedExecutor,
+      `#!/usr/bin/env node\n` +
+        `import {spawnSync} from 'node:child_process';\n` +
+        `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,600);\n` +
+        `const run=spawnSync(${JSON.stringify(FAKE_CODEX)},process.argv.slice(2),{stdio:'inherit'});\n` +
+        `process.exit(run.status??1);\n`,
+    );
+    chmodSync(delayedExecutor, 0o755);
+    resumed = startTaskProcess(repo, paths, delayedExecutor, 40, 'tighten it');
+    await waitUntil(() => readActivity(activityPath) !== null);
+
+    const activity = readActivity(activityPath);
+    assert.ok(activity);
+    assert.equal(activity.label, 'task:t1');
+    assert.equal(activity.pid, resumed.child.pid);
+    assert.equal(activity.status_path, paths.runStatus('t1'));
+    assert.equal(activityState(activity), 'running');
+
+    const resumedExit = await resumed.done;
+    assert.deepEqual(resumedExit, { code: 0, signal: null }, resumed.stderr());
+    const output = JSON.parse(resumed.stdout().trim()) as Record<string, unknown>;
+    assert.equal(output.exit_class, 'ok');
+    assert.equal(output.verifier, 'PASSED');
+    assert.equal(output.state_tampering, undefined);
+    assert.equal(existsSync(activityPath), false, 'normal resume left an activity behind');
+  } finally {
+    if (resumed !== undefined && resumed.child.exitCode === null && resumed.child.signalCode === null) {
+      resumed.child.kill('SIGKILL');
+    }
+    if (initial !== undefined && initial.child.exitCode === null && initial.child.signalCode === null) {
+      initial.child.kill('SIGKILL');
+    }
+    fx.cleanup(repo);
+  }
+});
+
 test('SIGKILL leaves dispatch disconnected within the stale threshold without claiming a phase', async () => {
   const { repo, paths } = setup();
   const activityPath = paths.activity(activityKey('task:t1'));
@@ -828,7 +887,7 @@ test('SIGKILL leaves dispatch disconnected within the stale threshold without cl
         `setInterval(()=>{},1000);\n`,
     );
     chmodSync(hangingExecutor, 0o755);
-    owner = startDispatchProcess(repo, paths, hangingExecutor);
+    owner = startTaskProcess(repo, paths, hangingExecutor);
     await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
     workerPid = Number(readFileSync(workerPidPath, 'utf8'));
 
