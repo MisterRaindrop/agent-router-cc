@@ -15,7 +15,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,8 +48,24 @@ function renderScript(
   return execFileSync(process.execPath, [script], {
     input: JSON.stringify(payload),
     encoding: 'utf8',
+    cwd,
     env: { ...process.env, ROUTER_INNER_STATUSLINE: '', ...env },
   });
+}
+
+function renderRaw(
+  cwd: string,
+  raw: string,
+  env: NodeJS.ProcessEnv = {},
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [SCRIPT], {
+    input: raw,
+    encoding: 'utf8',
+    cwd,
+    env: { ...process.env, ROUTER_INNER_STATUSLINE: '', ...env },
+  });
+  assert.equal(result.error, undefined);
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 function render(cwd: string, payload: unknown = {}, env: NodeJS.ProcessEnv = {}): string {
@@ -261,6 +277,46 @@ test('an inner statusline that prints nothing falls back to the plain marker', (
     fx.cleanup();
   }
 });
+
+function assertMalformedInputKeepsHud(raw: string): void {
+  const fx = repo();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    const result = renderRaw(fx.dir, raw, {
+      ...pinned(),
+      ROUTER_INNER_STATUSLINE: "printf 'malformed-input-hud'",
+    });
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, '');
+    assert.equal(result.stdout, 'malformed-input-hud | router ▶ idle');
+  } finally {
+    fx.cleanup();
+  }
+}
+
+test('literal null stdin preserves the complete inner HUD and exits zero', () => {
+  assertMalformedInputKeepsHud('null');
+});
+
+test('a numeric cwd preserves the complete inner HUD and exits zero', () => {
+  assertMalformedInputKeepsHud('{"cwd":42}');
+});
+
+test('a numeric workspace current_dir preserves the complete inner HUD and exits zero', () => {
+  assertMalformedInputKeepsHud('{"workspace":{"current_dir":123}}');
+});
+
+for (const [name, raw] of [
+  ['numeric', '42'],
+  ['array', '[]'],
+  ['non-JSON', 'not json'],
+  ['empty', ''],
+  ['oversized', 'x'.repeat(2 * 1024 * 1024)],
+] as const) {
+  test(`${name} stdin preserves the complete inner HUD and exits zero`, () => {
+    assertMalformedInputKeepsHud(raw);
+  });
+}
 
 test('a missing activity bundle omits only the activity segment and preserves the inner output', () => {
   const fx = repo();
