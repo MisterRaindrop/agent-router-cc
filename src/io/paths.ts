@@ -17,6 +17,7 @@ export interface RouterPaths {
   readonly repoRoot: string; // the git repo root (parent of .router)
   readonly metrics: string;
   readonly tasksDir: string;
+  readonly activityDir: string;
   readonly worktreesDir: string;
   readonly symbolsDir: string; // code-intelligence symbol caches (gitignored, per-repo)
   readonly symbolLatest: string; // pointer file: hash of the most recently built index
@@ -47,6 +48,7 @@ export interface RouterPaths {
   taskContext(id: string): string;
   runsDir(id: string): string;
   heartbeat(id: string): string;
+  activity(key: string): string;
   runStatus(id: string): string;
   resultJson(id: string): string;
   diffPatch(id: string): string;
@@ -105,6 +107,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     repoRoot: dirname(root),
     metrics: join(root, 'metrics.jsonl'),
     tasksDir,
+    activityDir: join(root, 'activity'),
     worktreesDir: join(root, 'worktrees'),
     symbolsDir: join(root, 'symbols'),
     symbolLatest: join(root, 'symbols', 'latest'),
@@ -125,6 +128,7 @@ export function routerPaths(routerDir: string): RouterPaths {
     taskContext: (id) => join(taskDir(id), 'TASK_CONTEXT.md'),
     runsDir: (id) => join(taskDir(id), 'runs'),
     heartbeat: (id) => join(taskDir(id), 'heartbeat'),
+    activity: (key) => join(root, 'activity', `${key}.json`),
     runStatus: (id) => join(taskDir(id), 'status.json'),
     resultJson: (id) => join(taskDir(id), 'result.json'),
     diffPatch: (id) => join(taskDir(id), 'diff.patch'),

@@ -287,6 +287,24 @@ export interface RunStatus {
   recent_action?: string;
 }
 
+// -- Router-managed activity -------------------------------------------------
+// A display-only liveness record. It must never authorize a state transition: task/result files
+// remain the source of truth for dispatch, land, queue admission, and every other decision path.
+export type ActivityOutcome = 'ok' | 'failed' | 'timed_out' | 'stalled';
+
+export interface ActivityRecord {
+  label: string;
+  /** The router process that owns the whole activity, not a worker it may have launched. */
+  pid: number;
+  started_at: string;
+  /** Refreshed by an out-of-process heartbeat so spawnSync cannot freeze it. */
+  beat_at: string;
+  ended_at?: string;
+  outcome?: ActivityOutcome;
+  /** Optional richer status document, e.g. tasks/<id>/status.json for a dispatch. */
+  status_path?: string;
+}
+
 export interface RunPhaseTimings {
   t_worktree: number;
   t_launch: number;
