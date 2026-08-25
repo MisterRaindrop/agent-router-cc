@@ -9387,8 +9387,8 @@ function writeFlowMapping(state, level, node) {
     if (explicitPair) pairBuffer += "? ";
     else if (state.quoteFlowKeys) pairBuffer += '"';
     const valueText = writeNode(state, level, value, {});
-    const sep4 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep4}${valueText}`;
+    const sep3 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep3}${valueText}`;
     result2 += pairBuffer;
   }
   const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
@@ -9485,8 +9485,8 @@ function writeNode(state, level, node, ctx) {
       if (anchor !== null) props.push(anchor);
       if (tag !== null) props.push(tag);
     }
-    const sep4 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    body = `${props.join(" ")}${sep4}${body}`;
+    const sep3 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    body = `${props.join(" ")}${sep3}${body}`;
   }
   return body;
 }
@@ -9531,8 +9531,8 @@ function present(documents, options) {
         block: true,
         compact: true
       });
-      const sep4 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result2 += `---${sep4}${body}
+      const sep3 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result2 += `---${sep3}${body}
 `;
     } else result2 += writeNode(state, 0, doc.contents, {
       block: true,
@@ -10259,7 +10259,7 @@ function effectiveRisk(declared, signals) {
 
 // src/io/activity.ts
 import { createHash, randomUUID } from "node:crypto";
-import { readdirSync, readFileSync as readFileSync4, unlinkSync as unlinkSync3 } from "node:fs";
+import { existsSync as existsSync4, linkSync as linkSync2, readdirSync, readFileSync as readFileSync4, statSync as statSync3, unlinkSync as unlinkSync3 } from "node:fs";
 
 // src/io/heartbeat.ts
 import { spawn } from "node:child_process";
@@ -10858,6 +10858,17 @@ function acquireLock(path, opts) {
 // src/io/activity.ts
 var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
 var MAX_PID = 2147483647;
+var ActivityAlreadyExistsError = class extends Error {
+  activity;
+  path;
+  constructor(label, path, activity) {
+    const owner = activity === null ? "an unreadable existing activity" : `pid ${activity.pid}, started ${activity.started_at}`;
+    super(`activity '${label}' is already claimed by ${owner} (${path})`);
+    this.name = "ActivityAlreadyExistsError";
+    this.activity = activity;
+    this.path = path;
+  }
+};
 function finiteDate(value) {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
@@ -10910,6 +10921,116 @@ function readActivity(path) {
     return parseActivity(JSON.parse(readFileSync4(path, "utf8")));
   } catch {
     return null;
+  }
+}
+function errorCode2(error) {
+  return error.code;
+}
+function sameIdentity2(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+function activitySnapshot(path) {
+  try {
+    const before = statSync3(path, { bigint: true });
+    const record = readActivity(path);
+    const after = statSync3(path, { bigint: true });
+    if (record === null || before.dev !== after.dev || before.ino !== after.ino) return null;
+    return { record, identity: { dev: after.dev, ino: after.ino } };
+  } catch {
+    return null;
+  }
+}
+function reclaimDisconnectedActivity(path, expected) {
+  const reclaimPath = `${path}.reclaim`;
+  try {
+    linkSync2(path, reclaimPath);
+  } catch (error) {
+    if (errorCode2(error) === "ENOENT" || errorCode2(error) === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    const guarded = activitySnapshot(reclaimPath);
+    const current = activitySnapshot(path);
+    if (guarded === null || current === null || guarded.record.owner_token !== expected.owner_token || current.record.owner_token !== expected.owner_token || !sameIdentity2(guarded.identity, current.identity) || activityState(current.record) !== "disconnected") {
+      return false;
+    }
+    try {
+      unlinkSync3(path);
+      return true;
+    } catch (error) {
+      if (errorCode2(error) === "ENOENT") return true;
+      throw error;
+    }
+  } finally {
+    try {
+      unlinkSync3(reclaimPath);
+    } catch {
+    }
+  }
+}
+function claimActivity(paths, label, options = {}) {
+  const path = paths.activity(activityKey(label));
+  const candidate = `${path}.claim.${process.pid}.${randomUUID()}`;
+  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const record = writeActivity(candidate, {
+    label,
+    pid: process.pid,
+    started_at: startedAt,
+    beat_at: startedAt,
+    ...options.statusPath !== void 0 ? { status_path: options.statusPath } : {}
+  });
+  try {
+    if (existsSync4(`${path}.reclaim`)) {
+      throw new ActivityAlreadyExistsError(label, path, readActivity(path));
+    }
+    for (; ; ) {
+      try {
+        linkSync2(candidate, path);
+        break;
+      } catch (error) {
+        if (errorCode2(error) !== "EEXIST") throw error;
+        const existing = readActivity(path);
+        if (existing === null || activityState(existing) !== "disconnected" || !reclaimDisconnectedActivity(path, existing)) {
+          throw new ActivityAlreadyExistsError(label, path, existing);
+        }
+      }
+    }
+  } finally {
+    try {
+      unlinkSync3(candidate);
+    } catch (error) {
+      if (errorCode2(error) !== "ENOENT") throw error;
+    }
+  }
+  const installed = activitySnapshot(path);
+  if (installed === null || installed.record.owner_token !== record.owner_token) {
+    throw new Error(`could not confirm ownership of activity '${label}' at ${path}`);
+  }
+  return { path, record, identity: installed.identity };
+}
+function retryPause(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function finishActivity(claimed, outcome, diagnostics, endedAt = (/* @__PURE__ */ new Date()).toISOString(), options = {}) {
+  const attempts = Math.max(1, Math.floor(options.attempts ?? 1));
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 0);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const current = activitySnapshot(claimed.path);
+    if (current === null || current.record.owner_token !== claimed.record.owner_token || !sameIdentity2(current.identity, claimed.identity)) {
+      diagnostics.push(`could not remove activity ${claimed.path}: ownership or file identity changed`);
+      return;
+    }
+    try {
+      writeActivity(claimed.path, { ...claimed.record, ended_at: endedAt, outcome });
+      return;
+    } catch (error) {
+      if (attempt === attempts) {
+        diagnostics.push(`could not remove activity ${claimed.path}: ${error.message}`);
+        return;
+      }
+      retryPause(retryDelayMs);
+    }
   }
 }
 function pidIsAlive(pid) {
@@ -11152,7 +11273,7 @@ function stateDiff(before, after) {
 }
 
 // src/io/quota.ts
-import { existsSync as existsSync4, readFileSync as readFileSync7, readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync7, readdirSync as readdirSync3, statSync as statSync4 } from "node:fs";
 import { join as join5 } from "node:path";
 function walkJsonl(dir) {
   let out2 = [];
@@ -11166,7 +11287,7 @@ function walkJsonl(dir) {
     const p = join5(dir, name);
     let s;
     try {
-      s = statSync3(p);
+      s = statSync4(p);
     } catch {
       continue;
     }
@@ -11221,7 +11342,7 @@ function readCodexQuota(sessionsDir) {
   return null;
 }
 function readClaudeQuota(usageJsonPath) {
-  if (!existsSync4(usageJsonPath)) return null;
+  if (!existsSync5(usageJsonPath)) return null;
   let o;
   try {
     o = JSON.parse(readFileSync7(usageJsonPath, "utf8"));
@@ -11239,7 +11360,7 @@ function readClaudeQuota(usageJsonPath) {
 
 // src/io/supervisor.ts
 import { spawn as spawn2 } from "node:child_process";
-import { closeSync as closeSync4, mkdirSync as mkdirSync3, openSync as openSync4, statSync as statSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync as closeSync4, mkdirSync as mkdirSync3, openSync as openSync4, statSync as statSync5, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname4 } from "node:path";
 function waitForGroupGone(pgid, budgetMs, stepMs) {
   return new Promise((resolve6) => {
@@ -11269,12 +11390,12 @@ async function drainGroup(pgid, graceMs, stepMs) {
 function activitySignal(logPath, watchPaths) {
   let sig = 0;
   try {
-    sig += statSync4(logPath).size;
+    sig += statSync5(logPath).size;
   } catch {
   }
   for (const p of watchPaths) {
     try {
-      sig += Math.floor(statSync4(p).mtimeMs);
+      sig += Math.floor(statSync5(p).mtimeMs);
     } catch {
     }
   }
@@ -12368,14 +12489,14 @@ function seconds(ms) {
 
 // src/app/taskContext.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync11 } from "node:fs";
 var TASK_CONTEXT_SOFT_LIMIT = 8e3;
 function contextError(taskId, message) {
   return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
 }
 function loadTaskContext(paths, task) {
   const path = paths.taskContext(task.id);
-  if (!existsSync6(path)) return null;
+  if (!existsSync7(path)) return null;
   const text2 = readFileSync11(path, "utf8");
   const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
   if (frontmatter === null) {
@@ -12997,16 +13118,14 @@ function taskActivityOutcome(result2) {
 }
 async function withTaskActivity(deps, id, body) {
   const label = `task:${id}`;
-  const path = deps.paths.activity(activityKey(label));
-  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const activity = writeActivity(path, {
-    label,
-    pid: process.pid,
-    started_at: startedAt,
-    beat_at: startedAt,
-    status_path: deps.paths.runStatus(id)
+  const claimed = claimActivity(deps.paths, label, {
+    statusPath: deps.paths.runStatus(id)
   });
-  const heartbeat = startActivityHeartbeat(path, activity, deps.activityHeartbeatIntervalMs);
+  const heartbeat = startActivityHeartbeat(
+    claimed.path,
+    claimed.record,
+    deps.activityHeartbeatIntervalMs
+  );
   let outcome = "failed";
   try {
     const started = await heartbeat.started;
@@ -13018,13 +13137,15 @@ async function withTaskActivity(deps, id, body) {
     return result2;
   } finally {
     heartbeat.stop();
-    try {
-      writeActivity(path, {
-        ...activity,
-        ended_at: (/* @__PURE__ */ new Date()).toISOString(),
-        outcome
-      });
-    } catch {
+    const diagnostics = [];
+    finishActivity(claimed, outcome, diagnostics, void 0, {
+      attempts: 3,
+      retryDelayMs: 25
+    });
+    for (const diagnostic of diagnostics) {
+      if (deps.activityDiagnostic !== void 0) deps.activityDiagnostic(diagnostic);
+      else process.stderr.write(`router: dispatch cleanup: ${diagnostic}
+`);
     }
   }
 }
@@ -13583,7 +13704,7 @@ async function runQueueGate(deps, taskId) {
 }
 
 // src/app/orchestratorUsage.ts
-import { readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
+import { readdirSync as readdirSync4, statSync as statSync6 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join11 } from "node:path";
 
@@ -13702,7 +13823,7 @@ function newestTranscript(projectsDir) {
     const path = join11(projectsDir, entry.name);
     let mtimeMs;
     try {
-      mtimeMs = statSync5(path).mtimeMs;
+      mtimeMs = statSync6(path).mtimeMs;
     } catch {
       continue;
     }
@@ -13748,7 +13869,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync15, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync15, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync8, writeFileSync as writeFileSync5 } from "node:fs";
 import { resolve as resolve4 } from "node:path";
 
 // src/core/symbols.ts
@@ -13862,11 +13983,11 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync8, readdirSync as readdirSync5, readFileSync as readFileSync14, statSync as statSync6 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync5, readFileSync as readFileSync14, statSync as statSync7 } from "node:fs";
 import { relative as relative3, resolve as resolve3 } from "node:path";
 
 // src/io/treeSitter.ts
-import { existsSync as existsSync7, readFileSync as readFileSync13 } from "node:fs";
+import { existsSync as existsSync8, readFileSync as readFileSync13 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join12 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13874,7 +13995,7 @@ var WTS_BASENAMES = ["web-tree-sitter", "tree-sitter"];
 function wtsRuntimeFile(dir, suffix) {
   for (const base of WTS_BASENAMES) {
     const candidate = join12(dir, `${base}${suffix}`);
-    if (existsSync7(candidate)) return candidate;
+    if (existsSync8(candidate)) return candidate;
   }
   return join12(dir, `tree-sitter${suffix}`);
 }
@@ -13991,7 +14112,7 @@ function hashRoots(roots) {
 function walkFiles(root, acc) {
   let st;
   try {
-    st = statSync6(root);
+    st = statSync7(root);
   } catch {
     return;
   }
@@ -14028,7 +14149,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
   let bytes = 0;
   for (const abs of files) {
     const rel = relative3(repoRoot, abs);
-    const st = statSync6(abs);
+    const st = statSync7(abs);
     const cached = prevByFile.get(rel);
     if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
       out2.push(cached);
@@ -14063,7 +14184,7 @@ async function refreshIndex(cachePath, repoRoot) {
     const abs = resolve3(repoRoot, f.file);
     let st;
     try {
-      st = statSync6(abs);
+      st = statSync7(abs);
     } catch {
       changed = true;
       continue;
@@ -14079,7 +14200,7 @@ async function refreshIndex(cachePath, repoRoot) {
     changed = true;
   }
   const refreshed = { grammar, files: out2 };
-  if (changed && existsSync8(cachePath)) writeJsonAtomic(cachePath, refreshed);
+  if (changed && existsSync9(cachePath)) writeJsonAtomic(cachePath, refreshed);
   return { index: refreshed, reparsed };
 }
 
@@ -14143,12 +14264,12 @@ async function runQuery(paths, cfg, sub, args) {
   let cache2;
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
-  } else if (existsSync9(paths.symbolLatest)) {
+  } else if (existsSync10(paths.symbolLatest)) {
     cache2 = paths.symbolCache(readFileSync15(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
-  if (!existsSync9(cache2)) {
+  if (!existsSync10(cache2)) {
     return { degraded: true, reason: "no symbol index yet; run `router symbol index [dirs]` first; using rg" };
   }
   let index;
@@ -14624,113 +14745,20 @@ function extractInner(command) {
 }
 
 // src/app/supervise.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { existsSync as existsSync10, linkSync as linkSync2, mkdirSync as mkdirSync5, statSync as statSync8, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname as dirname6 } from "node:path";
 var MAX_WALL_MS = 24 * 60 * 6e4;
 var STALL_MS = 20 * 6e4;
 var SUPERVISE_INTERNAL_ERROR_CODE = 70;
-var ActivityAlreadyExistsError = class extends Error {
-  activity;
-  path;
-  constructor(label, path, activity) {
-    const owner = activity === null ? "an unreadable existing activity" : `pid ${activity.pid}, started ${activity.started_at}`;
-    super(`activity '${label}' is already claimed by ${owner} (${path})`);
-    this.name = "ActivityAlreadyExistsError";
-    this.activity = activity;
-    this.path = path;
-  }
-};
 var HeartbeatStartupError = class extends Error {
   constructor(message) {
     super(message);
     this.name = "HeartbeatStartupError";
   }
 };
-function errorCode2(error) {
+function errorCode3(error) {
   return error.code;
-}
-function sameIdentity2(left, right) {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-function activitySnapshot(path) {
-  try {
-    const before = statSync8(path, { bigint: true });
-    const record = readActivity(path);
-    const after = statSync8(path, { bigint: true });
-    if (record === null || before.dev !== after.dev || before.ino !== after.ino) return null;
-    return { record, identity: { dev: after.dev, ino: after.ino } };
-  } catch {
-    return null;
-  }
-}
-function reclaimDisconnectedActivity(path, expected) {
-  const reclaimPath = `${path}.reclaim`;
-  try {
-    linkSync2(path, reclaimPath);
-  } catch (error) {
-    if (errorCode2(error) === "ENOENT" || errorCode2(error) === "EEXIST") return false;
-    throw error;
-  }
-  try {
-    const guarded = activitySnapshot(reclaimPath);
-    const current = activitySnapshot(path);
-    if (guarded === null || current === null || guarded.record.owner_token !== expected.owner_token || current.record.owner_token !== expected.owner_token || !sameIdentity2(guarded.identity, current.identity) || activityState(current.record) !== "disconnected") {
-      return false;
-    }
-    try {
-      unlinkSync4(path);
-      return true;
-    } catch (error) {
-      if (errorCode2(error) === "ENOENT") return true;
-      throw error;
-    }
-  } finally {
-    try {
-      unlinkSync4(reclaimPath);
-    } catch {
-    }
-  }
-}
-function claimActivity(paths, label) {
-  const path = paths.activity(activityKey(label));
-  const candidate = `${path}.claim.${process.pid}.${randomUUID2()}`;
-  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const record = writeActivity(candidate, {
-    label,
-    pid: process.pid,
-    started_at: startedAt,
-    beat_at: startedAt
-  });
-  try {
-    if (existsSync10(`${path}.reclaim`)) {
-      throw new ActivityAlreadyExistsError(label, path, readActivity(path));
-    }
-    for (; ; ) {
-      try {
-        linkSync2(candidate, path);
-        break;
-      } catch (error) {
-        if (errorCode2(error) !== "EEXIST") throw error;
-        const existing = readActivity(path);
-        if (existing === null || activityState(existing) !== "disconnected" || !reclaimDisconnectedActivity(path, existing)) {
-          throw new ActivityAlreadyExistsError(label, path, existing);
-        }
-      }
-    }
-  } finally {
-    try {
-      unlinkSync4(candidate);
-    } catch (error) {
-      if (errorCode2(error) !== "ENOENT") throw error;
-    }
-  }
-  const installed = activitySnapshot(path);
-  if (installed === null || installed.record.owner_token !== record.owner_token) {
-    throw new Error(`could not confirm ownership of activity '${label}' at ${path}`);
-  }
-  return { path, record, identity: installed.identity };
 }
 function activityOutcome(outcome) {
   if (outcome.timedOut) return "timed_out";
@@ -14752,18 +14780,6 @@ function exitCode(outcome) {
 function signalExitCode(signal) {
   const signalNumber = osConstants.signals[signal];
   return signalNumber === void 0 ? 1 : 128 + signalNumber;
-}
-function finishActivity(claimed, outcome, diagnostics, endedAt = (/* @__PURE__ */ new Date()).toISOString()) {
-  const current = activitySnapshot(claimed.path);
-  if (current === null || current.record.owner_token !== claimed.record.owner_token || !sameIdentity2(current.identity, claimed.identity)) {
-    diagnostics.push(`could not remove activity ${claimed.path}: ownership or file identity changed`);
-    return;
-  }
-  try {
-    writeActivity(claimed.path, { ...claimed.record, ended_at: endedAt, outcome });
-  } catch (error) {
-    diagnostics.push(`could not remove activity ${claimed.path}: ${error.message}`);
-  }
 }
 function bridgeTerminalSignals(diagnostics) {
   let signal = null;
@@ -14848,7 +14864,7 @@ async function superviseCommand(spec) {
     try {
       unlinkSync4(workerHeartbeatPath);
     } catch (error) {
-      if (errorCode2(error) !== "ENOENT") {
+      if (errorCode3(error) !== "ENOENT") {
         diagnostics.push(`could not remove worker heartbeat ${workerHeartbeatPath}: ${error.message}`);
       }
     }
