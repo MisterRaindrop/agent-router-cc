@@ -27,8 +27,13 @@ import { parseSymbols } from '../io/treeSitter.ts';
 import { buildRoutingReport, buildUsageReport, explainSavingsText, renderRouting, renderUsage } from '../app/usageReport.ts';
 import { STRONG_BASELINE_MODEL } from '../core/pricing.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
-import { ActivityAlreadyExistsError, superviseCommand } from '../app/supervise.ts';
-import { CliError, emit } from './output.ts';
+import {
+  ActivityAlreadyExistsError,
+  HeartbeatStartupError,
+  SUPERVISE_INTERNAL_ERROR_CODE,
+  superviseCommand,
+} from '../app/supervise.ts';
+import { CliError, emit, err } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
 
 // The lean CLI: a synchronous task dispatcher. No state machine, no policy, no init
@@ -993,9 +998,13 @@ const superviseHandler: Handler = async (ctx) => {
       // Match direct foreground execution: the caller chooses the command and its environment.
       env: process.env,
     });
+    for (const diagnostic of result.diagnostics) err(`router: supervise cleanup: ${diagnostic}`);
     return result.exitCode;
   } catch (error) {
     if (error instanceof ActivityAlreadyExistsError) throw new CliError(error.message, 2);
+    if (error instanceof HeartbeatStartupError) {
+      throw new CliError(error.message, SUPERVISE_INTERNAL_ERROR_CODE);
+    }
     throw error;
   }
 };

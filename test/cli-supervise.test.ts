@@ -18,8 +18,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { superviseCommand, SUPERVISE_INTERNAL_ERROR_CODE } from '../src/app/supervise.ts';
 import { parseArgs } from '../src/cli/args.ts';
-import { activityKey, activityState, readActivity } from '../src/io/activity.ts';
+import { activityKey, activityState, readActivity, writeActivity } from '../src/io/activity.ts';
+import { routerPaths } from '../src/io/paths.ts';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const LOCK_MODULE = new URL('../src/io/lock.ts', import.meta.url).href;
@@ -28,8 +30,8 @@ const NODE = process.execPath;
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'router-cli-supervise-'));
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-function router(dir: string, argv: string[]) {
-  return spawnSync(NODE, [ENTRY, ...argv], { cwd: dir, encoding: 'utf8', timeout: 30_000 });
+function router(dir: string, argv: string[], env: NodeJS.ProcessEnv = process.env) {
+  return spawnSync(NODE, [ENTRY, ...argv], { cwd: dir, encoding: 'utf8', timeout: 30_000, env });
 }
 
 async function waitUntil(check: () => boolean, timeoutMs = 5_000): Promise<void> {
@@ -55,6 +57,15 @@ function killGroup(pid: number): void {
     process.kill(-pid, 'SIGKILL');
   } catch {
     /* already gone */
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -175,6 +186,207 @@ test('supervise maps a command signal to the conventional shell exit code and cl
 
     assert.equal(run.status, 137, run.stderr);
     assert.deepEqual(readdirSync(join(dir, '.router', 'activity')), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a heartbeat spawn failure is diagnosed before the worker starts and uses an internal exit code', () => {
+  const dir = tmp();
+  const label = 'review:no-heartbeat';
+  const workerMarker = join(dir, 'worker-started');
+  try {
+    const preload = join(dir, 'fail-heartbeat.cjs');
+    writeFileSync(
+      preload,
+      "const cp=require('node:child_process');\n" +
+        "const {syncBuiltinESMExports}=require('node:module');\n" +
+        'const original=cp.spawn;\n' +
+        'cp.spawn=function(command,args,options){\n' +
+        "  if(Array.isArray(args)&&args[0]==='-e'&&String(args[1]).includes('const [filePath, field, valueFormat')){\n" +
+        "    return original.call(this,'/definitely/missing-router-heartbeat',args,options);\n" +
+        '  }\n' +
+        '  return original.apply(this,arguments);\n' +
+        '};\n' +
+        'syncBuiltinESMExports();\n',
+    );
+    const inherited = process.env.NODE_OPTIONS ?? '';
+    const env = { ...process.env, NODE_OPTIONS: `${inherited} --require=${preload}`.trim() };
+    const run = router(
+      dir,
+      [
+        'supervise',
+        '--label',
+        label,
+        '--log',
+        'heartbeat-failure.log',
+        '--',
+        NODE,
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(workerMarker)},'started')`,
+      ],
+      env,
+    );
+
+    assert.equal(run.status, SUPERVISE_INTERNAL_ERROR_CODE, run.stderr);
+    assert.match(run.stderr, /activity heartbeat failed to start/);
+    assert.match(run.stderr, /ENOENT/);
+    assert.equal(existsSync(workerMarker), false, 'worker launched without an activity heartbeat');
+    assert.deepEqual(readdirSync(join(dir, '.router', 'activity')), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SIGTERM to the supervise process drains its worker, cleans activity, and frees the label', async () => {
+  const dir = tmp();
+  const label = 'review:outer-signal';
+  const activityPath = join(dir, '.router', 'activity', `${activityKey(label)}.json`);
+  const workerPidPath = join(dir, 'signal-worker.pid');
+  const childScript =
+    `require('node:fs').writeFileSync(${JSON.stringify(workerPidPath)},String(process.pid));` +
+    'setInterval(()=>{},1000)';
+  let owner: ChildProcess | undefined;
+
+  try {
+    owner = spawn(
+      NODE,
+      [ENTRY, 'supervise', '--label', label, '--log', 'signal-owner.log', '--', NODE, '-e', childScript],
+      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
+    const workerPid = Number(readFileSync(workerPidPath, 'utf8'));
+
+    owner.kill('SIGTERM');
+    const ended = await waitForExit(owner);
+    assert.deepEqual(ended, { code: 143, signal: null });
+    await waitUntil(() => !processIsAlive(workerPid));
+    assert.equal(existsSync(activityPath), false);
+
+    const retry = router(dir, [
+      'supervise',
+      '--label',
+      label,
+      '--log',
+      'signal-retry.log',
+      '--',
+      NODE,
+      '-e',
+      'process.exit(0)',
+    ]);
+    assert.equal(retry.status, 0, retry.stderr);
+  } finally {
+    if (owner !== undefined && owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
+    if (existsSync(workerPidPath)) killGroup(Number(readFileSync(workerPidPath, 'utf8')));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('activity cleanup failure is diagnosed without replacing the worker exit code', () => {
+  const dir = tmp();
+  const label = 'review:activity-cleanup-failure';
+  const activityPath = join(dir, '.router', 'activity', `${activityKey(label)}.json`);
+  try {
+    const script =
+      "const fs=require('node:fs');" +
+      `fs.unlinkSync(${JSON.stringify(activityPath)});` +
+      `fs.mkdirSync(${JSON.stringify(activityPath)});` +
+      'process.exit(7)';
+    const run = router(dir, [
+      'supervise',
+      '--label',
+      label,
+      '--log',
+      'activity-cleanup.log',
+      '--',
+      NODE,
+      '-e',
+      script,
+    ]);
+
+    assert.equal(run.status, 7, run.stderr);
+    assert.match(run.stderr, /supervise cleanup: could not remove activity/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('worker-heartbeat cleanup failure is diagnosed without replacing the worker exit code', () => {
+  const dir = tmp();
+  const label = 'review:worker-heartbeat-cleanup-failure';
+  const activityPath = join(dir, '.router', 'activity', `${activityKey(label)}.json`);
+  const workerHeartbeatPath = `${activityPath}.worker-heartbeat`;
+  try {
+    const script =
+      "const fs=require('node:fs');" +
+      `while(!fs.existsSync(${JSON.stringify(workerHeartbeatPath)})){Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}` +
+      `fs.unlinkSync(${JSON.stringify(workerHeartbeatPath)});` +
+      `fs.mkdirSync(${JSON.stringify(workerHeartbeatPath)});` +
+      'process.exit(7)';
+    const run = router(dir, [
+      'supervise',
+      '--label',
+      label,
+      '--log',
+      'worker-heartbeat-cleanup.log',
+      '--',
+      NODE,
+      '-e',
+      script,
+    ]);
+
+    assert.equal(run.status, 7, run.stderr);
+    assert.match(run.stderr, /supervise cleanup: could not remove worker heartbeat/);
+    assert.equal(existsSync(activityPath), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a disconnected label is reclaimed, while an unreadable record stays fail-closed', () => {
+  const dir = tmp();
+  const paths = routerPaths(join(dir, '.router'));
+  const staleLabel = 'review:disconnected';
+  const stalePath = paths.activity(activityKey(staleLabel));
+  const unreadableLabel = 'review:unreadable';
+  const unreadablePath = paths.activity(activityKey(unreadableLabel));
+  try {
+    const at = new Date().toISOString();
+    writeActivity(stalePath, {
+      label: staleLabel,
+      pid: 2_147_483_647,
+      started_at: at,
+      beat_at: at,
+    });
+    const retry = router(dir, [
+      'supervise',
+      '--label',
+      staleLabel,
+      '--log',
+      'reclaimed.log',
+      '--',
+      NODE,
+      '-e',
+      'process.exit(0)',
+    ]);
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.equal(existsSync(stalePath), false);
+
+    writeFileSync(unreadablePath, '{ truncated');
+    const refused = router(dir, [
+      'supervise',
+      '--label',
+      unreadableLabel,
+      '--log',
+      'unreadable.log',
+      '--',
+      NODE,
+      '-e',
+      'process.exit(0)',
+    ]);
+    assert.equal(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, /unreadable existing activity/);
+    assert.equal(readFileSync(unreadablePath, 'utf8'), '{ truncated');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
