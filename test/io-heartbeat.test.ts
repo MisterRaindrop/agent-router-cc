@@ -4,9 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { writeJsonAtomic } from '../src/io/atomicWrite.ts';
 import { acquireLock, readLock } from '../src/io/lock.ts';
 import { startHeartbeat, startJsonHeartbeat } from '../src/io/heartbeat.ts';
 
@@ -96,6 +97,80 @@ test('a generic heartbeat refreshes the selected JSON field and stops at a chang
       beater.stop();
     }
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an in-place heartbeat cannot truncate or overwrite an atomically replaced path', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'activity.json');
+  const pauseReady = join(dir, 'pause-ready');
+  const pauseResume = join(dir, 'pause-resume');
+  const pauseDone = join(dir, 'pause-done');
+  const samplerReady = join(dir, 'sampler-ready');
+  const samplerStop = join(dir, 'sampler-stop');
+  const sizesPath = join(dir, 'sizes.jsonl');
+  const original = { owner_token: 'old-owner', beat_at: '2000-01-01T00:00:00.000Z' };
+  const replacement = { owner_token: 'new-owner', beat_at: '2001-01-01T00:00:00.000Z' };
+  let sampler: ReturnType<typeof spawn> | undefined;
+  let beater: ReturnType<typeof startJsonHeartbeat> | undefined;
+  try {
+    writeJsonAtomic(path, original);
+    beater = startJsonHeartbeat(path, {
+      field: 'beat_at',
+      valueFormat: 'iso',
+      guard: { owner_token: original.owner_token },
+      intervalMs: 60_000,
+      testPauseAfterRead: { readyPath: pauseReady, resumePath: pauseResume, donePath: pauseDone },
+    });
+    assert.ok(await waitUntil(() => existsSync(pauseReady)), 'heartbeat never paused after reading');
+
+    sampler = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const fs=require('node:fs');` +
+          `fs.writeFileSync(${JSON.stringify(samplerReady)},'ready');` +
+          `const t=setInterval(()=>{` +
+          `try{fs.appendFileSync(${JSON.stringify(sizesPath)},String(fs.statSync(${JSON.stringify(path)}).size)+'\\n');}catch{}` +
+          `if(fs.existsSync(${JSON.stringify(samplerStop)})){clearInterval(t);process.exit(0);}` +
+          `},1);` +
+          `setTimeout(()=>{clearInterval(t);process.exit(1)},5000);`,
+      ],
+      { stdio: 'ignore' },
+    );
+    assert.ok(await waitUntil(() => existsSync(samplerReady)), 'size sampler never started');
+
+    writeJsonAtomic(path, replacement);
+    const replacementRaw = readFileSync(path, 'utf8');
+    const replacementInode = statSync(path, { bigint: true }).ino;
+    writeFileSync(pauseResume, 'resume');
+    assert.ok(await waitUntil(() => existsSync(pauseDone)), 'heartbeat never resumed its old-fd write');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    writeFileSync(samplerStop, 'stop');
+    assert.ok(
+      await waitUntil(() => sampler!.exitCode !== null || sampler!.signalCode !== null),
+      'size sampler did not stop',
+    );
+    assert.equal(sampler.exitCode, 0);
+    assert.equal(readFileSync(path, 'utf8'), replacementRaw, 'old heartbeat overwrote replacement content');
+    assert.equal(
+      statSync(path, { bigint: true }).ino,
+      replacementInode,
+      'old heartbeat replaced the new inode',
+    );
+    const sizes = readFileSync(sizesPath, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map(Number);
+    assert.ok(sizes.length > 5, `size sampler barely overlapped the write (${sizes.length})`);
+    assert.equal(sizes.includes(0), false, 'sampler observed a truncate-on-open zero-byte window');
+  } finally {
+    beater?.stop();
+    if (sampler !== undefined && sampler.exitCode === null && sampler.signalCode === null) {
+      sampler.kill('SIGKILL');
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 });

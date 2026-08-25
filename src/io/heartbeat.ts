@@ -47,13 +47,14 @@ export interface HeartbeatHandle {
 // never as proof of staleness -- which is what acquireLock does before it reclaims anything.
 const CHILD_SOURCE = `
 const fs = require('node:fs');
-const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw] = process.argv.slice(1);
+const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
 const indent = Number(indentRaw);
 const interval = Number(intervalRaw);
 const parentPid = Number(parentRaw);
 let guard;
 try { guard = JSON.parse(guardRaw); } catch { process.exit(0); }
 function beat() {
+  if (process.ppid !== parentPid) process.exit(0);
   try { process.kill(parentPid, 0); } catch { process.exit(0); }
   let fd;
   try { fd = fs.openSync(filePath, 'r+'); } catch { process.exit(0); }
@@ -64,6 +65,14 @@ function beat() {
     for (const [key, value] of Object.entries(guard)) {
       if (!Object.prototype.hasOwnProperty.call(stored, key) || stored[key] !== value) process.exit(0);
     }
+    if (pauseReady) {
+      try {
+        fs.writeFileSync(pauseReady, 'ready');
+        while (!fs.existsSync(pauseResume)) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+      } catch { process.exit(0); }
+    }
     stored[field] = valueFormat === 'iso' ? new Date().toISOString() : Date.now();
     const data = Buffer.from(JSON.stringify(stored, null, indent) + '\\n');
     let offset = 0;
@@ -73,6 +82,9 @@ function beat() {
       offset += written;
     }
     fs.ftruncateSync(fd, data.length);
+    if (pauseDone) {
+      try { fs.writeFileSync(pauseDone, 'done'); } catch { process.exit(0); }
+    }
   } finally {
     try { fs.closeSync(fd); } catch {}
   }
@@ -95,6 +107,8 @@ export interface JsonHeartbeatOptions {
   /** JSON indentation used by lifecycle writes; matching it keeps each heartbeat the same size. */
   indent?: number;
   intervalMs?: number;
+  /** Fault-injection handshake used only to prove the open/read/write inode interleaving. */
+  testPauseAfterRead?: { readyPath: string; resumePath: string; donePath: string };
 }
 
 /**
@@ -122,6 +136,9 @@ export function startJsonHeartbeat(
       String(options.indent ?? 0),
       String(intervalMs),
       String(process.pid),
+      options.testPauseAfterRead?.readyPath ?? '',
+      options.testPauseAfterRead?.resumePath ?? '',
+      options.testPauseAfterRead?.donePath ?? '',
     ],
     { detached: true, stdio: 'ignore' },
   );
