@@ -6,7 +6,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { ActivityOutcome, DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import {
   detectContractConflict,
@@ -32,6 +32,7 @@ import {
   uncommittedSourceFilesOrUnknown,
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
+import { claimActivity, finishActivity, startActivityHeartbeat } from '../io/activity.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
 import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
@@ -75,6 +76,10 @@ import { verifyTask } from './verifier.ts';
 export interface DispatchDeps {
   paths: RouterPaths;
   clock: Clock;
+  /** Internal test seam; production uses the shared 15-second activity heartbeat. */
+  activityHeartbeatIntervalMs?: number;
+  /** Internal test seam for observing non-fatal activity cleanup diagnostics. */
+  activityDiagnostic?: (message: string) => void;
 }
 
 /**
@@ -564,9 +569,55 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   // will not hand back a handle while one is still writing to this checkout.
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
   return withCheckoutLock(lock, async (envelope) => {
-    const prep = prepareRun(deps, id);
-    return runPrepared(deps, prep, gateConfig, envelope);
+    return withTaskActivity(deps, id, async () => {
+      const prep = prepareRun(deps, id);
+      return runPrepared(deps, prep, gateConfig, envelope);
+    });
   });
+}
+
+function taskActivityOutcome(result: RunResult): ActivityOutcome {
+  if (result.timed_out || result.exit_class === 'timeout') return 'timed_out';
+  if (result.stalled || result.exit_class === 'stalled') return 'stalled';
+  return result.exit_class === 'ok' && result.verifier?.result === 'PASSED' ? 'ok' : 'failed';
+}
+
+/** Publish one task's display-only liveness for every phase inside the checkout transaction. */
+async function withTaskActivity(
+  deps: DispatchDeps,
+  id: string,
+  body: () => Promise<RunResult>,
+): Promise<RunResult> {
+  const label = `task:${id}`;
+  const claimed = claimActivity(deps.paths, label, {
+    statusPath: deps.paths.runStatus(id),
+  });
+  const heartbeat = startActivityHeartbeat(
+    claimed.path,
+    claimed.record,
+    deps.activityHeartbeatIntervalMs,
+  );
+  let outcome: ActivityOutcome = 'failed';
+  try {
+    const started = await heartbeat.started;
+    if (!started.ok) {
+      throw new Error(`task activity heartbeat failed to start for '${label}': ${started.error.message}`);
+    }
+    const result = await body();
+    outcome = taskActivityOutcome(result);
+    return result;
+  } finally {
+    heartbeat.stop();
+    const diagnostics: string[] = [];
+    finishActivity(claimed, outcome, diagnostics, undefined, {
+      attempts: 3,
+      retryDelayMs: 25,
+    });
+    for (const diagnostic of diagnostics) {
+      if (deps.activityDiagnostic !== undefined) deps.activityDiagnostic(diagnostic);
+      else process.stderr.write(`router: dispatch cleanup: ${diagnostic}\n`);
+    }
+  }
 }
 
 /**
@@ -755,7 +806,9 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   // dispatch, both writing the same files.
   const gateConfig = loadGateConfig(paths);
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
-  return withCheckoutLock(lock, (envelope) => resumeInLock(deps, id, feedback, gateConfig, envelope));
+  return withCheckoutLock(lock, (envelope) =>
+    withTaskActivity(deps, id, () => resumeInLock(deps, id, feedback, gateConfig, envelope)),
+  );
 }
 
 async function resumeInLock(

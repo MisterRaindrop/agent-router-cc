@@ -3,8 +3,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fx from '../testkit/gitRepo.ts';
@@ -12,8 +14,16 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
+import {
+  ActivityAlreadyExistsError,
+  activityKey,
+  activityState,
+  observeActivities,
+  readActivity,
+} from '../src/io/activity.ts';
 import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
-import { acquireLock, readLock } from '../src/io/lock.ts';
+import { superviseCommand } from '../src/app/supervise.ts';
+import { acquireLock, DEFAULT_STALE_MS, readLock } from '../src/io/lock.ts';
 import { currentBranch, uncommittedSourceFiles } from '../src/io/git.ts';
 
 const NODE = process.execPath;
@@ -21,6 +31,10 @@ const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta
 const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const FAKE_CLAUDE = fileURLToPath(new URL('../testkit/fakeClaude.mjs', import.meta.url));
 const FAKE_ENV = fileURLToPath(new URL('../testkit/fakeExecutorEnv.mjs', import.meta.url));
+const DISPATCH_MODULE = new URL('../src/app/dispatch.ts', import.meta.url).href;
+const PATHS_MODULE = new URL('../src/io/paths.ts', import.meta.url).href;
+const CLOCK_MODULE = new URL('../src/io/clock.ts', import.meta.url).href;
+const ACTIVITY_MODULE = new URL('../src/io/activity.ts', import.meta.url).href;
 
 const POLICY = `schema_version: 1
 worker:
@@ -89,6 +103,85 @@ verify: []
 `,
   );
   writeFileSync(paths.contractMd(id), CONTRACT);
+}
+
+async function waitUntil(check: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(`condition was not met within ${timeoutMs}ms`);
+}
+
+async function waitForExit(child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { code: child.exitCode, signal: child.signalCode };
+  }
+  return await new Promise((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+}
+
+interface RunningDispatch {
+  child: ChildProcess;
+  done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  stdout(): string;
+  stderr(): string;
+}
+
+function startTaskProcess(
+  repo: string,
+  paths: ReturnType<typeof routerPaths>,
+  executor: string,
+  heartbeatIntervalMs = 40,
+  resumeFeedback?: string,
+): RunningDispatch {
+  const invocation =
+    resumeFeedback === undefined
+      ? `dispatchTask(deps,'t1')`
+      : `resumeTask(deps,'t1',${JSON.stringify(resumeFeedback)})`;
+  const source =
+    `const [{dispatchTask,resumeTask},{routerPaths},{systemClock}]=await Promise.all([` +
+    `import(${JSON.stringify(DISPATCH_MODULE)}),` +
+    `import(${JSON.stringify(PATHS_MODULE)}),` +
+    `import(${JSON.stringify(CLOCK_MODULE)})]);` +
+    `try{` +
+    `const deps={` +
+    `paths:routerPaths(${JSON.stringify(paths.root)}),clock:systemClock,` +
+    `activityHeartbeatIntervalMs:${heartbeatIntervalMs}};` +
+    `const result=await ${invocation};` +
+    `process.stdout.write(JSON.stringify({` +
+    `exit_class:result.exit_class,verifier:result.verifier?.result,` +
+    `state_tampering:result.state_tampering})+'\\n');` +
+    `}catch(error){console.error(error?.stack??String(error));process.exitCode=1;}`;
+  const child = spawn(NODE, ['--input-type=module', '-e', source], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      ROUTER_CODEX_BIN: executor,
+      ROUTER_CODEX_SESSIONS_DIR: join(repo, 'no-sessions'),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  return {
+    child,
+    done: waitForExit(child),
+    stdout: () => stdout,
+    stderr: () => stderr,
+  };
+}
+
+function killProcessGroup(pid: number): void {
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    /* already gone */
+  }
 }
 
 test('dispatchTask runs the executor synchronously to a PASSED verifier result', async () => {
@@ -613,6 +706,342 @@ test('a verify command that forges router state fails the run instead of passing
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatch refuses an activity owned by supervise without overwriting or deleting it', async () => {
+  const { repo, paths, deps } = setup();
+  const label = 'task:t1';
+  const activityPath = paths.activity(activityKey(label));
+  const releasePath = join(repo, 'release-supervised-task-label');
+  const supervised = superviseCommand({
+    paths,
+    label,
+    logPath: join(repo, 'supervised-task-label.log'),
+    argv: [
+      NODE,
+      '-e',
+      `const fs=require('node:fs');while(!fs.existsSync(${JSON.stringify(releasePath)})){` +
+        `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}`,
+    ],
+    cwd: repo,
+    env: process.env,
+    activityHeartbeatIntervalMs: 40,
+  });
+
+  try {
+    stageTask(paths);
+    await waitUntil(() => readActivity(activityPath) !== null);
+    const original = readActivity(activityPath);
+    assert.ok(original);
+
+    await assert.rejects(dispatchTask(deps, 't1'), (error: unknown) => {
+      assert.ok(error instanceof ActivityAlreadyExistsError, String(error));
+      assert.equal(error.activity?.owner_token, original.owner_token);
+      assert.match(error.message, new RegExp(`pid ${process.pid}`));
+      return true;
+    });
+
+    const afterRefusal = readActivity(activityPath);
+    assert.ok(afterRefusal);
+    assert.equal(afterRefusal.owner_token, original.owner_token);
+    assert.equal(activityState(afterRefusal), 'running');
+    assert.equal(existsSync(paths.runStatus('t1')), false, 'dispatch wrote status before claiming its activity');
+    assert.equal(currentBranch(repo), 'main');
+
+    writeFileSync(releasePath, 'release');
+    const result = await supervised;
+    assert.equal(result.exitCode, 0);
+    assert.equal(existsSync(activityPath), false);
+  } finally {
+    writeFileSync(releasePath, 'release');
+    await supervised.catch(() => undefined);
+    fx.cleanup(repo);
+  }
+});
+
+test('an independent process observes running heartbeats strictly inside the spawnSync verify window', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths } = setup();
+  const observerDir = join(paths.taskDir('t1'), 'logs');
+  const verifyGo = join(observerDir, 'verify-go');
+  const verifyWindow = join(observerDir, 'verify-window.json');
+  const watcherReady = join(observerDir, 'watcher-ready');
+  const watcherStop = join(observerDir, 'watcher-stop');
+  const samples = join(observerDir, 'activity-samples.jsonl');
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const verifySource =
+    `const fs=require('node:fs');` +
+    `while(!fs.existsSync(${JSON.stringify(verifyGo)})){` +
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}` +
+    `const blockedFrom=Date.now();` +
+    `fs.writeFileSync(${JSON.stringify(verifyWindow)},JSON.stringify({blockedFrom}));` +
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1200);` +
+    `const blockedUntil=Date.now();` +
+    `fs.writeFileSync(${JSON.stringify(verifyWindow)},JSON.stringify({blockedFrom,blockedUntil}));`;
+  let owner: RunningDispatch | undefined;
+  let watcher: ChildProcess | undefined;
+
+  try {
+    stageTask(
+      paths,
+      TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`),
+    );
+    mkdirSync(observerDir, { recursive: true });
+    owner = startTaskProcess(repo, paths, FAKE_CODEX);
+    await waitUntil(() => readActivity(activityPath) !== null);
+    const initial = readActivity(activityPath);
+    assert.ok(initial);
+    assert.equal(initial.label, 'task:t1');
+    assert.equal(initial.pid, owner.child.pid);
+    assert.equal(initial.status_path, paths.runStatus('t1'));
+
+    const watcherSource =
+      `const fs=await import('node:fs');` +
+      `const {readActivity,activityState}=await import(${JSON.stringify(ACTIVITY_MODULE)});` +
+      `fs.writeFileSync(${JSON.stringify(watcherReady)},'ready');` +
+      `const timer=setInterval(()=>{` +
+      `const record=readActivity(${JSON.stringify(activityPath)});` +
+      `if(record!==null){fs.appendFileSync(${JSON.stringify(samples)},` +
+      `JSON.stringify([Date.now(),record.beat_at,activityState(record)])+'\\n');}` +
+      `if(fs.existsSync(${JSON.stringify(watcherStop)})){clearInterval(timer);process.exit(0);}` +
+      `},15);` +
+      `setTimeout(()=>{clearInterval(timer);process.exit(1)},8000);`;
+    watcher = spawn(NODE, ['--input-type=module', '-e', watcherSource], { stdio: 'ignore' });
+    await waitUntil(() => existsSync(watcherReady));
+    writeFileSync(verifyGo, 'go');
+
+    let window: { blockedFrom: number; blockedUntil: number } | undefined;
+    await waitUntil(() => {
+      try {
+        const value = JSON.parse(readFileSync(verifyWindow, 'utf8')) as Partial<{
+          blockedFrom: number;
+          blockedUntil: number;
+        }>;
+        if (typeof value.blockedFrom !== 'number' || typeof value.blockedUntil !== 'number') return false;
+        window = { blockedFrom: value.blockedFrom, blockedUntil: value.blockedUntil };
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    writeFileSync(watcherStop, 'stop');
+    const watcherExit = await waitForExit(watcher);
+    assert.deepEqual(watcherExit, { code: 0, signal: null });
+
+    assert.ok(window);
+    const completedWindow = window;
+    const rows = readFileSync(samples, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as [number, string, string]);
+    const insideVerifyBlock = rows.filter(
+      ([sampledAt]) =>
+        sampledAt > completedWindow.blockedFrom && sampledAt < completedWindow.blockedUntil,
+    );
+    assert.ok(
+      insideVerifyBlock.length > 5,
+      `independent watcher barely sampled the verify block (${insideVerifyBlock.length})`,
+    );
+    assert.deepEqual(
+      new Set(insideVerifyBlock.map(([, , state]) => state)),
+      new Set(['running']),
+      'the external liveness decision changed during synchronous verification',
+    );
+    const beatsInsideBlock = new Set(insideVerifyBlock.map(([, beatAt]) => beatAt));
+    assert.ok(
+      beatsInsideBlock.size >= 2,
+      `only ${beatsInsideBlock.size} distinct beat_at values landed inside spawnSync verification`,
+    );
+
+    const ended = await owner.done;
+    assert.deepEqual(ended, { code: 0, signal: null }, owner.stderr());
+    const output = JSON.parse(owner.stdout().trim()) as Record<string, unknown>;
+    assert.equal(output.exit_class, 'ok');
+    assert.equal(output.verifier, 'PASSED');
+    assert.equal(output.state_tampering, undefined);
+    assert.equal(existsSync(activityPath), false, 'normal dispatch left an activity behind');
+  } finally {
+    if (watcher !== undefined && watcher.exitCode === null && watcher.signalCode === null) {
+      watcher.kill('SIGKILL');
+    }
+    if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+      owner.child.kill('SIGKILL');
+    }
+    fx.cleanup(repo);
+  }
+});
+
+test('resume publishes the same task activity and removes it after normal closeout', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths } = setup();
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const delayedExecutor = join(paths.taskDir('t1'), 'logs', 'delayed-resume.mjs');
+  let initial: RunningDispatch | undefined;
+  let resumed: RunningDispatch | undefined;
+
+  try {
+    stageTask(paths);
+    initial = startTaskProcess(repo, paths, FAKE_CODEX);
+    const initialExit = await initial.done;
+    assert.deepEqual(initialExit, { code: 0, signal: null }, initial.stderr());
+    assert.equal(existsSync(activityPath), false);
+
+    mkdirSync(join(paths.taskDir('t1'), 'logs'), { recursive: true });
+    writeFileSync(
+      delayedExecutor,
+      `#!/usr/bin/env node\n` +
+        `import {spawnSync} from 'node:child_process';\n` +
+        `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,600);\n` +
+        `const run=spawnSync(${JSON.stringify(FAKE_CODEX)},process.argv.slice(2),{stdio:'inherit'});\n` +
+        `process.exit(run.status??1);\n`,
+    );
+    chmodSync(delayedExecutor, 0o755);
+    resumed = startTaskProcess(repo, paths, delayedExecutor, 40, 'tighten it');
+    await waitUntil(() => readActivity(activityPath) !== null);
+
+    const activity = readActivity(activityPath);
+    assert.ok(activity);
+    assert.equal(activity.label, 'task:t1');
+    assert.equal(activity.pid, resumed.child.pid);
+    assert.equal(activity.status_path, paths.runStatus('t1'));
+    assert.equal(activityState(activity), 'running');
+
+    const resumedExit = await resumed.done;
+    assert.deepEqual(resumedExit, { code: 0, signal: null }, resumed.stderr());
+    const output = JSON.parse(resumed.stdout().trim()) as Record<string, unknown>;
+    assert.equal(output.exit_class, 'ok');
+    assert.equal(output.verifier, 'PASSED');
+    assert.equal(output.state_tampering, undefined);
+    assert.equal(existsSync(activityPath), false, 'normal resume left an activity behind');
+  } finally {
+    if (resumed !== undefined && resumed.child.exitCode === null && resumed.child.signalCode === null) {
+      resumed.child.kill('SIGKILL');
+    }
+    if (initial !== undefined && initial.child.exitCode === null && initial.child.signalCode === null) {
+      initial.child.kill('SIGKILL');
+    }
+    fx.cleanup(repo);
+  }
+});
+
+test('activity cleanup retries, reports failure, and never replaces a successful dispatch result', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const mutableFs = createRequire(import.meta.url)('node:fs') as {
+    unlinkSync(path: string): void;
+  };
+  const originalUnlink = mutableFs.unlinkSync;
+  const diagnostics: string[] = [];
+  let cleanupAttempts = 0;
+  const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+
+  try {
+    stageTask(paths);
+    process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+    process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+    mutableFs.unlinkSync = (path: string): void => {
+      if (path === activityPath) {
+        cleanupAttempts += 1;
+        throw Object.assign(new Error('EPERM injected activity cleanup failure'), { code: 'EPERM' });
+      }
+      originalUnlink(path);
+    };
+    syncBuiltinESMExports();
+
+    const result = await dispatchTask(
+      { ...deps, activityDiagnostic: (message) => diagnostics.push(message) },
+      't1',
+    );
+
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.verifier?.result, 'PASSED');
+    assert.equal(cleanupAttempts, 3, 'dispatch did not retry an owner-safe activity cleanup');
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0]!, /could not remove activity.*EPERM injected activity cleanup failure/);
+    const remnant = readActivity(activityPath);
+    assert.ok(remnant);
+    assert.equal(remnant.pid, process.pid);
+    assert.equal(activityState(remnant), 'running');
+  } finally {
+    mutableFs.unlinkSync = originalUnlink;
+    syncBuiltinESMExports();
+    if (existsSync(activityPath)) originalUnlink(activityPath);
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(repo);
+  }
+});
+
+test('SIGKILL leaves dispatch disconnected within the stale threshold without claiming a phase', async () => {
+  const { repo, paths } = setup();
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const workerPidPath = join(paths.taskDir('t1'), 'logs', 'killed-worker.pid');
+  const hangingExecutor = join(repo, 'fake-hanging-executor.mjs');
+  let owner: RunningDispatch | undefined;
+  let workerPid: number | undefined;
+
+  try {
+    stageTask(paths);
+    writeFileSync(
+      hangingExecutor,
+      `#!/usr/bin/env node\n` +
+        `import {mkdirSync,writeFileSync} from 'node:fs';\n` +
+        `import {dirname} from 'node:path';\n` +
+        `mkdirSync(dirname(${JSON.stringify(workerPidPath)}),{recursive:true});\n` +
+        `writeFileSync(${JSON.stringify(workerPidPath)},String(process.pid));\n` +
+        `setInterval(()=>{},1000);\n`,
+    );
+    chmodSync(hangingExecutor, 0o755);
+    owner = startTaskProcess(repo, paths, hangingExecutor);
+    await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
+    workerPid = Number(readFileSync(workerPidPath, 'utf8'));
+
+    const running = readActivity(activityPath);
+    assert.ok(running);
+    assert.equal(running.pid, owner.child.pid);
+    assert.equal(running.status_path, paths.runStatus('t1'));
+    assert.equal(activityState(running), 'running');
+    const statusBeforeKill = JSON.parse(readFileSync(paths.runStatus('t1'), 'utf8')) as {
+      phase?: string;
+    };
+    assert.equal(statusBeforeKill.phase, 'executor_working');
+    const rawRunning = JSON.parse(readFileSync(activityPath, 'utf8')) as Record<string, unknown>;
+    assert.equal('phase' in rawRunning, false, 'dispatch copied phase into the activity record');
+
+    const killedAt = Date.now();
+    owner.child.kill('SIGKILL');
+    const ended = await owner.done;
+    assert.equal(ended.signal, 'SIGKILL');
+    await waitUntil(() => activityState(readActivity(activityPath)) === 'disconnected');
+    assert.ok(Date.now() - killedAt < DEFAULT_STALE_MS, 'disconnect detection exceeded the shared threshold');
+
+    const disconnected = readActivity(activityPath);
+    assert.ok(disconnected);
+    assert.equal(activityState(disconnected), 'disconnected');
+    assert.equal(disconnected.pid, owner.child.pid);
+    const rawDisconnected = JSON.parse(readFileSync(activityPath, 'utf8')) as Record<string, unknown>;
+    assert.equal('phase' in rawDisconnected, false, 'the on-disk disconnected activity claimed a phase');
+    assert.equal(existsSync(activityPath), true, 'SIGKILL unexpectedly ran normal activity cleanup');
+    // The richer status file is intentionally left untouched; consumers may follow it only for
+    // running activities. Exercise the real activity projection rather than reproducing that
+    // decision in this test.
+    const staleStatus = JSON.parse(readFileSync(disconnected.status_path!, 'utf8')) as { phase?: string };
+    assert.equal(staleStatus.phase, 'executor_working');
+    const projected = observeActivities(paths.activityDir);
+    assert.equal(projected.length, 1);
+    assert.equal(projected[0]!.state, 'disconnected');
+    assert.equal(projected[0]!.record.owner_token, disconnected.owner_token);
+  } finally {
+    if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+      owner.child.kill('SIGKILL');
+    }
+    if (workerPid !== undefined) killProcessGroup(workerPid);
     fx.cleanup(repo);
   }
 });

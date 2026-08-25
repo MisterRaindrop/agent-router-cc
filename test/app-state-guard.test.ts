@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fingerprintState, stateDiff } from '../src/app/stateGuard.ts';
+import { activityKey } from '../src/io/activity.ts';
 import { routerPaths } from '../src/io/paths.ts';
 
 function freshState() {
@@ -104,6 +105,53 @@ test('creations and deletions are reported alongside modifications', () => {
       'created tasks/forged/result.json',
       'deleted tasks/victim/result.json',
     ]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// Skipping the WHOLE `activity/` directory was a hole, and the reviewer walked through it: an
+// executor could forge somebody else's liveness record with a live pid and a future `beat_at`,
+// have it read `running` forever, and block a later `router supervise --label` on that name.
+// Measured before this fix: `diff: []`, state `running`.
+//
+// So only OUR record is skipped -- we create it, beat it, and delete it -- and for every other
+// record the heartbeat field is normalised away while the rest of it stays watched.
+test('only our own liveness record is unwatched, and only its heartbeat', () => {
+  const fx = freshState();
+  const own = `activity/${activityKey('task:mine')}.json`;
+  const rec = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({ label: 'review:x', owner_token: 'p', pid: 1, started_at: 'A', beat_at: '1', ...over }, null, 2);
+  try {
+    // Ours: creating it and beating it must both be invisible, or every dispatch fails itself.
+    let before = fingerprintState(fx.paths, 'mine');
+    fx.write(own, rec({ label: 'task:mine', beat_at: 'B' }));
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), []);
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write(own, rec({ label: 'task:mine', beat_at: 'C' }));
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), []);
+
+    // Somebody else's beat: also invisible, so a concurrent `supervise` is not a false alarm.
+    fx.write('activity/other.json', rec());
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write('activity/other.json', rec({ beat_at: '2' }));
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), []);
+
+    // A forged record appearing IS the finding.
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write('activity/forged.json', rec({ label: 'review:architect', beat_at: '2100-01-01T00:00:00.000Z' }));
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), ['created activity/forged.json']);
+
+    // So is changing whose record it is.
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write('activity/other.json', rec({ owner_token: 'HIJACKED', beat_at: '2' }));
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), ['modified activity/other.json']);
+
+    // And a non-JSON file under activity/ is hashed raw rather than quietly ignored.
+    fx.write('activity/junk.json', 'not json at all');
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write('activity/junk.json', 'still not json');
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), ['modified activity/junk.json']);
   } finally {
     fx.cleanup();
   }
