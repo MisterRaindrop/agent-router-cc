@@ -6647,7 +6647,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync6, readdirSync as readdirSync7, readFileSync as readFileSync15, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync6, readdirSync as readdirSync7, readFileSync as readFileSync15, writeFileSync as writeFileSync7 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname7, join as join13, resolve as resolve5 } from "node:path";
@@ -10327,9 +10327,29 @@ function startJsonHeartbeat(filePath, options) {
     ],
     { detached: true, stdio: "ignore" }
   );
-  child.unref();
   let stopped = false;
-  const pid = child.pid ?? null;
+  let pid = child.pid ?? null;
+  const started = new Promise((resolve6) => {
+    child.once("spawn", () => {
+      pid = child.pid ?? null;
+      if (pid === null) {
+        resolve6({ ok: false, error: new Error("heartbeat child started without a pid") });
+        return;
+      }
+      if (stopped) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+        }
+      }
+      resolve6({ ok: true, pid });
+    });
+    child.once("error", (error) => {
+      pid = null;
+      resolve6({ ok: false, error });
+    });
+  });
+  child.unref();
   const stop = () => {
     if (stopped) return;
     stopped = true;
@@ -10343,7 +10363,8 @@ function startJsonHeartbeat(filePath, options) {
     stop,
     get pid() {
       return pid;
-    }
+    },
+    started
   };
 }
 function startHeartbeat(lockPath, ownerToken2, intervalMs = DEFAULT_BEAT_MS) {
@@ -14461,7 +14482,7 @@ function extractInner(command) {
 
 // src/app/supervise.ts
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { linkSync as linkSync2, mkdirSync as mkdirSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync10, linkSync as linkSync2, mkdirSync as mkdirSync5, statSync as statSync8, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname as dirname6 } from "node:path";
 
@@ -14524,6 +14545,20 @@ function readActivity(path) {
     return null;
   }
 }
+function pidIsAlive(pid) {
+  if (!validPid(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err2) {
+    return err2.code === "EPERM";
+  }
+}
+function activityState(activity, nowMs = Date.now(), staleMs = DEFAULT_STALE_MS) {
+  if (activity === null || activity.ended_at !== void 0) return "idle";
+  const fresh = nowMs - Date.parse(activity.beat_at) <= staleMs;
+  return pidIsAlive(activity.pid) && fresh ? "running" : "disconnected";
+}
 function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
   return startJsonHeartbeat(path, {
     field: "beat_at",
@@ -14539,6 +14574,7 @@ function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
 // src/app/supervise.ts
 var MAX_WALL_MS = 24 * 60 * 6e4;
 var STALL_MS = 20 * 6e4;
+var SUPERVISE_INTERNAL_ERROR_CODE = 70;
 var ActivityAlreadyExistsError = class extends Error {
   activity;
   path;
@@ -14550,8 +14586,56 @@ var ActivityAlreadyExistsError = class extends Error {
     this.path = path;
   }
 };
+var HeartbeatStartupError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "HeartbeatStartupError";
+  }
+};
 function errorCode2(error) {
   return error.code;
+}
+function sameIdentity2(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+function activitySnapshot(path) {
+  try {
+    const before = statSync8(path, { bigint: true });
+    const record = readActivity(path);
+    const after = statSync8(path, { bigint: true });
+    if (record === null || before.dev !== after.dev || before.ino !== after.ino) return null;
+    return { record, identity: { dev: after.dev, ino: after.ino } };
+  } catch {
+    return null;
+  }
+}
+function reclaimDisconnectedActivity(path, expected) {
+  const reclaimPath = `${path}.reclaim`;
+  try {
+    linkSync2(path, reclaimPath);
+  } catch (error) {
+    if (errorCode2(error) === "ENOENT" || errorCode2(error) === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    const guarded = activitySnapshot(reclaimPath);
+    const current = activitySnapshot(path);
+    if (guarded === null || current === null || guarded.record.owner_token !== expected.owner_token || current.record.owner_token !== expected.owner_token || !sameIdentity2(guarded.identity, current.identity) || activityState(current.record) !== "disconnected") {
+      return false;
+    }
+    try {
+      unlinkSync4(path);
+      return true;
+    } catch (error) {
+      if (errorCode2(error) === "ENOENT") return true;
+      throw error;
+    }
+  } finally {
+    try {
+      unlinkSync4(reclaimPath);
+    } catch {
+    }
+  }
 }
 function claimActivity(paths, label) {
   const path = paths.activity(activityKey(label));
@@ -14564,12 +14648,21 @@ function claimActivity(paths, label) {
     beat_at: startedAt
   });
   try {
-    linkSync2(candidate, path);
-  } catch (error) {
-    if (errorCode2(error) === "EEXIST") {
+    if (existsSync10(`${path}.reclaim`)) {
       throw new ActivityAlreadyExistsError(label, path, readActivity(path));
     }
-    throw error;
+    for (; ; ) {
+      try {
+        linkSync2(candidate, path);
+        break;
+      } catch (error) {
+        if (errorCode2(error) !== "EEXIST") throw error;
+        const existing = readActivity(path);
+        if (existing === null || activityState(existing) !== "disconnected" || !reclaimDisconnectedActivity(path, existing)) {
+          throw new ActivityAlreadyExistsError(label, path, existing);
+        }
+      }
+    }
   } finally {
     try {
       unlinkSync4(candidate);
@@ -14577,7 +14670,11 @@ function claimActivity(paths, label) {
       if (errorCode2(error) !== "ENOENT") throw error;
     }
   }
-  return { path, record };
+  const installed = activitySnapshot(path);
+  if (installed === null || installed.record.owner_token !== record.owner_token) {
+    throw new Error(`could not confirm ownership of activity '${label}' at ${path}`);
+  }
+  return { path, record, identity: installed.identity };
 }
 function activityOutcome(outcome) {
   if (outcome.timedOut) return "timed_out";
@@ -14596,13 +14693,76 @@ function exitCode(outcome) {
   if (outcome.spawnError !== null) return 127;
   return 1;
 }
+function signalExitCode(signal) {
+  const signalNumber = osConstants.signals[signal];
+  return signalNumber === void 0 ? 1 : 128 + signalNumber;
+}
+function finishActivity(claimed, outcome, diagnostics, endedAt = (/* @__PURE__ */ new Date()).toISOString()) {
+  const current = activitySnapshot(claimed.path);
+  if (current === null || current.record.owner_token !== claimed.record.owner_token || !sameIdentity2(current.identity, claimed.identity)) {
+    diagnostics.push(`could not remove activity ${claimed.path}: ownership or file identity changed`);
+    return;
+  }
+  try {
+    writeActivity(claimed.path, { ...claimed.record, ended_at: endedAt, outcome });
+  } catch (error) {
+    diagnostics.push(`could not remove activity ${claimed.path}: ${error.message}`);
+  }
+}
+function bridgeTerminalSignals(diagnostics) {
+  let signal = null;
+  let pgid = null;
+  const forward = (received) => {
+    signal ??= received;
+    if (pgid === null) return;
+    try {
+      killProcessGroup(pgid, received);
+    } catch (error) {
+      diagnostics.push(`could not forward ${received} to worker group ${pgid}: ${error.message}`);
+    }
+  };
+  const onSigint = () => forward("SIGINT");
+  const onSigterm = () => forward("SIGTERM");
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  return {
+    get signal() {
+      return signal;
+    },
+    setPgid(nextPgid) {
+      pgid = nextPgid;
+      if (signal !== null) forward(signal);
+    },
+    dispose() {
+      process.off("SIGINT", onSigint);
+      process.off("SIGTERM", onSigterm);
+    }
+  };
+}
 async function superviseCommand(spec) {
   const claimed = claimActivity(spec.paths, spec.label);
   const workerHeartbeatPath = `${claimed.path}.worker-heartbeat`;
+  const diagnostics = [];
+  const signals = bridgeTerminalSignals(diagnostics);
   let activityHeartbeat;
-  let completed = false;
+  let finished = false;
   try {
-    activityHeartbeat = startActivityHeartbeat(claimed.path, claimed.record);
+    activityHeartbeat = startActivityHeartbeat(
+      claimed.path,
+      claimed.record,
+      spec.activityHeartbeatIntervalMs
+    );
+    const heartbeatStarted = await activityHeartbeat.started;
+    if (!heartbeatStarted.ok) {
+      throw new HeartbeatStartupError(
+        `activity heartbeat failed to start for '${spec.label}': ${heartbeatStarted.error.message}`
+      );
+    }
+    if (signals.signal !== null) {
+      finishActivity(claimed, "failed", diagnostics);
+      finished = true;
+      return { exitCode: signalExitCode(signals.signal), supervision: null, diagnostics };
+    }
     mkdirSync5(dirname6(spec.logPath), { recursive: true });
     writeFileSync6(spec.logPath, "");
     const supervision = await superviseWorker({
@@ -14613,30 +14773,30 @@ async function superviseCommand(spec) {
       heartbeatPath: workerHeartbeatPath,
       watchPaths: [],
       maxWallMs: MAX_WALL_MS,
-      stallMs: STALL_MS
+      stallMs: STALL_MS,
+      onPgid: (pgid) => signals.setPgid(pgid)
     });
     const endedAt = new Date(supervision.endedAtMs).toISOString();
-    writeActivity(claimed.path, {
-      ...claimed.record,
-      ended_at: endedAt,
-      outcome: activityOutcome(supervision)
-    });
-    completed = true;
-    return { exitCode: exitCode(supervision), supervision };
-  } finally {
-    if (!completed) {
-      writeActivity(claimed.path, {
-        ...claimed.record,
-        ended_at: (/* @__PURE__ */ new Date()).toISOString(),
-        outcome: "failed"
-      });
+    const code = signals.signal === null ? exitCode(supervision) : signalExitCode(signals.signal);
+    finishActivity(claimed, activityOutcome(supervision), diagnostics, endedAt);
+    finished = true;
+    return { exitCode: code, supervision, diagnostics };
+  } catch (error) {
+    if (!finished) {
+      finishActivity(claimed, "failed", diagnostics);
+      finished = true;
     }
+    throw error;
+  } finally {
     activityHeartbeat?.stop();
     try {
       unlinkSync4(workerHeartbeatPath);
     } catch (error) {
-      if (errorCode2(error) !== "ENOENT") throw error;
+      if (errorCode2(error) !== "ENOENT") {
+        diagnostics.push(`could not remove worker heartbeat ${workerHeartbeatPath}: ${error.message}`);
+      }
     }
+    signals.dispose();
   }
 }
 
@@ -14676,10 +14836,10 @@ function depsFor(ctx, readOnly = false) {
   const paths = routerPaths(rd);
   if (!readOnly) {
     for (const d of [paths.root, paths.tasksDir]) {
-      if (!existsSync10(d)) mkdirSync6(d, { recursive: true });
+      if (!existsSync11(d)) mkdirSync6(d, { recursive: true });
     }
     const gi = join13(paths.root, ".gitignore");
-    if (!existsSync10(gi)) writeFileSync7(gi, "*\n");
+    if (!existsSync11(gi)) writeFileSync7(gi, "*\n");
   }
   return { paths, clock: systemClock };
 }
@@ -14771,8 +14931,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync6(paths.taskDir(id), { recursive: true });
-  if (!existsSync10(paths.taskYaml(id))) writeFileSync7(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync10(paths.contractMd(id))) writeFileSync7(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync11(paths.taskYaml(id))) writeFileSync7(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync11(paths.contractMd(id))) writeFileSync7(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -15020,7 +15180,7 @@ var list = (ctx) => {
     /* read-only */
   );
   const nowMs = Date.parse(clock.nowIso());
-  const ids = existsSync10(paths.tasksDir) ? readdirSync7(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync11(paths.tasksDir) ? readdirSync7(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
@@ -15102,7 +15262,7 @@ var plans = (ctx) => {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const paths = routerPaths(explicit ?? findRouterDir(ctx.cwd) ?? join13(ctx.cwd, ROUTER_DIR));
   const plansRoot = join13(paths.root, "plans");
-  const ids = existsSync10(plansRoot) ? readdirSync7(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync11(plansRoot) ? readdirSync7(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let planFrontmatter = null;
     let hasPlan = true;
@@ -15133,7 +15293,7 @@ var plans = (ctx) => {
       design_revision: designRevision,
       stage,
       critique_round: critiqueRound,
-      decisions: existsSync10(paths.specDecisions(id)),
+      decisions: existsSync11(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null
     };
   });
@@ -15246,7 +15406,7 @@ var setupStatusline = (ctx) => {
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve5(dirname7(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync10(settingsPath)) {
+  if (existsSync11(settingsPath)) {
     try {
       settings = JSON.parse(readFileSync15(settingsPath, "utf8"));
     } catch (e) {
@@ -15261,7 +15421,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { type: "command", command: plan.command };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync10(statuslinePath);
+  const missing = !existsSync11(statuslinePath);
   emit(
     ctx.json,
     {
@@ -15300,7 +15460,7 @@ var models = (ctx) => {
   emit(ctx.json, { ok: true, models: cfg }, () => {
     const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
     const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
-    const src = existsSync10(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    const src = existsSync11(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
     return `model tiers (${src}):
 ${tier("codex")}
 ${tier("claude")}
@@ -15366,7 +15526,7 @@ var doctor = async (ctx) => {
   } catch (e) {
     wasmDetail = e.message;
   }
-  const cacheWritable = existsSync10(paths.root);
+  const cacheWritable = existsSync11(paths.root);
   emit(
     ctx.json,
     {
@@ -15408,9 +15568,13 @@ var superviseHandler = async (ctx) => {
       // Match direct foreground execution: the caller chooses the command and its environment.
       env: process.env
     });
+    for (const diagnostic of result2.diagnostics) err(`router: supervise cleanup: ${diagnostic}`);
     return result2.exitCode;
   } catch (error) {
     if (error instanceof ActivityAlreadyExistsError) throw new CliError(error.message, 2);
+    if (error instanceof HeartbeatStartupError) {
+      throw new CliError(error.message, SUPERVISE_INTERNAL_ERROR_CODE);
+    }
     throw error;
   }
 };

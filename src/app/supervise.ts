@@ -144,9 +144,8 @@ function reclaimDisconnectedActivity(path: string, expected: ActivityRecord): bo
  *
  * `writeActivity` gives us the frozen schema, ownership token, and atomic JSON write. Linking
  * that complete inode into its deterministic final path adds the one property a read-then-write
- * check cannot provide: exactly one of two concurrent callers wins. A disconnected record is
- * deliberately not removed here; lost activities are display evidence, never an auto-cleanup
- * trigger.
+ * check cannot provide: exactly one of two concurrent callers wins. A disconnected predecessor
+ * is removed only through reclaimDisconnectedActivity's token-and-inode confirmation.
  */
 function claimActivity(
   paths: RouterPaths,
@@ -185,8 +184,6 @@ function claimActivity(
         // The stale inode is gone. The same exclusive link decides which waiting caller wins.
       }
     }
-  } catch (error) {
-    throw error;
   } finally {
     try {
       unlinkSync(candidate);
