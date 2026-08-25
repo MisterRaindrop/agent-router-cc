@@ -210,30 +210,61 @@ test('beats land WHILE the owner is blocked, not just after (8b)', async () => {
         ],
         { stdio: 'ignore' },
       );
+      const readSamples = (): [number, number][] => {
+        try {
+          return readFileSync(samples, 'utf8')
+            .split('\n')
+            .filter((l) => l !== '')
+            .map((l) => JSON.parse(l) as [number, number]);
+        } catch {
+          return [];
+        }
+      };
       try {
-        await new Promise((resolve) => setTimeout(resolve, 150)); // let it start sampling
+        // Wait for the CONDITION, not for a duration: a fixed sleep is a bet that the watcher
+        // started within it, and a loaded machine loses that bet by sampling nothing.
+        assert.ok(await waitUntil(() => readSamples().length > 0), 'watcher never sampled');
 
         const blockedFrom = Date.now();
         blockEventLoop(1200); // our loop is gone; no timer of ours can run
         const blockedUntil = Date.now();
 
-        await new Promise((resolve) => setTimeout(resolve, 150)); // let the last samples land
-        const rows = readFileSync(samples, 'utf8')
-          .split('\n')
-          .filter((l) => l !== '')
-          .map((l) => JSON.parse(l) as [number, number]);
+        assert.ok(
+          await waitUntil(() => readSamples().some(([at]) => at >= blockedUntil)),
+          'no sample landed after the block ended',
+        );
+        const rows = readSamples();
 
         const inWindow = rows.filter(([at]) => at >= blockedFrom && at <= blockedUntil);
         assert.ok(inWindow.length > 5, `watcher barely sampled during the block (${inWindow.length})`);
+        // The whole finding, but measured as SUSTAINED beating rather than "at least two values".
+        //
+        // `distinct.size >= 2` was not enough: waiting on the watcher's first sample instead of a
+        // fixed 150ms starts the block sooner, so a heartbeat that beat exactly twice and stopped
+        // could land its second beat inside the window and satisfy it. Measured -- mutating the
+        // child's `setInterval` to a single `setTimeout` kept all seven tests green.
+        //
+        // Splitting the window and requiring a fresh value in each half asks the question the
+        // test exists to ask: was it still beating LATE in the block, with our loop still gone?
+        const midpoint = blockedFrom + (blockedUntil - blockedFrom) / 2;
+        const distinctIn = (from: number, to: number): number =>
+          new Set(inWindow.filter(([at]) => at >= from && at <= to).map(([, beat]) => beat)).size;
+        const firstHalf = distinctIn(blockedFrom, midpoint);
+        const secondHalf = distinctIn(midpoint, blockedUntil);
         const distinct = new Set(inWindow.map(([, beat]) => beat));
-        // The whole finding in one number. An in-process beat would show ONE value here -- the
-        // one written before the block -- because nothing of ours ran until the block ended.
         assert.ok(
           distinct.size >= 2,
           `only ${distinct.size} distinct beatAtMs during a 1.2s block: the beat did not run while blocked`,
         );
+        assert.ok(
+          firstHalf >= 2 && secondHalf >= 2,
+          `the beat did not keep running through the block (first half ${firstHalf}, second half ${secondHalf} distinct values)`,
+        );
       } finally {
+        // Await the exit before the fixture is removed: killing and immediately unlinking races
+        // the watcher's own last write against rmSync.
         watcher.kill('SIGKILL');
+        await waitUntil(() => watcher.exitCode !== null || watcher.signalCode !== null);
       }
     } finally {
       beater.stop();
