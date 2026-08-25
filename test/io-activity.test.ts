@@ -159,12 +159,21 @@ test('a replacement with the same label, pid, and millisecond gets a new heartbe
 test('owner stays running while spawnSync blocks it, then becomes disconnected after SIGKILL', async () => {
   const fx = fixture();
   const path = join(fx.activityDir, 'blocked.json');
-  const blockedMarker = join(fx.root, 'owner-is-blocked');
+  const blockedWindow = join(fx.root, 'blocked-window.json');
+  const samples = join(fx.root, 'samples.jsonl');
+  const watcherReady = join(fx.root, 'watcher-ready');
+  const watcherStop = join(fx.root, 'watcher-stop');
+  const ownerGo = join(fx.root, 'owner-go');
   const moduleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
   const blockerSource =
-    `require('node:fs').writeFileSync(${JSON.stringify(blockedMarker)}, 'blocked');` +
-    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,3000);`;
+    `const fs=require('node:fs');` +
+    `const blockedFrom=Date.now();` +
+    `fs.writeFileSync(${JSON.stringify(blockedWindow)},JSON.stringify({blockedFrom}));` +
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1200);` +
+    `const blockedUntil=Date.now();` +
+    `fs.writeFileSync(${JSON.stringify(blockedWindow)},JSON.stringify({blockedFrom,blockedUntil}));`;
   let owner: ChildProcess | undefined;
+  let watcher: ChildProcess | undefined;
   try {
     const spawnedOwner = spawn(
       process.execPath,
@@ -172,11 +181,13 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
         '--input-type=module',
         '-e',
         `const { spawnSync } = await import('node:child_process');\n` +
+          `const { existsSync } = await import('node:fs');\n` +
           `const { writeActivity, startActivityHeartbeat } = await import(${JSON.stringify(moduleUrl)});\n` +
           `const started_at = new Date().toISOString();\n` +
           `const activity = writeActivity(${JSON.stringify(path)}, { label: 'task:blocked', pid: process.pid, started_at, beat_at: started_at });\n` +
           `const heartbeat = startActivityHeartbeat(${JSON.stringify(path)}, activity, 40);\n` +
           `console.log(JSON.stringify({ started_at, heartbeat_pid: heartbeat.pid }));\n` +
+          `while (!existsSync(${JSON.stringify(ownerGo)})) await new Promise((resolve) => setTimeout(resolve, 10));\n` +
           `spawnSync(process.execPath, ['-e', ${JSON.stringify(blockerSource)}]);\n` +
           `setInterval(() => {}, 1000);\n`,
       ],
@@ -186,17 +197,64 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
     let stdout = '';
     spawnedOwner.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     assert.ok(await waitUntil(() => stdout.trim() !== ''), 'owner never initialized its activity');
-    assert.ok(await waitUntil(() => existsSync(blockedMarker)), 'owner never entered spawnSync');
-    const firstBlockedBeat = readActivity(path)?.beat_at;
-    assert.ok(firstBlockedBeat !== undefined);
 
+    watcher = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const fs=require('node:fs');` +
+          `fs.writeFileSync(${JSON.stringify(watcherReady)},'ready');` +
+          `const t=setInterval(()=>{` +
+          `try{const beat=JSON.parse(fs.readFileSync(${JSON.stringify(path)},'utf8')).beat_at;` +
+          `fs.appendFileSync(${JSON.stringify(samples)},JSON.stringify([Date.now(),beat])+'\\n');}catch{}` +
+          `if(fs.existsSync(${JSON.stringify(watcherStop)})){clearInterval(t);process.exit(0);}` +
+          `},15);` +
+          `setTimeout(()=>{clearInterval(t);process.exit(1)},5000);`,
+      ],
+      { stdio: 'ignore' },
+    );
+    assert.ok(await waitUntil(() => existsSync(watcherReady)), 'independent watcher never started');
+    writeFileSync(ownerGo, 'go');
+
+    let window: { blockedFrom: number; blockedUntil: number } | null = null;
     assert.ok(
       await waitUntil(() => {
-        const current = readActivity(path);
-        return current !== null && current.beat_at !== firstBlockedBeat;
+        try {
+          const value = JSON.parse(readFileSync(blockedWindow, 'utf8')) as Partial<{
+            blockedFrom: number;
+            blockedUntil: number;
+          }>;
+          if (typeof value.blockedFrom !== 'number' || typeof value.blockedUntil !== 'number') return false;
+          window = { blockedFrom: value.blockedFrom, blockedUntil: value.blockedUntil };
+          return true;
+        } catch {
+          return false;
+        }
       }),
-      'no heartbeat landed while the owner was blocked',
+      'owner never completed its spawnSync block',
     );
+    writeFileSync(watcherStop, 'stop');
+    assert.ok(
+      await waitUntil(() => watcher!.exitCode !== null || watcher!.signalCode !== null),
+      'independent watcher did not stop',
+    );
+    assert.equal(watcher.exitCode, 0);
+
+    assert.ok(window !== null);
+    const rows = readFileSync(samples, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as [number, string]);
+    const inWindow = rows.filter(
+      ([sampledAt]) => sampledAt > window!.blockedFrom && sampledAt < window!.blockedUntil,
+    );
+    assert.ok(inWindow.length > 5, `watcher barely sampled during the block (${inWindow.length})`);
+    const distinctBeats = new Set(inWindow.map(([, beatAt]) => beatAt));
+    assert.ok(
+      distinctBeats.size >= 2,
+      `only ${distinctBeats.size} distinct beat_at values during spawnSync: no cross-process beat`,
+    );
+
     const blocked = readActivity(path);
     assert.ok(blocked !== null);
     assert.equal(activityState(blocked), 'running');
@@ -208,6 +266,9 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
     );
     assert.equal(activityState(readActivity(path)), 'disconnected');
   } finally {
+    if (watcher !== undefined && watcher.exitCode === null && watcher.signalCode === null) {
+      watcher.kill('SIGKILL');
+    }
     if (owner !== undefined && owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
     fx.cleanup();
   }
