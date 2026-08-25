@@ -3,7 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { linkSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { constants } from 'node:os';
+import { constants as osConstants } from 'node:os';
 import { dirname } from 'node:path';
 import type { ActivityOutcome, ActivityRecord } from '../domain/types.ts';
 import {
@@ -110,7 +110,7 @@ function activityOutcome(outcome: SupervisionOutcome): ActivityOutcome {
 function exitCode(outcome: SupervisionOutcome): number {
   if (outcome.rc !== null) return outcome.rc;
   if (outcome.signal !== null) {
-    const signalNumber = constants.signals[outcome.signal as keyof typeof constants.signals];
+    const signalNumber = osConstants.signals[outcome.signal as keyof typeof osConstants.signals];
     if (signalNumber !== undefined) return 128 + signalNumber;
   }
   // This is the status a shell uses when the command itself could not be found or launched.

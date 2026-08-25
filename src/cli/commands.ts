@@ -973,7 +973,7 @@ const doctor: Handler = async (ctx) => {
   return wasmOk ? 0 : 1;
 };
 
-const supervise: Handler = async (ctx) => {
+const superviseHandler: Handler = async (ctx) => {
   const label = flagStr(ctx.args.flags, 'label');
   if (label === undefined || label === '') throw new CliError('supervise requires --label <label>', 2);
   const log = flagStr(ctx.args.flags, 'log');
@@ -1015,7 +1015,7 @@ export const HANDLERS: Record<string, Handler> = {
   models,
   symbol,
   doctor,
-  supervise,
+  supervise: superviseHandler,
   'setup-statusline': setupStatusline,
 };
 
