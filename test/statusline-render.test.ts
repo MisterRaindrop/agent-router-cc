@@ -22,6 +22,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = fileURLToPath(new URL('../statusline/router-usage.mjs', import.meta.url));
+const ACTIVITY_MODULE = new URL('../dist/statusline-activity.mjs', import.meta.url).href;
+
+test('the standalone activity bundle exposes the shared observation API', () => {
+  const source = [
+    `const activity = await import(${JSON.stringify(ACTIVITY_MODULE)});`,
+    "console.log(['observeActivities', 'activityState', 'readActivities']",
+    "  .map((name) => typeof activity[name]).join(','));",
+  ].join('\n');
+  const out = execFileSync(process.execPath, ['--input-type=module', '--eval', source], {
+    encoding: 'utf8',
+  });
+  assert.equal(out.trim(), 'function,function,function');
+});
 
 /** Run the statusline the way Claude Code does: payload on stdin, output on stdout. */
 function render(cwd: string, payload: unknown = {}, env: NodeJS.ProcessEnv = {}): string {
