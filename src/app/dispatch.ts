@@ -130,6 +130,20 @@ const RUN_LABEL = fmtRunId(1);
 // and let `max_wall_minutes` be the hard stop.
 const STALL_MINUTES_DEFAULT = 20;
 
+/** Preserve first-observed order while combining overlapping state-guard windows. */
+function uniqueStateChanges(...groups: ReadonlyArray<readonly string[] | undefined>): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const change of group ?? []) {
+      if (seen.has(change)) continue;
+      seen.add(change);
+      merged.push(change);
+    }
+  }
+  return merged;
+}
+
 /**
  * Kept out of every rescue commit and every cleanliness check.
  *
@@ -496,21 +510,28 @@ async function runPreparedObserved(
       ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
       ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
-    const duringVerify = classifyStateChanges(
-      stateBeforeVerify,
-      fingerprintState(paths, id),
-      id,
+    const stateAfterVerify = fingerprintState(paths, id);
+    const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
+    // The second window used to forget the run's original baseline. If another activity was
+    // deleted in window one (reported) and rebuilt before this window began, comparing only with
+    // `stateBeforeVerify` saw a stable file and let a changed identity pass. Keep the narrow
+    // window as well -- it catches a record created in window one and forged in window two --
+    // but make the original baseline part of the final decision.
+    const sinceDispatchStarted = classifyStateChanges(stateBefore, stateAfterVerify, id);
+    const reported = uniqueStateChanges(
+      result.state_changes,
+      sinceDispatchStarted.reported,
+      duringVerify.reported,
     );
-    if (duringVerify.reported.length > 0) {
-      result.state_changes = [...(result.state_changes ?? []), ...duringVerify.reported];
-    }
+    if (reported.length > 0) result.state_changes = reported;
+    duringVerify.fatal = uniqueStateChanges(sinceDispatchStarted.fatal, duringVerify.fatal);
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
     }
     if (duringVerify.fatal.length > 0) {
       // Not a verdict to weigh against the diff: the evidence was produced in a checkout somebody
       // else was writing, so there is no verdict left to report.
-      result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify.fatal];
+      result.state_tampering = uniqueStateChanges(result.state_tampering, duringVerify.fatal);
       result.exit_class = 'task_failed';
       delete result.verifier;
       delete result.verified_head;
@@ -987,19 +1008,31 @@ async function resumeInLock(
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
         });
-        const duringVerify = classifyStateChanges(
-          stateBeforeVerify,
-          fingerprintState(paths, id),
-          id,
+        const stateAfterVerify = fingerprintState(paths, id);
+        const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
+        // Resume writes its own diff.patch between the original snapshot and the verification
+        // snapshot. Rebase only that known router write for the end-to-end comparison: the first
+        // window already guarded its old value, and the narrow verification window guards the
+        // new one. Every other entry, especially activity identities, stays anchored to the
+        // original baseline.
+        const originalWithOwnPatch = new Map(stateBefore);
+        const ownPatchRel = join('tasks', id, 'diff.patch');
+        const ownPatchFingerprint = stateBeforeVerify.get(ownPatchRel);
+        if (ownPatchFingerprint === undefined) originalWithOwnPatch.delete(ownPatchRel);
+        else originalWithOwnPatch.set(ownPatchRel, ownPatchFingerprint);
+        const sinceResumeStarted = classifyStateChanges(originalWithOwnPatch, stateAfterVerify, id);
+        const reported = uniqueStateChanges(
+          result.state_changes,
+          sinceResumeStarted.reported,
+          duringVerify.reported,
         );
-        if (duringVerify.reported.length > 0) {
-          result.state_changes = [...(result.state_changes ?? []), ...duringVerify.reported];
-        }
+        if (reported.length > 0) result.state_changes = reported;
+        duringVerify.fatal = uniqueStateChanges(sinceResumeStarted.fatal, duringVerify.fatal);
         if (!envelope.stillOwned()) {
           duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
         }
         if (duringVerify.fatal.length > 0) {
-          result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify.fatal];
+          result.state_tampering = uniqueStateChanges(result.state_tampering, duringVerify.fatal);
           result.exit_class = 'task_failed';
           delete result.verifier;
           delete result.verified_head;

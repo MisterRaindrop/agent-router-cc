@@ -184,6 +184,46 @@ function killProcessGroup(pid: number): void {
   }
 }
 
+function rebuildActivityDuringGating(
+  paths: ReturnType<typeof routerPaths>,
+  activityPath: string,
+  replacement: string,
+  confirmedPath: string,
+): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    if (existsSync(confirmedPath)) return;
+    try {
+      const before = JSON.parse(readFileSync(paths.runStatus('t1'), 'utf8')) as { phase?: string };
+      if (before.phase !== 'gating') return;
+      writeFileSync(activityPath, replacement);
+      const after = JSON.parse(readFileSync(paths.runStatus('t1'), 'utf8')) as { phase?: string };
+      if (after.phase === 'gating') writeFileSync(confirmedPath, 'rebuilt before verify\n');
+    } catch {
+      // Atomic status writes may briefly race the notification. A later event retries; the
+      // verify command fails closed unless it sees the confirmation written while still gating.
+    }
+  }, 1);
+}
+
+function rebuildActivityAfterPatchChanges(
+  paths: ReturnType<typeof routerPaths>,
+  activityPath: string,
+  replacement: string,
+  confirmedPath: string,
+  previousPatch: string,
+): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    if (existsSync(confirmedPath)) return;
+    try {
+      if (readFileSync(paths.diffPatch('t1'), 'utf8') === previousPatch) return;
+      writeFileSync(activityPath, replacement);
+      writeFileSync(confirmedPath, 'rebuilt after first comparison\n');
+    } catch {
+      // The resume has not reached its between-window diff write yet.
+    }
+  }, 1);
+}
+
 test('dispatchTask runs the executor synchronously to a PASSED verifier result', async () => {
   chmodSync(FAKE_CODEX, 0o755);
   const { repo, paths, deps } = setup();
@@ -904,6 +944,222 @@ test('dispatch passes while a real supervised activity starts and finishes insid
     await supervised?.catch(() => undefined);
     if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
       owner.child.kill('SIGKILL');
+    }
+    fx.cleanup(repo);
+  }
+});
+
+for (const mode of ['dispatch', 'resume'] as const) {
+  test(`${mode} detects an external activity deleted then rebuilt before verification`, async () => {
+    const { repo, paths } = setup();
+    const externalLabel = `review:cross-window-${mode}`;
+    const externalRel = `activity/${activityKey(externalLabel)}.json`;
+    const externalPath = paths.activity(activityKey(externalLabel));
+    const confirmedPath = join(paths.taskDir('t1'), 'logs', `${mode}-rebuilt-before-verify`);
+    const executor = join(paths.taskDir('t1'), 'logs', `${mode}-delete-external.mjs`);
+    const original = JSON.stringify({
+      label: externalLabel,
+      owner_token: 'original-owner',
+      pid: process.pid,
+      started_at: '2026-08-25T00:00:00.000Z',
+      beat_at: '2026-08-25T00:00:01.000Z',
+    });
+    const replacement = JSON.stringify({
+      label: externalLabel,
+      owner_token: 'rebuilt-owner',
+      pid: process.pid,
+      started_at: '2026-08-25T00:00:02.000Z',
+      beat_at: '2026-08-25T00:00:03.000Z',
+    });
+    const verifySource =
+      `const fs=require('node:fs');` +
+      `if(!fs.existsSync(${JSON.stringify(confirmedPath)}))process.exit(91);` +
+      `const record=JSON.parse(fs.readFileSync(${JSON.stringify(externalPath)},'utf8'));` +
+      `if(record.owner_token!=='rebuilt-owner')process.exit(92);`;
+    let initial: RunningDispatch | undefined;
+    let owner: RunningDispatch | undefined;
+    let rebuilder: ReturnType<typeof setInterval> | undefined;
+    let previousPatch: string | undefined;
+
+    try {
+      stageTask(
+        paths,
+        mode === 'dispatch'
+          ? TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`)
+          : TASK_YAML,
+      );
+      if (mode === 'resume') {
+        initial = startTaskProcess(repo, paths, FAKE_CODEX);
+        const initialExit = await initial.done;
+        assert.deepEqual(initialExit, { code: 0, signal: null }, initial.stderr());
+        const initialOutput = JSON.parse(initial.stdout().trim()) as Record<string, unknown>;
+        assert.equal(initialOutput.exit_class, 'ok');
+        previousPatch = readFileSync(paths.diffPatch('t1'), 'utf8');
+        writeFileSync(
+          paths.taskYaml('t1'),
+          TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`),
+        );
+      }
+
+      mkdirSync(paths.activityDir, { recursive: true });
+      mkdirSync(join(paths.taskDir('t1'), 'logs'), { recursive: true });
+      writeFileSync(externalPath, original);
+      writeFileSync(
+        executor,
+        '#!/usr/bin/env node\n' +
+          "import {spawnSync} from 'node:child_process';import {unlinkSync} from 'node:fs';\n" +
+          `const run=spawnSync(${JSON.stringify(FAKE_CODEX)},process.argv.slice(2),{stdio:'inherit'});\n` +
+          `unlinkSync(${JSON.stringify(externalPath)});\n` +
+          'process.exit(run.status??1);\n',
+      );
+      chmodSync(executor, 0o755);
+      rebuilder =
+        mode === 'dispatch'
+          ? rebuildActivityDuringGating(paths, externalPath, replacement, confirmedPath)
+          : rebuildActivityAfterPatchChanges(
+              paths,
+              externalPath,
+              replacement,
+              confirmedPath,
+              previousPatch!,
+            );
+
+      owner = startTaskProcess(
+        repo,
+        paths,
+        executor,
+        40,
+        mode === 'resume' ? 'continue after the external activity changed' : undefined,
+      );
+      const ended = await owner.done;
+      assert.deepEqual(ended, { code: 0, signal: null }, owner.stderr());
+      assert.equal(existsSync(confirmedPath), true, 'the record was not rebuilt before verify');
+
+      const output = JSON.parse(owner.stdout().trim()) as {
+        exit_class?: string;
+        verifier?: string;
+        state_tampering?: string[];
+        state_changes?: string[];
+      };
+      assert.equal(output.exit_class, 'task_failed');
+      assert.equal(output.verifier, undefined);
+      assert.deepEqual(output.state_tampering, [`modified ${externalRel}`]);
+      assert.deepEqual(output.state_changes, [`deleted ${externalRel}`]);
+    } finally {
+      if (rebuilder !== undefined) clearInterval(rebuilder);
+      if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+        owner.child.kill('SIGKILL');
+      }
+      if (initial !== undefined && initial.child.exitCode === null && initial.child.signalCode === null) {
+        initial.child.kill('SIGKILL');
+      }
+      fx.cleanup(repo);
+    }
+  });
+}
+
+test('resume reports a reviewer spanning both state windows once per transition and still passes', async () => {
+  const { repo, paths } = setup();
+  const controlDir = join(paths.taskDir('t1'), 'logs');
+  const executorReady = join(controlDir, 'resume-executor-ready');
+  const executorRelease = join(controlDir, 'resume-executor-release');
+  const verifyReady = join(controlDir, 'resume-verify-ready');
+  const verifyRelease = join(controlDir, 'resume-verify-release');
+  const supervisedRelease = join(controlDir, 'resume-supervised-release');
+  const executor = join(controlDir, 'fake-delayed-resume-executor.mjs');
+  const supervisedLabel = 'review:resume-cross-window';
+  const supervisedPath = paths.activity(activityKey(supervisedLabel));
+  const waitForFile = (path: string) =>
+    `while(!fs.existsSync(${JSON.stringify(path)})){` +
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}';
+  const verifySource =
+    `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(verifyReady)},'ready');` +
+    waitForFile(verifyRelease);
+  let initial: RunningDispatch | undefined;
+  let owner: RunningDispatch | undefined;
+  let supervised: Promise<Awaited<ReturnType<typeof superviseCommand>>> | undefined;
+
+  try {
+    stageTask(paths);
+    initial = startTaskProcess(repo, paths, FAKE_CODEX);
+    const initialExit = await initial.done;
+    assert.deepEqual(initialExit, { code: 0, signal: null }, initial.stderr());
+    const initialOutput = JSON.parse(initial.stdout().trim()) as Record<string, unknown>;
+    assert.equal(initialOutput.exit_class, 'ok');
+
+    mkdirSync(controlDir, { recursive: true });
+    writeFileSync(
+      paths.taskYaml('t1'),
+      TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`),
+    );
+    writeFileSync(
+      executor,
+      '#!/usr/bin/env node\n' +
+        "import fs from 'node:fs';import {spawnSync} from 'node:child_process';\n" +
+        `fs.writeFileSync(${JSON.stringify(executorReady)},'ready');\n` +
+        waitForFile(executorRelease) +
+        `const run=spawnSync(${JSON.stringify(FAKE_CODEX)},process.argv.slice(2),{stdio:'inherit'});\n` +
+        'process.exit(run.status??1);\n',
+    );
+    chmodSync(executor, 0o755);
+    owner = startTaskProcess(repo, paths, executor, 40, 'continue with reviewer overlap');
+    await waitUntil(() => existsSync(executorReady));
+
+    supervised = superviseCommand({
+      paths,
+      label: supervisedLabel,
+      logPath: join(controlDir, 'resume-cross-window.log'),
+      argv: [NODE, '-e', `const fs=require('node:fs');${waitForFile(supervisedRelease)}`],
+      cwd: repo,
+      env: process.env,
+      activityHeartbeatIntervalMs: 40,
+    });
+    await waitUntil(() => readActivity(supervisedPath) !== null);
+    writeFileSync(executorRelease, 'release');
+    await waitUntil(
+      () =>
+        existsSync(verifyReady) ||
+        owner?.child.exitCode !== null ||
+        owner?.child.signalCode !== null,
+    );
+    assert.ok(
+      existsSync(verifyReady),
+      `resume exited before verification: stdout=${owner.stdout()} stderr=${owner.stderr()}`,
+    );
+
+    writeFileSync(supervisedRelease, 'release');
+    const supervisedResult = await supervised;
+    assert.equal(supervisedResult.exitCode, 0);
+    assert.equal(existsSync(supervisedPath), false);
+    writeFileSync(verifyRelease, 'release');
+
+    const ended = await owner.done;
+    assert.deepEqual(ended, { code: 0, signal: null }, owner.stderr());
+    const output = JSON.parse(owner.stdout().trim()) as {
+      exit_class?: string;
+      verifier?: string;
+      state_tampering?: string[];
+      state_changes?: string[];
+    };
+    const activityRel = `activity/${activityKey(supervisedLabel)}.json`;
+    assert.equal(output.exit_class, 'ok');
+    assert.equal(output.verifier, 'PASSED');
+    assert.equal(output.state_tampering, undefined);
+    assert.deepEqual(output.state_changes?.filter((line) => line.endsWith(activityRel)), [
+      `created ${activityRel}`,
+      `deleted ${activityRel}`,
+    ]);
+    assert.equal(new Set(output.state_changes).size, output.state_changes?.length);
+  } finally {
+    writeFileSync(executorRelease, 'release');
+    writeFileSync(supervisedRelease, 'release');
+    writeFileSync(verifyRelease, 'release');
+    await supervised?.catch(() => undefined);
+    if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+      owner.child.kill('SIGKILL');
+    }
+    if (initial !== undefined && initial.child.exitCode === null && initial.child.signalCode === null) {
+      initial.child.kill('SIGKILL');
     }
     fx.cleanup(repo);
   }
