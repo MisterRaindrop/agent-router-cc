@@ -46,12 +46,6 @@ function isOwnRunArtifact(rel: string, ownTaskId: string): boolean {
   if (top === 'gate.lock' || top.startsWith('gate.lock.')) return true;
   // Snapshotted by the statusline on every render, which is continuously, for the whole run.
   if (top === 'usage.json') return true;
-  // Our OWN liveness record: we create it, beat it every few seconds, and delete it at closeout,
-  // so watching it would fail every dispatch that publishes one. Only ours -- skipping the whole
-  // directory was a hole, and the reviewer walked through it: an executor could forge someone
-  // else's record with a live pid and a future `beat_at`, have it read `running` forever, and
-  // block a later `router supervise --label` on that name. Measured: `diff: []`, state `running`.
-  if (top === 'activity' && parts[1] === `${activityKey(`task:${ownTaskId}`)}.json`) return true;
   // A regenerable cache rather than orchestration state, and `router symbol index` takes no
   // checkout lock -- so a user rebuilding it in another terminal would otherwise fail the run.
   if (top === 'symbols') return true;
@@ -150,4 +144,45 @@ export function stateDiff(before: Map<string, string>, after: Map<string, string
   }
   for (const rel of before.keys()) if (!after.has(rel)) changes.push(`deleted ${rel}`);
   return changes.sort();
+}
+
+export interface StateChangeTiers {
+  /** Expected concurrent churn worth recording, but not evidence that invalidates the run. */
+  reported: string[];
+  /** Changes that can alter router decisions or forge an activity identity. */
+  fatal: string[];
+}
+
+/**
+ * Split observed state changes into reporting and failure tiers.
+ *
+ * Plans cannot change the frozen contract already handed to this run. Other activities may
+ * legitimately appear and disappear while dispatch is in flight. By contrast, a modified
+ * activity has changed identity (its heartbeat was normalised before hashing), and this task's
+ * own activity cannot legitimately appear or disappear inside the fingerprint window: it is
+ * claimed before the first snapshot and finished after the last one.
+ */
+export function classifyStateChanges(
+  before: Map<string, string>,
+  after: Map<string, string>,
+  ownTaskId: string,
+): StateChangeTiers {
+  const reported: string[] = [];
+  const fatal: string[] = [];
+  const ownActivity = join('activity', `${activityKey(`task:${ownTaskId}`)}.json`);
+
+  for (const change of stateDiff(before, after)) {
+    const splitAt = change.indexOf(' ');
+    const kind = splitAt === -1 ? '' : change.slice(0, splitAt);
+    const rel = splitAt === -1 ? change : change.slice(splitAt + 1);
+    const top = rel.split(sep)[0] ?? '';
+    const nonFatal =
+      top === 'plans' ||
+      (top === 'activity' &&
+        kind !== 'modified' &&
+        rel !== ownActivity);
+    (nonFatal ? reported : fatal).push(change);
+  }
+
+  return { reported, fatal };
 }

@@ -153,7 +153,7 @@ function startTaskProcess(
     `const result=await ${invocation};` +
     `process.stdout.write(JSON.stringify({` +
     `exit_class:result.exit_class,verifier:result.verifier?.result,` +
-    `state_tampering:result.state_tampering})+'\\n');` +
+    `state_tampering:result.state_tampering,state_changes:result.state_changes})+'\\n');` +
     `}catch(error){console.error(error?.stack??String(error));process.exitCode=1;}`;
   const child = spawn(NODE, ['--input-type=module', '-e', source], {
     cwd: repo,
@@ -706,6 +706,205 @@ test('a verify command that forges router state fails the run instead of passing
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+for (const mutation of [
+  {
+    name: 'pid',
+    source: 'record.pid = record.pid + 100000;',
+    change: 'modified',
+  },
+  {
+    name: 'owner_token',
+    source: 'record.owner_token = "forged-owner";',
+    change: 'modified',
+  },
+  {
+    name: 'status_path',
+    source: 'record.status_path = "/tmp/forged-status.json";',
+    change: 'modified',
+  },
+  {
+    name: 'whole record deletion',
+    source: 'unlinkSync(activityPath);',
+    change: 'deleted',
+  },
+] as const) {
+  test(`forging the task activity ${mutation.name} is fatal`, async () => {
+    const { repo, paths, deps } = setup();
+    const activityPath = paths.activity(activityKey('task:t1'));
+    const forger = join(repo, `fake-activity-${mutation.name.replaceAll(' ', '-')}.mjs`);
+    writeFileSync(
+      forger,
+      '#!/usr/bin/env node\n' +
+        "import {readFileSync,unlinkSync,writeFileSync} from 'node:fs';\n" +
+        "import {execFileSync} from 'node:child_process';\n" +
+        'writeFileSync("src/a.ts","export const x = 2;\\n");\n' +
+        'execFileSync("git",["add","--","src/a.ts"]);\n' +
+        'execFileSync("git",["-c","user.name=f","-c","user.email=f@l","commit","-q","-m","fake: unit a"]);\n' +
+        `const activityPath=${JSON.stringify(activityPath)};\n` +
+        'const record=JSON.parse(readFileSync(activityPath,"utf8"));\n' +
+        `${mutation.source}\n` +
+        (mutation.change === 'modified'
+          ? 'writeFileSync(activityPath,JSON.stringify(record,null,2)+"\\n");\n'
+          : '') +
+        'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+    );
+    chmodSync(forger, 0o755);
+    const prev = process.env.ROUTER_CODEX_BIN;
+    const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+    process.env.ROUTER_CODEX_BIN = forger;
+    process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+    try {
+      stageTask(paths);
+      const result = await dispatchTask(deps, 't1');
+      const expected = `${mutation.change} activity/${activityKey('task:t1')}.json`;
+
+      assert.equal(result.exit_class, 'task_failed');
+      assert.deepEqual(result.state_tampering, [expected]);
+      assert.equal(result.verifier, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+      else process.env.ROUTER_CODEX_BIN = prev;
+      if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+      else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+      fx.cleanup(repo);
+    }
+  });
+}
+
+test('editing a frozen plan is reported without failing the run', async () => {
+  const { repo, paths, deps } = setup();
+  const planPath = paths.workplanMd('p1');
+  const editor = join(repo, 'fake-plan-editor.mjs');
+  mkdirSync(paths.planDir('p1'), { recursive: true });
+  writeFileSync(planPath, '# Before\n');
+  writeFileSync(
+    editor,
+    '#!/usr/bin/env node\n' +
+      "import {writeFileSync} from 'node:fs';import {execFileSync} from 'node:child_process';\n" +
+      'writeFileSync("src/a.ts","export const x = 2;\\n");\n' +
+      'execFileSync("git",["add","--","src/a.ts"]);\n' +
+      'execFileSync("git",["-c","user.name=f","-c","user.email=f@l","commit","-q","-m","fake: unit a"]);\n' +
+      `writeFileSync(${JSON.stringify(planPath)},"# After\\n");\n` +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(editor, 0o755);
+  const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+  process.env.ROUTER_CODEX_BIN = editor;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.verifier?.result, 'PASSED');
+    assert.equal(result.state_tampering, undefined);
+    assert.deepEqual(result.state_changes, ['modified plans/p1/WORKPLAN.md']);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatch passes while a real supervised activity starts and finishes inside its state windows', async () => {
+  const { repo, paths } = setup();
+  const controlDir = join(paths.taskDir('t1'), 'logs');
+  const executorReady = join(controlDir, 'executor-ready');
+  const executorRelease = join(controlDir, 'executor-release');
+  const verifyReady = join(controlDir, 'verify-ready');
+  const verifyRelease = join(controlDir, 'verify-release');
+  const supervisedRelease = join(controlDir, 'supervised-release');
+  const executor = join(repo, 'fake-delayed-executor.mjs');
+  const supervisedLabel = 'review:acceptance-11b';
+  const supervisedPath = paths.activity(activityKey(supervisedLabel));
+  const waitForFile = (path: string) =>
+    `while(!fs.existsSync(${JSON.stringify(path)})){` +
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}';
+  const verifySource =
+    `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(verifyReady)},'ready');` +
+    waitForFile(verifyRelease);
+  let owner: RunningDispatch | undefined;
+  let supervised: Promise<Awaited<ReturnType<typeof superviseCommand>>> | undefined;
+
+  try {
+    writeFileSync(
+      executor,
+      '#!/usr/bin/env node\n' +
+        "import fs from 'node:fs';import {spawnSync} from 'node:child_process';\n" +
+        `fs.writeFileSync(${JSON.stringify(executorReady)},'ready');\n` +
+        waitForFile(executorRelease) +
+        `const run=spawnSync(${JSON.stringify(FAKE_CODEX)},process.argv.slice(2),{stdio:'inherit'});\n` +
+        'process.exit(run.status??1);\n',
+    );
+    chmodSync(executor, 0o755);
+    stageTask(
+      paths,
+      TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`),
+    );
+    owner = startTaskProcess(repo, paths, executor);
+    await waitUntil(() => existsSync(executorReady));
+
+    supervised = superviseCommand({
+      paths,
+      label: supervisedLabel,
+      // Keep the observer's own output in router state. A root-level log would itself make the
+      // checkout dirty and test the closeout invariant instead of activity coexistence.
+      logPath: join(paths.taskDir('t1'), 'logs', 'acceptance-11b.log'),
+      argv: [NODE, '-e', `const fs=require('node:fs');${waitForFile(supervisedRelease)}`],
+      cwd: repo,
+      env: process.env,
+      activityHeartbeatIntervalMs: 40,
+    });
+    await waitUntil(() => readActivity(supervisedPath) !== null);
+    writeFileSync(executorRelease, 'release');
+    await waitUntil(
+      () =>
+        existsSync(verifyReady) ||
+        owner?.child.exitCode !== null ||
+        owner?.child.signalCode !== null,
+    );
+    assert.ok(
+      existsSync(verifyReady),
+      `dispatch exited before verification: stdout=${owner.stdout()} stderr=${owner.stderr()}`,
+    );
+
+    writeFileSync(supervisedRelease, 'release');
+    const supervisedResult = await supervised;
+    assert.equal(supervisedResult.exitCode, 0);
+    assert.equal(existsSync(supervisedPath), false);
+    writeFileSync(verifyRelease, 'release');
+
+    const ended = await owner.done;
+    assert.deepEqual(ended, { code: 0, signal: null }, owner.stderr());
+    const output = JSON.parse(owner.stdout().trim()) as {
+      exit_class?: string;
+      verifier?: string;
+      state_tampering?: string[];
+      state_changes?: string[];
+    };
+    const activityRel = `activity/${activityKey(supervisedLabel)}.json`;
+    assert.equal(output.exit_class, 'ok');
+    assert.equal(output.verifier, 'PASSED');
+    assert.equal(output.state_tampering, undefined);
+    assert.deepEqual(output.state_changes?.filter((line) => line.endsWith(activityRel)), [
+      `created ${activityRel}`,
+      `deleted ${activityRel}`,
+    ]);
+  } finally {
+    writeFileSync(executorRelease, 'release');
+    writeFileSync(supervisedRelease, 'release');
+    writeFileSync(verifyRelease, 'release');
+    await supervised?.catch(() => undefined);
+    if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+      owner.child.kill('SIGKILL');
+    }
     fx.cleanup(repo);
   }
 });

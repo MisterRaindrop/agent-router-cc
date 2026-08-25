@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fingerprintState, stateDiff } from '../src/app/stateGuard.ts';
+import { classifyStateChanges, fingerprintState, stateDiff } from '../src/app/stateGuard.ts';
 import { activityKey } from '../src/io/activity.ts';
 import { routerPaths } from '../src/io/paths.ts';
 
@@ -115,21 +115,39 @@ test('creations and deletions are reported alongside modifications', () => {
 // have it read `running` forever, and block a later `router supervise --label` on that name.
 // Measured before this fix: `diff: []`, state `running`.
 //
-// So only OUR record is skipped -- we create it, beat it, and delete it -- and for every other
-// record the heartbeat field is normalised away while the rest of it stays watched.
-test('only our own liveness record is unwatched, and only its heartbeat', () => {
+// Every record, including our own, must have its identity watched. Dispatch creates its record
+// before the first fingerprint and removes it after the last comparison, so the only legitimate
+// in-window write to that file is its heartbeat.
+test('every activity identity is watched while heartbeat-only changes are ignored', () => {
   const fx = freshState();
   const own = `activity/${activityKey('task:mine')}.json`;
   const rec = (over: Record<string, unknown> = {}) =>
     JSON.stringify({ label: 'review:x', owner_token: 'p', pid: 1, started_at: 'A', beat_at: '1', ...over }, null, 2);
   try {
-    // Ours: creating it and beating it must both be invisible, or every dispatch fails itself.
-    let before = fingerprintState(fx.paths, 'mine');
     fx.write(own, rec({ label: 'task:mine', beat_at: 'B' }));
-    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), []);
-    before = fingerprintState(fx.paths, 'mine');
+    let before = fingerprintState(fx.paths, 'mine');
     fx.write(own, rec({ label: 'task:mine', beat_at: 'C' }));
     assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), []);
+
+    for (const [field, value] of [
+      ['pid', 42],
+      ['owner_token', 'HIJACKED'],
+      ['status_path', '/tmp/forged-status.json'],
+    ] as const) {
+      fx.write(own, rec({ label: 'task:mine', beat_at: 'C' }));
+      before = fingerprintState(fx.paths, 'mine');
+      fx.write(own, rec({ label: 'task:mine', beat_at: 'D', [field]: value }));
+      assert.deepEqual(
+        stateDiff(before, fingerprintState(fx.paths, 'mine')),
+        [`modified ${own}`],
+        `changing our own ${field} was invisible`,
+      );
+    }
+
+    fx.write(own, rec({ label: 'task:mine', beat_at: 'E' }));
+    before = fingerprintState(fx.paths, 'mine');
+    rmSync(join(fx.paths.root, own));
+    assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), [`deleted ${own}`]);
 
     // Somebody else's beat: also invisible, so a concurrent `supervise` is not a false alarm.
     fx.write('activity/other.json', rec());
@@ -152,6 +170,40 @@ test('only our own liveness record is unwatched, and only its heartbeat', () => 
     before = fingerprintState(fx.paths, 'mine');
     fx.write('activity/junk.json', 'still not json');
     assert.deepEqual(stateDiff(before, fingerprintState(fx.paths, 'mine')), ['modified activity/junk.json']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('state changes are separated into reporting and failure tiers', () => {
+  const fx = freshState();
+  const own = `activity/${activityKey('task:mine')}.json`;
+  const other = 'activity/reviewer.json';
+  const activity = (label: string) =>
+    JSON.stringify({ label, owner_token: 'o', pid: 1, started_at: 'A', beat_at: 'B' });
+  try {
+    fx.write(own, activity('task:mine'));
+    fx.write(other, activity('review:architect'));
+    fx.write('plans/p1/WORKPLAN.md', '# Before\n');
+    fx.write('tasks/victim/result.json', '{}');
+    const before = fingerprintState(fx.paths, 'mine');
+
+    rmSync(join(fx.paths.root, own));
+    rmSync(join(fx.paths.root, other));
+    fx.write('activity/new-reviewer.json', activity('review:senior'));
+    fx.write('plans/p1/WORKPLAN.md', '# After\n');
+    fx.write('tasks/victim/result.json', '{"forged":true}');
+    const tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+
+    assert.deepEqual(tiers.reported, [
+      'created activity/new-reviewer.json',
+      'deleted activity/reviewer.json',
+      'modified plans/p1/WORKPLAN.md',
+    ]);
+    assert.deepEqual(tiers.fatal, [
+      `deleted ${own}`,
+      'modified tasks/victim/result.json',
+    ]);
   } finally {
     fx.cleanup();
   }
