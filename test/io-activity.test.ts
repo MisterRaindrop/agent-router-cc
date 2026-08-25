@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -109,7 +109,7 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
   const fx = fixture();
   const path = join(fx.activityDir, 'blocked.json');
   const moduleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
-  let owner;
+  let owner: ChildProcess | undefined;
   try {
     owner = spawn(
       process.execPath,
@@ -129,7 +129,7 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
       { stdio: ['ignore', 'pipe', 'inherit'] },
     );
     let stdout = '';
-    owner.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+    owner.stdout!.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     assert.ok(await waitUntil(() => stdout.trim() !== ''), 'owner never initialized its activity');
     const startedAt = (JSON.parse(stdout.trim()) as { started_at: string }).started_at;
 
