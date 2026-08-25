@@ -831,13 +831,17 @@ const setupStatusline: Handler = (ctx) => {
       throw new CliError(`cannot parse ${settingsPath}: ${(e as Error).message}`, 1);
     }
   }
-  const current = settings.statusLine as { command?: unknown } | undefined;
+  const rawCurrent = settings.statusLine;
+  const current =
+    rawCurrent !== null && typeof rawCurrent === 'object' && !Array.isArray(rawCurrent)
+      ? (rawCurrent as Record<string, unknown>)
+      : undefined;
   const existingCmd = typeof current?.command === 'string' ? current.command : undefined;
-  const plan = planStatusLine(existingCmd, statuslinePath);
+  const plan = planStatusLine(existingCmd, statuslinePath, current);
 
   const changed = plan.action !== 'already-configured';
   if (changed && !dryRun) {
-    settings.statusLine = { type: 'command', command: plan.command };
+    settings.statusLine = { ...(current ?? {}), ...plan.statusLine };
     writeJsonAtomic(settingsPath, settings);
   }
   const missing = !existsSync(statuslinePath);
@@ -856,7 +860,12 @@ const setupStatusline: Handler = (ctx) => {
     () => {
       // The actions are past participles ("chained"), so a bare `would ${action}` reads as
       // "would chained". Map to the infinitive for the dry-run voice.
-      const verb: Record<string, string> = { created: 'create', chained: 'chain', repointed: 'repoint' };
+      const verb: Record<string, string> = {
+        created: 'create',
+        chained: 'chain',
+        repointed: 'repoint',
+        updated: 'update',
+      };
       const head =
         plan.action === 'already-configured'
           ? `already configured (${settingsPath})`
