@@ -11,6 +11,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import type { ActivityRecord } from '../src/domain/types.ts';
 import {
+  ActivityAlreadyExistsError,
   activityKey,
   activityState,
   claimActivity,
@@ -163,6 +165,58 @@ test('a dead or expired reclaim lease earns one recovery retry and cannot wedge 
     const diagnostics: string[] = [];
     finishActivity(claimed, 'ok', diagnostics);
     assert.deepEqual(diagnostics, []);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// The other half of what a mutex means. The test above proves a DEAD lease can be broken;
+// nothing proved a LIVE one holds -- and dropping the liveness condition from
+// clearDeadReclaimer left all sixteen tests green (main-session mutation, 2026-08-25).
+// Two claimants both walking through reclaim is the double-reclaimer bug io/lock.ts already
+// had to fix once.
+test('a live reclaim lease is not broken, and an unparseable one is only cleared once stale', () => {
+  const fx = fixture();
+  const paths = routerPaths(join(fx.root, '.router'));
+  const disconnected = (label: string): string => {
+    const path = paths.activity(activityKey(label));
+    const at = new Date(Date.now() - DEFAULT_STALE_MS - 1_000).toISOString();
+    // A pid that cannot exist, so only the reclaim guard decides the outcome.
+    writeActivity(path, { label, pid: 2_147_483_646, started_at: at, beat_at: at });
+    return path;
+  };
+
+  try {
+    // A guard held by THIS process, beating now: it is alive and must survive.
+    const live = disconnected('review:live-lease');
+    writeFileSync(
+      `${live}.reclaim`,
+      `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now(), token: 'held' })}\n`,
+    );
+    assert.throws(
+      () => claimActivity(paths, 'review:live-lease'),
+      ActivityAlreadyExistsError,
+      'a live reclaim lease was broken',
+    );
+    assert.equal(existsSync(`${live}.reclaim`), true, 'a live reclaim guard was removed');
+
+    // An unparseable guard is judged by its mtime, so a fresh one is still somebody's.
+    const fresh = disconnected('review:fresh-unparseable');
+    writeFileSync(`${fresh}.reclaim`, '{ not a reclaimer');
+    assert.throws(
+      () => claimActivity(paths, 'review:fresh-unparseable'),
+      ActivityAlreadyExistsError,
+      'a freshly written unparseable guard was cleared before its lease expired',
+    );
+
+    // ...and the same guard, aged past the lease, is recoverable.
+    const aged = disconnected('review:aged-unparseable');
+    writeFileSync(`${aged}.reclaim`, '{ not a reclaimer');
+    const stale = new Date(Date.now() - 60_000);
+    utimesSync(`${aged}.reclaim`, stale, stale);
+    const claimed = claimActivity(paths, 'review:aged-unparseable');
+    assert.equal(claimed.record.pid, process.pid);
+    assert.equal(existsSync(`${aged}.reclaim`), false);
   } finally {
     fx.cleanup();
   }
