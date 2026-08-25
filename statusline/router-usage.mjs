@@ -99,10 +99,14 @@ function elapsedAge(ageMs) {
   return seconds < 120 ? `${seconds}s` : `${Math.floor(seconds / 60)}m`;
 }
 
-// Test-only clock seam: production has no reason to set this, while pinned instants let the
-// script-level tests prove the spinner advances without sleeping on wall-clock timing.
+// The pinned clock requires two explicit test-only gates. ROUTER_STATUSLINE_NOW by itself is
+// ignored so an inherited production environment variable cannot freeze liveness rendering.
 function currentTimeMs() {
-  if (process.env.ROUTER_STATUSLINE_NOW !== undefined) {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    process.env.ROUTER_STATUSLINE_TEST_CLOCK === '1' &&
+    process.env.ROUTER_STATUSLINE_NOW !== undefined
+  ) {
     const pinned = Number(process.env.ROUTER_STATUSLINE_NOW);
     if (Number.isFinite(pinned)) return pinned;
   }

@@ -133,7 +133,11 @@ function activity(
 }
 
 function pinned(now: number = NOW): NodeJS.ProcessEnv {
-  return { ROUTER_STATUSLINE_NOW: String(now) };
+  return {
+    NODE_ENV: 'test',
+    ROUTER_STATUSLINE_TEST_CLOCK: '1',
+    ROUTER_STATUSLINE_NOW: String(now),
+  };
 }
 
 function spinnerIn(output: string): string | undefined {
@@ -274,6 +278,24 @@ test('the running spinner changes across two-second refreshes', () => {
     assert.ok(first);
     assert.ok(second);
     assert.notEqual(first, second);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('the production entry ignores ROUTER_STATUSLINE_NOW without both test-only gates', () => {
+  const fx = repo();
+  try {
+    const actualNow = Date.now();
+    fx.activity('clock', activity('review:clock', { now: actualNow }));
+    const out = render(fx.dir, { cwd: fx.dir }, {
+      NODE_ENV: 'production',
+      ROUTER_STATUSLINE_TEST_CLOCK: '',
+      ROUTER_STATUSLINE_NOW: String(actualNow + 24 * 60 * 60 * 1000),
+    });
+    assert.ok(spinnerIn(out), `expected a live spinner in: ${out}`);
+    assert.match(out, /review:clock/);
+    assert.doesNotMatch(out, /已失联/);
   } finally {
     fx.cleanup();
   }
