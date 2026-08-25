@@ -1,6 +1,16 @@
 // src/io/activity.ts
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, linkSync, readdirSync, readFileSync, statSync, unlinkSync as unlinkSync2 } from "node:fs";
+import {
+  closeSync as closeSync2,
+  fstatSync,
+  fsyncSync as fsyncSync2,
+  linkSync,
+  openSync as openSync2,
+  readdirSync,
+  readFileSync,
+  unlinkSync as unlinkSync2,
+  writeFileSync
+} from "node:fs";
 import { join as join2 } from "node:path";
 
 // src/io/atomicWrite.ts
@@ -167,6 +177,15 @@ var DEFAULT_STALE_MS = 9e4;
 // src/io/activity.ts
 var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
 var MAX_PID = 2147483647;
+var MAX_FUTURE_BEAT_SKEW_MS = 5e3;
+var RECLAIM_LEASE_MS = 3e4;
+var activityTestHook;
+function setActivityTestHookForTesting(hook) {
+  activityTestHook = hook;
+}
+function reachActivityTestPoint(point) {
+  activityTestHook?.(point);
+}
 var ActivityAlreadyExistsError = class extends Error {
   activity;
   path;
@@ -238,43 +257,149 @@ function errorCode(error) {
 function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
+function fileSnapshot(path) {
+  let fd;
+  try {
+    fd = openSync2(path, "r");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const stat = fstatSync(fd, { bigint: true });
+    return {
+      text: readFileSync(fd, "utf8"),
+      identity: { dev: stat.dev, ino: stat.ino },
+      mtimeMs: Number(stat.mtimeNs / 1000000n)
+    };
+  } finally {
+    closeSync2(fd);
+  }
+}
 function activitySnapshot(path) {
   try {
-    const before = statSync(path, { bigint: true });
-    const record = readActivity(path);
-    const after = statSync(path, { bigint: true });
-    if (record === null || before.dev !== after.dev || before.ino !== after.ino) return null;
-    return { record, identity: { dev: after.dev, ino: after.ino } };
+    const snapshot = fileSnapshot(path);
+    if (snapshot === null) return null;
+    const record = parseActivity(JSON.parse(snapshot.text));
+    return record === null ? null : { ...snapshot, record };
   } catch {
     return null;
   }
 }
-function reclaimDisconnectedActivity(path, expected) {
-  const reclaimPath = `${path}.reclaim`;
+function sameSnapshot(left, right) {
+  return left.text === right.text && sameIdentity(left.identity, right.identity);
+}
+function stillTheSameFile(path, expected) {
+  const current = fileSnapshot(path);
+  return current !== null && sameSnapshot(current, expected);
+}
+function parseReclaimer(text) {
   try {
-    linkSync(path, reclaimPath);
+    const value = JSON.parse(text);
+    if (!validPid(value.pid)) return null;
+    if (typeof value.beatAtMs !== "number" || !Number.isFinite(value.beatAtMs)) return null;
+    if (typeof value.token !== "string" || value.token.length === 0) return null;
+    return { pid: value.pid, beatAtMs: value.beatAtMs, token: value.token };
+  } catch {
+    return null;
+  }
+}
+function reclaimerText(token) {
+  return `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now(), token })}
+`;
+}
+function pidIsGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
   } catch (error) {
-    if (errorCode(error) === "ENOENT" || errorCode(error) === "EEXIST") return false;
-    throw error;
+    return errorCode(error) === "ESRCH";
+  }
+}
+function installReclaimer(path, token) {
+  const staging = `${path}.${process.pid}.${token}.tmp`;
+  try {
+    writeFileSync(staging, reclaimerText(token), { flag: "w" });
+    const fd = openSync2(staging, "r+");
+    try {
+      fsyncSync2(fd);
+    } finally {
+      closeSync2(fd);
+    }
+    linkSync(staging, path);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") return false;
+    throw new Error(`cannot install activity reclaimer for ${path}: ${error.message}`);
+  } finally {
+    try {
+      unlinkSync2(staging);
+    } catch {
+    }
+  }
+}
+function clearDeadReclaimer(path) {
+  const snapshot = fileSnapshot(path);
+  if (snapshot === null) return true;
+  const held = parseReclaimer(snapshot.text);
+  const dead = held === null ? Date.now() - snapshot.mtimeMs > RECLAIM_LEASE_MS : pidIsGone(held.pid) || Date.now() - held.beatAtMs > RECLAIM_LEASE_MS;
+  if (!dead || !stillTheSameFile(path, snapshot)) return false;
+  try {
+    unlinkSync2(path);
+  } catch {
+  }
+  return true;
+}
+function stillReclaiming(path, token) {
+  try {
+    const snapshot = fileSnapshot(path);
+    return snapshot !== null && parseReclaimer(snapshot.text)?.token === token;
+  } catch {
+    return false;
+  }
+}
+function releaseReclaimer(path, token) {
+  if (!stillReclaiming(path, token)) return;
+  try {
+    unlinkSync2(path);
+  } catch {
+  }
+}
+function reclaimDisconnectedActivity(path, expected, candidate) {
+  const reclaimPath = `${path}.reclaim`;
+  const token = randomUUID();
+  if (!installReclaimer(reclaimPath, token)) {
+    return clearDeadReclaimer(reclaimPath) ? "recovered" : "busy";
   }
   try {
-    const guarded = activitySnapshot(reclaimPath);
-    const current = activitySnapshot(path);
-    if (guarded === null || current === null || guarded.record.owner_token !== expected.owner_token || current.record.owner_token !== expected.owner_token || !sameIdentity(guarded.identity, current.identity) || activityState(current.record) !== "disconnected") {
-      return false;
+    reachActivityTestPoint("reclaim-guard-established");
+    const held = activitySnapshot(path);
+    if (held === null || !sameSnapshot(held, expected)) return "retry";
+    if (activityState(held.record) !== "disconnected") return "retry";
+    reachActivityTestPoint("reclaim-liveness-confirmed");
+    reachActivityTestPoint("reclaim-before-unlink");
+    if (!stillReclaiming(reclaimPath, token)) return "retry";
+    const confirmed = activitySnapshot(path);
+    if (confirmed === null || !sameSnapshot(confirmed, held) || activityState(confirmed.record) !== "disconnected") {
+      return "retry";
     }
     try {
       unlinkSync2(path);
-      return true;
     } catch (error) {
-      if (errorCode(error) === "ENOENT") return true;
+      if (errorCode(error) === "ENOENT") return "retry";
+      throw error;
+    }
+    reachActivityTestPoint("reclaim-before-install");
+    if (!stillReclaiming(reclaimPath, token)) return "retry";
+    try {
+      linkSync(candidate, path);
+      return "installed";
+    } catch (error) {
+      if (errorCode(error) === "EEXIST") return "retry";
       throw error;
     }
   } finally {
-    try {
-      unlinkSync2(reclaimPath);
-    } catch {
-    }
+    releaseReclaimer(reclaimPath, token);
   }
 }
 function claimActivity(paths, label, options = {}) {
@@ -289,18 +414,38 @@ function claimActivity(paths, label, options = {}) {
     ...options.statusPath !== void 0 ? { status_path: options.statusPath } : {}
   });
   try {
-    if (existsSync(`${path}.reclaim`)) {
-      throw new ActivityAlreadyExistsError(label, path, readActivity(path));
-    }
+    let recoveries = 0;
     for (; ; ) {
+      const reclaimPath = `${path}.reclaim`;
+      try {
+        if (fileSnapshot(reclaimPath) !== null) {
+          if (recoveries === 0 && clearDeadReclaimer(reclaimPath)) {
+            recoveries += 1;
+            continue;
+          }
+          throw new ActivityAlreadyExistsError(label, path, readActivity(path));
+        }
+      } catch (error) {
+        if (error instanceof ActivityAlreadyExistsError) throw error;
+        throw new Error(`cannot inspect activity reclaimer for ${path}: ${error.message}`);
+      }
       try {
         linkSync(candidate, path);
         break;
       } catch (error) {
         if (errorCode(error) !== "EEXIST") throw error;
-        const existing = readActivity(path);
-        if (existing === null || activityState(existing) !== "disconnected" || !reclaimDisconnectedActivity(path, existing)) {
-          throw new ActivityAlreadyExistsError(label, path, existing);
+        const existing = activitySnapshot(path);
+        if (existing === null || activityState(existing.record) !== "disconnected") {
+          throw new ActivityAlreadyExistsError(label, path, existing?.record ?? null);
+        }
+        const outcome = reclaimDisconnectedActivity(path, existing, candidate);
+        if (outcome === "installed") break;
+        if (outcome === "recovered" && recoveries === 0) {
+          recoveries += 1;
+          continue;
+        }
+        if (outcome === "busy" || outcome === "recovered") {
+          throw new ActivityAlreadyExistsError(label, path, readActivity(path));
         }
       }
     }
@@ -330,8 +475,18 @@ function finishActivity(claimed, outcome, diagnostics, endedAt = (/* @__PURE__ *
       diagnostics.push(`could not remove activity ${claimed.path}: ownership or file identity changed`);
       return;
     }
+    reachActivityTestPoint("finish-snapshot");
     try {
-      writeActivity(claimed.path, { ...claimed.record, ended_at: endedAt, outcome });
+      const finished = parseActivity({ ...claimed.record, ended_at: endedAt, outcome });
+      if (finished === null) throw new Error(`cannot write invalid activity to ${claimed.path}`);
+      const confirmed = activitySnapshot(claimed.path);
+      if (confirmed === null || confirmed.record.owner_token !== claimed.record.owner_token || !sameIdentity(confirmed.identity, claimed.identity)) {
+        diagnostics.push(
+          `could not remove activity ${claimed.path}: ownership or file identity changed`
+        );
+        return;
+      }
+      unlinkSync2(claimed.path);
       return;
     } catch (error) {
       if (attempt === attempts) {
@@ -376,7 +531,8 @@ function pidIsAlive(pid) {
 }
 function activityState(activity, nowMs = Date.now(), staleMs = DEFAULT_STALE_MS) {
   if (activity === null || activity.ended_at !== void 0) return "idle";
-  const fresh = nowMs - Date.parse(activity.beat_at) <= staleMs;
+  const beatAgeMs = nowMs - Date.parse(activity.beat_at);
+  const fresh = beatAgeMs >= -MAX_FUTURE_BEAT_SKEW_MS && beatAgeMs <= staleMs;
   return pidIsAlive(activity.pid) && fresh ? "running" : "disconnected";
 }
 function observeActivities(directory, nowMs = Date.now(), staleMs = DEFAULT_STALE_MS) {
@@ -412,6 +568,7 @@ export {
   observeActivities,
   readActivities,
   readActivity,
+  setActivityTestHookForTesting,
   startActivityHeartbeat,
   writeActivity
 };

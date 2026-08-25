@@ -6647,7 +6647,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync11, mkdirSync as mkdirSync6, readdirSync as readdirSync7, readFileSync as readFileSync16, writeFileSync as writeFileSync7 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync6, readdirSync as readdirSync7, readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname7, join as join13, resolve as resolve5 } from "node:path";
@@ -10101,7 +10101,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash as createHash4 } from "node:crypto";
-import { readFileSync as readFileSync12, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { readFileSync as readFileSync12, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join9 } from "node:path";
 
@@ -10259,7 +10259,17 @@ function effectiveRisk(declared, signals) {
 
 // src/io/activity.ts
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync as existsSync4, linkSync as linkSync2, readdirSync, readFileSync as readFileSync4, statSync as statSync3, unlinkSync as unlinkSync3 } from "node:fs";
+import {
+  closeSync as closeSync3,
+  fstatSync as fstatSync2,
+  fsyncSync as fsyncSync3,
+  linkSync as linkSync2,
+  openSync as openSync3,
+  readdirSync,
+  readFileSync as readFileSync4,
+  unlinkSync as unlinkSync3,
+  writeFileSync as writeFileSync2
+} from "node:fs";
 
 // src/io/heartbeat.ts
 import { spawn } from "node:child_process";
@@ -10858,6 +10868,12 @@ function acquireLock(path, opts) {
 // src/io/activity.ts
 var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
 var MAX_PID = 2147483647;
+var MAX_FUTURE_BEAT_SKEW_MS = 5e3;
+var RECLAIM_LEASE_MS2 = 3e4;
+var activityTestHook;
+function reachActivityTestPoint(point) {
+  activityTestHook?.(point);
+}
 var ActivityAlreadyExistsError = class extends Error {
   activity;
   path;
@@ -10929,43 +10945,149 @@ function errorCode2(error) {
 function sameIdentity2(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
+function fileSnapshot(path) {
+  let fd;
+  try {
+    fd = openSync3(path, "r");
+  } catch (error) {
+    if (errorCode2(error) === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const stat = fstatSync2(fd, { bigint: true });
+    return {
+      text: readFileSync4(fd, "utf8"),
+      identity: { dev: stat.dev, ino: stat.ino },
+      mtimeMs: Number(stat.mtimeNs / 1000000n)
+    };
+  } finally {
+    closeSync3(fd);
+  }
+}
 function activitySnapshot(path) {
   try {
-    const before = statSync3(path, { bigint: true });
-    const record = readActivity(path);
-    const after = statSync3(path, { bigint: true });
-    if (record === null || before.dev !== after.dev || before.ino !== after.ino) return null;
-    return { record, identity: { dev: after.dev, ino: after.ino } };
+    const snapshot = fileSnapshot(path);
+    if (snapshot === null) return null;
+    const record = parseActivity(JSON.parse(snapshot.text));
+    return record === null ? null : { ...snapshot, record };
   } catch {
     return null;
   }
 }
-function reclaimDisconnectedActivity(path, expected) {
-  const reclaimPath = `${path}.reclaim`;
+function sameSnapshot(left, right) {
+  return left.text === right.text && sameIdentity2(left.identity, right.identity);
+}
+function stillTheSameFile2(path, expected) {
+  const current = fileSnapshot(path);
+  return current !== null && sameSnapshot(current, expected);
+}
+function parseReclaimer2(text2) {
   try {
-    linkSync2(path, reclaimPath);
+    const value = JSON.parse(text2);
+    if (!validPid(value.pid)) return null;
+    if (typeof value.beatAtMs !== "number" || !Number.isFinite(value.beatAtMs)) return null;
+    if (typeof value.token !== "string" || value.token.length === 0) return null;
+    return { pid: value.pid, beatAtMs: value.beatAtMs, token: value.token };
+  } catch {
+    return null;
+  }
+}
+function reclaimerText2(token) {
+  return `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now(), token })}
+`;
+}
+function pidIsGone2(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
   } catch (error) {
-    if (errorCode2(error) === "ENOENT" || errorCode2(error) === "EEXIST") return false;
-    throw error;
+    return errorCode2(error) === "ESRCH";
+  }
+}
+function installReclaimer2(path, token) {
+  const staging = `${path}.${process.pid}.${token}.tmp`;
+  try {
+    writeFileSync2(staging, reclaimerText2(token), { flag: "w" });
+    const fd = openSync3(staging, "r+");
+    try {
+      fsyncSync3(fd);
+    } finally {
+      closeSync3(fd);
+    }
+    linkSync2(staging, path);
+    return true;
+  } catch (error) {
+    if (errorCode2(error) === "EEXIST") return false;
+    throw new Error(`cannot install activity reclaimer for ${path}: ${error.message}`);
+  } finally {
+    try {
+      unlinkSync3(staging);
+    } catch {
+    }
+  }
+}
+function clearDeadReclaimer2(path) {
+  const snapshot = fileSnapshot(path);
+  if (snapshot === null) return true;
+  const held = parseReclaimer2(snapshot.text);
+  const dead = held === null ? Date.now() - snapshot.mtimeMs > RECLAIM_LEASE_MS2 : pidIsGone2(held.pid) || Date.now() - held.beatAtMs > RECLAIM_LEASE_MS2;
+  if (!dead || !stillTheSameFile2(path, snapshot)) return false;
+  try {
+    unlinkSync3(path);
+  } catch {
+  }
+  return true;
+}
+function stillReclaiming2(path, token) {
+  try {
+    const snapshot = fileSnapshot(path);
+    return snapshot !== null && parseReclaimer2(snapshot.text)?.token === token;
+  } catch {
+    return false;
+  }
+}
+function releaseReclaimer2(path, token) {
+  if (!stillReclaiming2(path, token)) return;
+  try {
+    unlinkSync3(path);
+  } catch {
+  }
+}
+function reclaimDisconnectedActivity(path, expected, candidate) {
+  const reclaimPath = `${path}.reclaim`;
+  const token = randomUUID();
+  if (!installReclaimer2(reclaimPath, token)) {
+    return clearDeadReclaimer2(reclaimPath) ? "recovered" : "busy";
   }
   try {
-    const guarded = activitySnapshot(reclaimPath);
-    const current = activitySnapshot(path);
-    if (guarded === null || current === null || guarded.record.owner_token !== expected.owner_token || current.record.owner_token !== expected.owner_token || !sameIdentity2(guarded.identity, current.identity) || activityState(current.record) !== "disconnected") {
-      return false;
+    reachActivityTestPoint("reclaim-guard-established");
+    const held = activitySnapshot(path);
+    if (held === null || !sameSnapshot(held, expected)) return "retry";
+    if (activityState(held.record) !== "disconnected") return "retry";
+    reachActivityTestPoint("reclaim-liveness-confirmed");
+    reachActivityTestPoint("reclaim-before-unlink");
+    if (!stillReclaiming2(reclaimPath, token)) return "retry";
+    const confirmed = activitySnapshot(path);
+    if (confirmed === null || !sameSnapshot(confirmed, held) || activityState(confirmed.record) !== "disconnected") {
+      return "retry";
     }
     try {
       unlinkSync3(path);
-      return true;
     } catch (error) {
-      if (errorCode2(error) === "ENOENT") return true;
+      if (errorCode2(error) === "ENOENT") return "retry";
+      throw error;
+    }
+    reachActivityTestPoint("reclaim-before-install");
+    if (!stillReclaiming2(reclaimPath, token)) return "retry";
+    try {
+      linkSync2(candidate, path);
+      return "installed";
+    } catch (error) {
+      if (errorCode2(error) === "EEXIST") return "retry";
       throw error;
     }
   } finally {
-    try {
-      unlinkSync3(reclaimPath);
-    } catch {
-    }
+    releaseReclaimer2(reclaimPath, token);
   }
 }
 function claimActivity(paths, label, options = {}) {
@@ -10980,18 +11102,38 @@ function claimActivity(paths, label, options = {}) {
     ...options.statusPath !== void 0 ? { status_path: options.statusPath } : {}
   });
   try {
-    if (existsSync4(`${path}.reclaim`)) {
-      throw new ActivityAlreadyExistsError(label, path, readActivity(path));
-    }
+    let recoveries = 0;
     for (; ; ) {
+      const reclaimPath = `${path}.reclaim`;
+      try {
+        if (fileSnapshot(reclaimPath) !== null) {
+          if (recoveries === 0 && clearDeadReclaimer2(reclaimPath)) {
+            recoveries += 1;
+            continue;
+          }
+          throw new ActivityAlreadyExistsError(label, path, readActivity(path));
+        }
+      } catch (error) {
+        if (error instanceof ActivityAlreadyExistsError) throw error;
+        throw new Error(`cannot inspect activity reclaimer for ${path}: ${error.message}`);
+      }
       try {
         linkSync2(candidate, path);
         break;
       } catch (error) {
         if (errorCode2(error) !== "EEXIST") throw error;
-        const existing = readActivity(path);
-        if (existing === null || activityState(existing) !== "disconnected" || !reclaimDisconnectedActivity(path, existing)) {
-          throw new ActivityAlreadyExistsError(label, path, existing);
+        const existing = activitySnapshot(path);
+        if (existing === null || activityState(existing.record) !== "disconnected") {
+          throw new ActivityAlreadyExistsError(label, path, existing?.record ?? null);
+        }
+        const outcome = reclaimDisconnectedActivity(path, existing, candidate);
+        if (outcome === "installed") break;
+        if (outcome === "recovered" && recoveries === 0) {
+          recoveries += 1;
+          continue;
+        }
+        if (outcome === "busy" || outcome === "recovered") {
+          throw new ActivityAlreadyExistsError(label, path, readActivity(path));
         }
       }
     }
@@ -11021,8 +11163,18 @@ function finishActivity(claimed, outcome, diagnostics, endedAt = (/* @__PURE__ *
       diagnostics.push(`could not remove activity ${claimed.path}: ownership or file identity changed`);
       return;
     }
+    reachActivityTestPoint("finish-snapshot");
     try {
-      writeActivity(claimed.path, { ...claimed.record, ended_at: endedAt, outcome });
+      const finished = parseActivity({ ...claimed.record, ended_at: endedAt, outcome });
+      if (finished === null) throw new Error(`cannot write invalid activity to ${claimed.path}`);
+      const confirmed = activitySnapshot(claimed.path);
+      if (confirmed === null || confirmed.record.owner_token !== claimed.record.owner_token || !sameIdentity2(confirmed.identity, claimed.identity)) {
+        diagnostics.push(
+          `could not remove activity ${claimed.path}: ownership or file identity changed`
+        );
+        return;
+      }
+      unlinkSync3(claimed.path);
       return;
     } catch (error) {
       if (attempt === attempts) {
@@ -11044,7 +11196,8 @@ function pidIsAlive(pid) {
 }
 function activityState(activity, nowMs = Date.now(), staleMs = DEFAULT_STALE_MS) {
   if (activity === null || activity.ended_at !== void 0) return "idle";
-  const fresh = nowMs - Date.parse(activity.beat_at) <= staleMs;
+  const beatAgeMs = nowMs - Date.parse(activity.beat_at);
+  const fresh = beatAgeMs >= -MAX_FUTURE_BEAT_SKEW_MS && beatAgeMs <= staleMs;
   return pidIsAlive(activity.pid) && fresh ? "running" : "disconnected";
 }
 function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
@@ -11189,7 +11342,7 @@ function selectGate(config, changes) {
 
 // src/app/stateGuard.ts
 import { createHash as createHash2 } from "node:crypto";
-import { closeSync as closeSync3, openSync as openSync3, readFileSync as readFileSync6, readSync, readdirSync as readdirSync2 } from "node:fs";
+import { closeSync as closeSync4, openSync as openSync4, readFileSync as readFileSync6, readSync, readdirSync as readdirSync2 } from "node:fs";
 import { join as join4, relative, sep } from "node:path";
 function isOwnRunArtifact(rel, ownTaskId) {
   const parts = rel.split(sep);
@@ -11205,7 +11358,7 @@ function isOwnRunArtifact(rel, ownTaskId) {
 function hashFile(abs) {
   let fd;
   try {
-    fd = openSync3(abs, "r");
+    fd = openSync4(abs, "r");
   } catch {
     return null;
   }
@@ -11221,7 +11374,7 @@ function hashFile(abs) {
   } catch {
     return null;
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
 function hashActivity(abs) {
@@ -11273,7 +11426,7 @@ function stateDiff(before, after) {
 }
 
 // src/io/quota.ts
-import { existsSync as existsSync5, readFileSync as readFileSync7, readdirSync as readdirSync3, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync7, readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
 import { join as join5 } from "node:path";
 function walkJsonl(dir) {
   let out2 = [];
@@ -11287,7 +11440,7 @@ function walkJsonl(dir) {
     const p = join5(dir, name);
     let s;
     try {
-      s = statSync4(p);
+      s = statSync3(p);
     } catch {
       continue;
     }
@@ -11342,7 +11495,7 @@ function readCodexQuota(sessionsDir) {
   return null;
 }
 function readClaudeQuota(usageJsonPath) {
-  if (!existsSync5(usageJsonPath)) return null;
+  if (!existsSync4(usageJsonPath)) return null;
   let o;
   try {
     o = JSON.parse(readFileSync7(usageJsonPath, "utf8"));
@@ -11360,7 +11513,7 @@ function readClaudeQuota(usageJsonPath) {
 
 // src/io/supervisor.ts
 import { spawn as spawn2 } from "node:child_process";
-import { closeSync as closeSync4, mkdirSync as mkdirSync3, openSync as openSync4, statSync as statSync5, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync as closeSync5, mkdirSync as mkdirSync3, openSync as openSync5, statSync as statSync4, writeFileSync as writeFileSync3 } from "node:fs";
 import { dirname as dirname4 } from "node:path";
 function waitForGroupGone(pgid, budgetMs, stepMs) {
   return new Promise((resolve6) => {
@@ -11390,12 +11543,12 @@ async function drainGroup(pgid, graceMs, stepMs) {
 function activitySignal(logPath, watchPaths) {
   let sig = 0;
   try {
-    sig += statSync5(logPath).size;
+    sig += statSync4(logPath).size;
   } catch {
   }
   for (const p of watchPaths) {
     try {
-      sig += Math.floor(statSync5(p).mtimeMs);
+      sig += Math.floor(statSync4(p).mtimeMs);
     } catch {
     }
   }
@@ -11410,7 +11563,7 @@ function superviseWorker(spec) {
     mkdirSync3(dirname4(spec.logPath), { recursive: true });
     mkdirSync3(dirname4(spec.heartbeatPath), { recursive: true });
     const startedAtMs = Date.now();
-    const logFd = openSync4(spec.logPath, "a");
+    const logFd = openSync5(spec.logPath, "a");
     let timedOut = false;
     let stalled = false;
     let settled = false;
@@ -11433,7 +11586,7 @@ function superviseWorker(spec) {
       settled = true;
       clearAll();
       try {
-        closeSync4(logFd);
+        closeSync5(logFd);
       } catch {
       }
       const exitClass = classifyExit({
@@ -11486,7 +11639,7 @@ function superviseWorker(spec) {
       timers.push(
         setInterval(() => {
           try {
-            writeFileSync2(spec.heartbeatPath, `${Date.now()}
+            writeFileSync3(spec.heartbeatPath, `${Date.now()}
 `);
           } catch {
           }
@@ -11507,7 +11660,7 @@ function superviseWorker(spec) {
         }, pollIntervalMs)
       );
       try {
-        writeFileSync2(spec.heartbeatPath, `${startedAtMs}
+        writeFileSync3(spec.heartbeatPath, `${startedAtMs}
 `);
       } catch {
       }
@@ -12489,14 +12642,14 @@ function seconds(ms) {
 
 // src/app/taskContext.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync7, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync11 } from "node:fs";
 var TASK_CONTEXT_SOFT_LIMIT = 8e3;
 function contextError(taskId, message) {
   return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
 }
 function loadTaskContext(paths, task) {
   const path = paths.taskContext(task.id);
-  if (!existsSync7(path)) return null;
+  if (!existsSync6(path)) return null;
   const text2 = readFileSync11(path, "utf8");
   const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
   if (frontmatter === null) {
@@ -12904,7 +13057,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   const discarded = [];
   for (let i = 0; i < order.length; i++) {
     used = order[i];
-    if (i > 0) writeFileSync3(logPath, "");
+    if (i > 0) writeFileSync4(logPath, "");
     const launcher2 = makeLauncher(used);
     const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
     const stallMs = (used.stall_minutes ?? STALL_MINUTES_DEFAULT) * 6e4;
@@ -13071,7 +13224,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
       delete result2.verified_head;
       delete result2.diff_sha;
     } else {
-      if (patch !== null) writeFileSync3(paths.diffPatch(id), patch);
+      if (patch !== null) writeFileSync4(paths.diffPatch(id), patch);
       attachEffectiveRisk(result2, task, workDir, baseSha);
     }
   }
@@ -13265,7 +13418,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   };
   const launcher = makeLauncher(used);
   const logPath = paths.workerLog(id);
-  writeFileSync3(logPath, "");
+  writeFileSync4(logPath, "");
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
   const stateBefore = fingerprintState(paths, id);
@@ -13341,7 +13494,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
         assertTaskIdentity(workDir, { branch, baseSha });
         result2.closeout = { ok: true };
         const patch = rawDiff(workDir, baseSha, "HEAD");
-        writeFileSync3(paths.diffPatch(id), patch);
+        writeFileSync4(paths.diffPatch(id), patch);
         result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
         result2.verified_head = resolveCommit(workDir, "HEAD");
         const stateBeforeVerify = fingerprintState(paths, id);
@@ -13398,7 +13551,7 @@ function persistDelivery(paths, id, task, finalMessage) {
   if (finalMessage == null || finalMessage.length === 0) return void 0;
   const path = paths.delivery(id);
   try {
-    writeFileSync3(path, finalMessage);
+    writeFileSync4(path, finalMessage);
   } catch (e) {
     return { path, header: null, header_error: `write failed: ${e.message}` };
   }
@@ -13476,7 +13629,7 @@ function appendMetric2(deps, result2, task, context, phaseTimings) {
 }
 
 // src/app/gateQueue.ts
-import { writeFileSync as writeFileSync4 } from "node:fs";
+import { writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join10 } from "node:path";
 
 // src/app/verifiedHead.ts
@@ -13629,7 +13782,7 @@ async function runQueueGate(deps, taskId) {
       for (const argv of config.reset ?? []) {
         const resetOutcome = await supervise(argv, resetLog, maxWallMs, env);
         if (resetOutcome.exitClass !== "ok") {
-          writeFileSync4(gateLog, "", { flag: "a" });
+          writeFileSync5(gateLog, "", { flag: "a" });
           resetHardTracked(paths.repoRoot, baseSha);
           return persistGate(paths, taskId, result2, {
             ok: false,
@@ -13704,7 +13857,7 @@ async function runQueueGate(deps, taskId) {
 }
 
 // src/app/orchestratorUsage.ts
-import { readdirSync as readdirSync4, statSync as statSync6 } from "node:fs";
+import { readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join11 } from "node:path";
 
@@ -13744,7 +13897,7 @@ function deriveBaselineCost(tokensIn, tokensOut) {
 }
 
 // src/io/transcript.ts
-import { closeSync as closeSync5, openSync as openSync5, readSync as readSync2 } from "node:fs";
+import { closeSync as closeSync6, openSync as openSync6, readSync as readSync2 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 var emptyUsage = () => ({
   inputTokens: 0,
@@ -13777,7 +13930,7 @@ function addLineUsage(line, sinceIso, model, untilIso, total) {
 function sumMainModelUsageSince(transcriptPath, sinceIso, model, untilIso) {
   let fd;
   try {
-    fd = openSync5(transcriptPath, "r");
+    fd = openSync6(transcriptPath, "r");
   } catch {
     return emptyUsage();
   }
@@ -13802,7 +13955,7 @@ function sumMainModelUsageSince(transcriptPath, sinceIso, model, untilIso) {
     readFailed = true;
   } finally {
     try {
-      closeSync5(fd);
+      closeSync6(fd);
     } catch {
     }
   }
@@ -13823,7 +13976,7 @@ function newestTranscript(projectsDir) {
     const path = join11(projectsDir, entry.name);
     let mtimeMs;
     try {
-      mtimeMs = statSync6(path).mtimeMs;
+      mtimeMs = statSync5(path).mtimeMs;
     } catch {
       continue;
     }
@@ -13869,7 +14022,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync4, readFileSync as readFileSync15, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync8, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync15, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync6 } from "node:fs";
 import { resolve as resolve4 } from "node:path";
 
 // src/core/symbols.ts
@@ -13983,11 +14136,11 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync9, readdirSync as readdirSync5, readFileSync as readFileSync14, statSync as statSync7 } from "node:fs";
+import { existsSync as existsSync8, readdirSync as readdirSync5, readFileSync as readFileSync14, statSync as statSync6 } from "node:fs";
 import { relative as relative3, resolve as resolve3 } from "node:path";
 
 // src/io/treeSitter.ts
-import { existsSync as existsSync8, readFileSync as readFileSync13 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync13 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join12 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13995,7 +14148,7 @@ var WTS_BASENAMES = ["web-tree-sitter", "tree-sitter"];
 function wtsRuntimeFile(dir, suffix) {
   for (const base of WTS_BASENAMES) {
     const candidate = join12(dir, `${base}${suffix}`);
-    if (existsSync8(candidate)) return candidate;
+    if (existsSync7(candidate)) return candidate;
   }
   return join12(dir, `tree-sitter${suffix}`);
 }
@@ -14112,7 +14265,7 @@ function hashRoots(roots) {
 function walkFiles(root, acc) {
   let st;
   try {
-    st = statSync7(root);
+    st = statSync6(root);
   } catch {
     return;
   }
@@ -14149,7 +14302,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
   let bytes = 0;
   for (const abs of files) {
     const rel = relative3(repoRoot, abs);
-    const st = statSync7(abs);
+    const st = statSync6(abs);
     const cached = prevByFile.get(rel);
     if (cached !== void 0 && cached.mtimeMs === st.mtimeMs) {
       out2.push(cached);
@@ -14184,7 +14337,7 @@ async function refreshIndex(cachePath, repoRoot) {
     const abs = resolve3(repoRoot, f.file);
     let st;
     try {
-      st = statSync7(abs);
+      st = statSync6(abs);
     } catch {
       changed = true;
       continue;
@@ -14200,7 +14353,7 @@ async function refreshIndex(cachePath, repoRoot) {
     changed = true;
   }
   const refreshed = { grammar, files: out2 };
-  if (changed && existsSync9(cachePath)) writeJsonAtomic(cachePath, refreshed);
+  if (changed && existsSync8(cachePath)) writeJsonAtomic(cachePath, refreshed);
   return { index: refreshed, reparsed };
 }
 
@@ -14255,7 +14408,7 @@ async function runIndex(paths, cfg, dirs) {
   const r = await buildIndex(roots, cache2, paths.repoRoot, { maxFiles: cfg.index.maxFiles, maxBytes: cfg.index.maxBytes });
   if (r.degraded !== void 0) return { degraded: true, reason: `${r.degraded.reason}; narrow codeIntelligence.index.scope / raise maxFiles / disable; using rg` };
   mkdirSync4(paths.symbolsDir, { recursive: true });
-  writeFileSync5(paths.symbolLatest, hash);
+  writeFileSync6(paths.symbolLatest, hash);
   return { files: r.files, symbols: r.symbols, reparsed: r.reparsed, cache: cache2 };
 }
 async function runQuery(paths, cfg, sub, args) {
@@ -14264,12 +14417,12 @@ async function runQuery(paths, cfg, sub, args) {
   let cache2;
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
-  } else if (existsSync10(paths.symbolLatest)) {
+  } else if (existsSync9(paths.symbolLatest)) {
     cache2 = paths.symbolCache(readFileSync15(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
-  if (!existsSync10(cache2)) {
+  if (!existsSync9(cache2)) {
     return { degraded: true, reason: "no symbol index yet; run `router symbol index [dirs]` first; using rg" };
   }
   let index;
@@ -14751,7 +14904,7 @@ function extractInner(command) {
 }
 
 // src/app/supervise.ts
-import { mkdirSync as mkdirSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
+import { mkdirSync as mkdirSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync7 } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname as dirname6 } from "node:path";
 var MAX_WALL_MS = 24 * 60 * 6e4;
@@ -14842,7 +14995,7 @@ async function superviseCommand(spec) {
       return { exitCode: signalExitCode(signals.signal), supervision: null, diagnostics };
     }
     mkdirSync5(dirname6(spec.logPath), { recursive: true });
-    writeFileSync6(spec.logPath, "");
+    writeFileSync7(spec.logPath, "");
     const supervision = await superviseWorker({
       argv: spec.argv,
       cwd: spec.cwd,
@@ -14914,10 +15067,10 @@ function depsFor(ctx, readOnly = false) {
   const paths = routerPaths(rd);
   if (!readOnly) {
     for (const d of [paths.root, paths.tasksDir]) {
-      if (!existsSync11(d)) mkdirSync6(d, { recursive: true });
+      if (!existsSync10(d)) mkdirSync6(d, { recursive: true });
     }
     const gi = join13(paths.root, ".gitignore");
-    if (!existsSync11(gi)) writeFileSync7(gi, "*\n");
+    if (!existsSync10(gi)) writeFileSync8(gi, "*\n");
   }
   return { paths, clock: systemClock };
 }
@@ -15009,8 +15162,8 @@ var newTask = (ctx) => {
   const id = requireId(ctx);
   const title = flagStr(ctx.args.flags, "title") ?? id;
   mkdirSync6(paths.taskDir(id), { recursive: true });
-  if (!existsSync11(paths.taskYaml(id))) writeFileSync7(paths.taskYaml(id), taskTemplate(id, title));
-  if (!existsSync11(paths.contractMd(id))) writeFileSync7(paths.contractMd(id), contractTemplate(id, title));
+  if (!existsSync10(paths.taskYaml(id))) writeFileSync8(paths.taskYaml(id), taskTemplate(id, title));
+  if (!existsSync10(paths.contractMd(id))) writeFileSync8(paths.contractMd(id), contractTemplate(id, title));
   emit(
     ctx.json,
     { ok: true, id, task_yaml: paths.taskYaml(id) },
@@ -15258,7 +15411,7 @@ var list = (ctx) => {
     /* read-only */
   );
   const nowMs = Date.parse(clock.nowIso());
-  const ids = existsSync11(paths.tasksDir) ? readdirSync7(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync10(paths.tasksDir) ? readdirSync7(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let title = "";
     try {
@@ -15340,7 +15493,7 @@ var plans = (ctx) => {
   const explicit = flagStr(ctx.args.flags, "router-dir");
   const paths = routerPaths(explicit ?? findRouterDir(ctx.cwd) ?? join13(ctx.cwd, ROUTER_DIR));
   const plansRoot = join13(paths.root, "plans");
-  const ids = existsSync11(plansRoot) ? readdirSync7(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const ids = existsSync10(plansRoot) ? readdirSync7(plansRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
   const rows = ids.map((id) => {
     let planFrontmatter = null;
     let hasPlan = true;
@@ -15371,7 +15524,7 @@ var plans = (ctx) => {
       design_revision: designRevision,
       stage,
       critique_round: critiqueRound,
-      decisions: existsSync11(paths.specDecisions(id)),
+      decisions: existsSync10(paths.specDecisions(id)),
       locked: readLock(paths.specLock(id)) !== null
     };
   });
@@ -15484,7 +15637,7 @@ var setupStatusline = (ctx) => {
   const statuslinePath = flagStr(ctx.args.flags, "statusline") ?? resolve5(dirname7(fileURLToPath2(import.meta.url)), "..", "statusline", "router-usage.mjs");
   const dryRun = flagBool(ctx.args.flags, "dry-run");
   let settings = {};
-  if (existsSync11(settingsPath)) {
+  if (existsSync10(settingsPath)) {
     try {
       settings = JSON.parse(readFileSync16(settingsPath, "utf8"));
     } catch (e) {
@@ -15500,7 +15653,7 @@ var setupStatusline = (ctx) => {
     settings.statusLine = { ...current ?? {}, ...plan2.statusLine };
     writeJsonAtomic(settingsPath, settings);
   }
-  const missing = !existsSync11(statuslinePath);
+  const missing = !existsSync10(statuslinePath);
   emit(
     ctx.json,
     {
@@ -15548,7 +15701,7 @@ var models = (ctx) => {
   emit(ctx.json, { ok: true, models: cfg }, () => {
     const tier = (k) => `  ${k}: weak ${spec(cfg[k].weak)}  strong ${spec(cfg[k].strong)}`;
     const review = cfg.review.map((r) => `${r.kind}:${r.model ?? "?"}${r.effort ? `/${r.effort}` : ""}`).join(" -> ");
-    const src = existsSync11(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
+    const src = existsSync10(modelsYamlPath(paths)) ? "default + .router/models.yaml" : "default";
     return `model tiers (${src}):
 ${tier("codex")}
 ${tier("claude")}
@@ -15614,7 +15767,7 @@ var doctor = async (ctx) => {
   } catch (e) {
     wasmDetail = e.message;
   }
-  const cacheWritable = existsSync11(paths.root);
+  const cacheWritable = existsSync10(paths.root);
   emit(
     ctx.json,
     {
