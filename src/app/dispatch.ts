@@ -38,7 +38,7 @@ import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import { loadGateConfig } from './gateConfig.ts';
-import { fingerprintState, stateDiff } from './stateGuard.ts';
+import { classifyStateChanges, fingerprintState } from './stateGuard.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
@@ -378,7 +378,8 @@ async function runPreparedObserved(
   // Compare before anything else is decided: state tampering is not a code defect to be weighed
   // against the diff, it is a contract violation, and it is invisible to every gate because
   // `.router/` is gitignored.
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const stateChanges = classifyStateChanges(stateBefore, fingerprintState(paths, id), id);
+  const tampering = stateChanges.fatal;
   // The one file the fingerprint cannot watch, checked the only way it can be: by identity
   // rather than by content. Our heartbeat rewrites gate.lock constantly, so it is excluded from
   // the diff -- and this is what stops that exclusion from being a free channel for an executor
@@ -437,6 +438,7 @@ async function runPreparedObserved(
     ...(closeout !== undefined ? { closeout } : {}),
     ...(groupSurvived ? { executor_group_survived: true } : {}),
     ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
+    ...(stateChanges.reported.length > 0 ? { state_changes: stateChanges.reported } : {}),
     ...(prep.dirtySubmodules.length > 0 ? { dirty_submodules: prep.dirtySubmodules } : {}),
     ...(context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {}),
     ...(switches > 0 ? { executor_switches: switches } : {}),
@@ -494,14 +496,21 @@ async function runPreparedObserved(
       ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
       ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
-    if (!(envelope?.stillOwned() ?? true)) {
-      duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
+    const duringVerify = classifyStateChanges(
+      stateBeforeVerify,
+      fingerprintState(paths, id),
+      id,
+    );
+    if (duringVerify.reported.length > 0) {
+      result.state_changes = [...(result.state_changes ?? []), ...duringVerify.reported];
     }
-    if (duringVerify.length > 0) {
+    if (!(envelope?.stillOwned() ?? true)) {
+      duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
+    }
+    if (duringVerify.fatal.length > 0) {
       // Not a verdict to weigh against the diff: the evidence was produced in a checkout somebody
       // else was writing, so there is no verdict left to report.
-      result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify];
+      result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify.fatal];
       result.exit_class = 'task_failed';
       delete result.verifier;
       delete result.verified_head;
@@ -876,7 +885,8 @@ async function resumeInLock(
   // something went wrong.
   const mismatch = newSession !== priorSession;
 
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const stateChanges = classifyStateChanges(stateBefore, fingerprintState(paths, id), id);
+  const tampering = stateChanges.fatal;
   if (!envelope.stillOwned()) {
     tampering.push('modified gate.lock (it no longer carries this run’s owner token)');
   }
@@ -909,6 +919,7 @@ async function resumeInLock(
     ...(mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {}),
     ...(o.groupSurvived ? { executor_group_survived: true } : {}),
     ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
+    ...(stateChanges.reported.length > 0 ? { state_changes: stateChanges.reported } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(conflict ? { conflict: true } : {}),
     ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
@@ -976,12 +987,19 @@ async function resumeInLock(
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
-        if (!envelope.stillOwned()) {
-          duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
+        const duringVerify = classifyStateChanges(
+          stateBeforeVerify,
+          fingerprintState(paths, id),
+          id,
+        );
+        if (duringVerify.reported.length > 0) {
+          result.state_changes = [...(result.state_changes ?? []), ...duringVerify.reported];
         }
-        if (duringVerify.length > 0) {
-          result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify];
+        if (!envelope.stillOwned()) {
+          duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
+        }
+        if (duringVerify.fatal.length > 0) {
+          result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify.fatal];
           result.exit_class = 'task_failed';
           delete result.verifier;
           delete result.verified_head;
