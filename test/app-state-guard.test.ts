@@ -208,3 +208,53 @@ test('state changes are separated into reporting and failure tiers', () => {
     fx.cleanup();
   }
 });
+
+// The tier test above never modifies ANOTHER run's activity record, so making a foreign identity
+// change benign left all thirty-three tests green (main-session mutation, 2026-08-25). Forging
+// somebody else's record is the original hole a reviewer walked through: a live pid plus a fresh
+// beat reads `running` forever and blocks a later `router supervise --label` on that name.
+test('forging ANOTHER activity identity is fatal, while its heartbeat alone is not', () => {
+  const fx = freshState();
+  const other = 'activity/reviewer.json';
+  const record = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      label: 'review:architect',
+      owner_token: 'theirs',
+      pid: 4242,
+      started_at: 'A',
+      beat_at: 'B',
+      ...over,
+    });
+  try {
+    fx.write(`activity/${activityKey('task:mine')}.json`,
+      JSON.stringify({ label: 'task:mine', owner_token: 'o', pid: 1, started_at: 'A', beat_at: 'B' }));
+
+    // A concurrent heartbeat is the one legitimate change to somebody else's record.
+    fx.write(other, record());
+    let before = fingerprintState(fx.paths, 'mine');
+    fx.write(other, record({ beat_at: 'B2' }));
+    let tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+    assert.deepEqual(tiers, { reported: [], fatal: [] }, 'a foreign heartbeat is not a change');
+
+    // Every other field is an identity, and no legitimate path rewrites somebody else's.
+    for (const over of [
+      { pid: process.pid },
+      { owner_token: 'stolen' },
+      { label: 'review:senior' },
+      { status_path: '/tmp/evil' },
+    ]) {
+      fx.write(other, record());
+      before = fingerprintState(fx.paths, 'mine');
+      fx.write(other, record(over));
+      tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+      assert.deepEqual(
+        tiers.fatal,
+        [`modified ${other}`],
+        `forging ${Object.keys(over)[0]} on another run's record was not fatal`,
+      );
+      assert.deepEqual(tiers.reported, []);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
