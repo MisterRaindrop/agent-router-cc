@@ -2,12 +2,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync as closeSync2,
+  constants,
   fstatSync,
   fsyncSync as fsyncSync2,
   linkSync,
   openSync as openSync2,
   readdirSync,
-  readFileSync,
+  readSync,
   unlinkSync as unlinkSync2,
   writeFileSync
 } from "node:fs";
@@ -65,7 +66,7 @@ import { spawn } from "node:child_process";
 var DEFAULT_BEAT_MS = 15e3;
 var CHILD_SOURCE = `
 const fs = require('node:fs');
-const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
+const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, skipIfExists, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
 const indent = Number(indentRaw);
 const interval = Number(intervalRaw);
 const parentPid = Number(parentRaw);
@@ -91,6 +92,7 @@ function beat() {
         }
       } catch { process.exit(0); }
     }
+    if (skipIfExists && fs.existsSync(skipIfExists)) return;
     stored[field] = valueFormat === 'iso' ? new Date().toISOString() : Date.now();
     const data = Buffer.from(JSON.stringify(stored, null, indent) + '\\n');
     let offset = 0;
@@ -124,6 +126,7 @@ function startJsonHeartbeat(filePath, options) {
       String(options.indent ?? 0),
       String(intervalMs),
       String(process.pid),
+      options.skipIfExists ?? "",
       options.testPauseAfterRead?.readyPath ?? "",
       options.testPauseAfterRead?.resumePath ?? "",
       options.testPauseAfterRead?.donePath ?? ""
@@ -178,6 +181,7 @@ var DEFAULT_STALE_MS = 9e4;
 var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
 var MAX_PID = 2147483647;
 var MAX_FUTURE_BEAT_SKEW_MS = 5e3;
+var MAX_ACTIVITY_FILE_BYTES = 64 * 1024;
 var RECLAIM_LEASE_MS = 3e4;
 var activityTestHook;
 function setActivityTestHookForTesting(hook) {
@@ -246,7 +250,8 @@ function writeActivity(path, activity) {
 }
 function readActivity(path) {
   try {
-    return parseActivity(JSON.parse(readFileSync(path, "utf8")));
+    const snapshot = fileSnapshot(path);
+    return snapshot === null ? null : parseActivity(JSON.parse(snapshot.text));
   } catch {
     return null;
   }
@@ -260,15 +265,27 @@ function sameIdentity(left, right) {
 function fileSnapshot(path) {
   let fd;
   try {
-    fd = openSync2(path, "r");
+    fd = openSync2(
+      path,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
+    );
   } catch (error) {
     if (errorCode(error) === "ENOENT") return null;
     throw error;
   }
   try {
     const stat = fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || stat.size > BigInt(MAX_ACTIVITY_FILE_BYTES)) return null;
+    const bytes = Buffer.allocUnsafe(MAX_ACTIVITY_FILE_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_ACTIVITY_FILE_BYTES) return null;
     return {
-      text: readFileSync(fd, "utf8"),
+      text: bytes.subarray(0, length).toString("utf8"),
       identity: { dev: stat.dev, ino: stat.ino },
       mtimeMs: Number(stat.mtimeNs / 1000000n)
     };
@@ -358,6 +375,13 @@ function stillReclaiming(path, token) {
     return false;
   }
 }
+function renewReclaimer(path, token) {
+  if (!stillReclaiming(path, token)) return;
+  try {
+    writeFileSync(path, reclaimerText(token));
+  } catch {
+  }
+}
 function releaseReclaimer(path, token) {
   if (!stillReclaiming(path, token)) return;
   try {
@@ -372,11 +396,14 @@ function reclaimDisconnectedActivity(path, expected, candidate) {
     return clearDeadReclaimer(reclaimPath) ? "recovered" : "busy";
   }
   try {
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint("reclaim-guard-established");
     const held = activitySnapshot(path);
     if (held === null || !sameSnapshot(held, expected)) return "retry";
     if (activityState(held.record) !== "disconnected") return "retry";
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint("reclaim-liveness-confirmed");
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint("reclaim-before-unlink");
     if (!stillReclaiming(reclaimPath, token)) return "retry";
     const confirmed = activitySnapshot(path);
@@ -389,6 +416,7 @@ function reclaimDisconnectedActivity(path, expected, candidate) {
       if (errorCode(error) === "ENOENT") return "retry";
       throw error;
     }
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint("reclaim-before-install");
     if (!stillReclaiming(reclaimPath, token)) return "retry";
     try {
@@ -556,7 +584,10 @@ function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
     // writeJsonAtomic pretty-prints with two spaces. Matching that shape makes a heartbeat only
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,
-    intervalMs
+    intervalMs,
+    // An old owner must not revive this inode inside the reclaimer's final-confirm/unlink window.
+    // Skipping, rather than exiting, lets it resume if reclaim ultimately stands down.
+    skipIfExists: `${path}.reclaim`
   });
 }
 export {

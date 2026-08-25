@@ -408,11 +408,11 @@ var require_codegen = __commonJS({
         const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
         return `${varKind} ${this.name}${rhs};` + _n;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         if (!names[this.name.str])
           return;
         if (this.rhs)
-          this.rhs = optimizeExpr(this.rhs, names, constants);
+          this.rhs = optimizeExpr(this.rhs, names, constants2);
         return this;
       }
       get names() {
@@ -429,10 +429,10 @@ var require_codegen = __commonJS({
       render({ _n }) {
         return `${this.lhs} = ${this.rhs};` + _n;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects)
           return;
-        this.rhs = optimizeExpr(this.rhs, names, constants);
+        this.rhs = optimizeExpr(this.rhs, names, constants2);
         return this;
       }
       get names() {
@@ -493,8 +493,8 @@ var require_codegen = __commonJS({
       optimizeNodes() {
         return `${this.code}` ? this : void 0;
       }
-      optimizeNames(names, constants) {
-        this.code = optimizeExpr(this.code, names, constants);
+      optimizeNames(names, constants2) {
+        this.code = optimizeExpr(this.code, names, constants2);
         return this;
       }
       get names() {
@@ -523,12 +523,12 @@ var require_codegen = __commonJS({
         }
         return nodes.length > 0 ? this : void 0;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         const { nodes } = this;
         let i = nodes.length;
         while (i--) {
           const n = nodes[i];
-          if (n.optimizeNames(names, constants))
+          if (n.optimizeNames(names, constants2))
             continue;
           subtractNames(names, n.names);
           nodes.splice(i, 1);
@@ -581,12 +581,12 @@ var require_codegen = __commonJS({
           return void 0;
         return this;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         var _a;
-        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants);
-        if (!(super.optimizeNames(names, constants) || this.else))
+        this.else = (_a = this.else) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants2);
+        if (!(super.optimizeNames(names, constants2) || this.else))
           return;
-        this.condition = optimizeExpr(this.condition, names, constants);
+        this.condition = optimizeExpr(this.condition, names, constants2);
         return this;
       }
       get names() {
@@ -609,10 +609,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.iteration})` + super.render(opts);
       }
-      optimizeNames(names, constants) {
-        if (!super.optimizeNames(names, constants))
+      optimizeNames(names, constants2) {
+        if (!super.optimizeNames(names, constants2))
           return;
-        this.iteration = optimizeExpr(this.iteration, names, constants);
+        this.iteration = optimizeExpr(this.iteration, names, constants2);
         return this;
       }
       get names() {
@@ -648,10 +648,10 @@ var require_codegen = __commonJS({
       render(opts) {
         return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
       }
-      optimizeNames(names, constants) {
-        if (!super.optimizeNames(names, constants))
+      optimizeNames(names, constants2) {
+        if (!super.optimizeNames(names, constants2))
           return;
-        this.iterable = optimizeExpr(this.iterable, names, constants);
+        this.iterable = optimizeExpr(this.iterable, names, constants2);
         return this;
       }
       get names() {
@@ -693,11 +693,11 @@ var require_codegen = __commonJS({
         (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNodes();
         return this;
       }
-      optimizeNames(names, constants) {
+      optimizeNames(names, constants2) {
         var _a, _b;
-        super.optimizeNames(names, constants);
-        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants);
-        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants);
+        super.optimizeNames(names, constants2);
+        (_a = this.catch) === null || _a === void 0 ? void 0 : _a.optimizeNames(names, constants2);
+        (_b = this.finally) === null || _b === void 0 ? void 0 : _b.optimizeNames(names, constants2);
         return this;
       }
       get names() {
@@ -998,7 +998,7 @@ var require_codegen = __commonJS({
     function addExprNames(names, from) {
       return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
     }
-    function optimizeExpr(expr, names, constants) {
+    function optimizeExpr(expr, names, constants2) {
       if (expr instanceof code_1.Name)
         return replaceName(expr);
       if (!canOptimize(expr))
@@ -1013,14 +1013,14 @@ var require_codegen = __commonJS({
         return items;
       }, []));
       function replaceName(n) {
-        const c = constants[n.str];
+        const c = constants2[n.str];
         if (c === void 0 || names[n.str] !== 1)
           return n;
         delete names[n.str];
         return c;
       }
       function canOptimize(e) {
-        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants[c.str] !== void 0);
+        return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants2[c.str] !== void 0);
       }
     }
     function subtractNames(names, from) {
@@ -6647,7 +6647,7 @@ function flagBool(flags, key) {
 }
 
 // src/cli/commands.ts
-import { existsSync as existsSync10, mkdirSync as mkdirSync6, readdirSync as readdirSync7, readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync10, mkdirSync as mkdirSync6, readdirSync as readdirSync7, readFileSync as readFileSync15, writeFileSync as writeFileSync8 } from "node:fs";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { homedir as homedir3 } from "node:os";
 import { dirname as dirname7, join as join13, resolve as resolve5 } from "node:path";
@@ -10101,7 +10101,7 @@ function appendMetric(p, record) {
 
 // src/app/dispatch.ts
 import { createHash as createHash4 } from "node:crypto";
-import { readFileSync as readFileSync12, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "node:fs";
+import { readFileSync as readFileSync11, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir } from "node:os";
 import { join as join9 } from "node:path";
 
@@ -10261,12 +10261,13 @@ function effectiveRisk(declared, signals) {
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync as closeSync3,
+  constants,
   fstatSync as fstatSync2,
   fsyncSync as fsyncSync3,
   linkSync as linkSync2,
   openSync as openSync3,
   readdirSync,
-  readFileSync as readFileSync4,
+  readSync,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync2
 } from "node:fs";
@@ -10276,7 +10277,7 @@ import { spawn } from "node:child_process";
 var DEFAULT_BEAT_MS = 15e3;
 var CHILD_SOURCE = `
 const fs = require('node:fs');
-const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
+const [filePath, field, valueFormat, guardRaw, indentRaw, intervalRaw, parentRaw, skipIfExists, pauseReady, pauseResume, pauseDone] = process.argv.slice(1);
 const indent = Number(indentRaw);
 const interval = Number(intervalRaw);
 const parentPid = Number(parentRaw);
@@ -10302,6 +10303,7 @@ function beat() {
         }
       } catch { process.exit(0); }
     }
+    if (skipIfExists && fs.existsSync(skipIfExists)) return;
     stored[field] = valueFormat === 'iso' ? new Date().toISOString() : Date.now();
     const data = Buffer.from(JSON.stringify(stored, null, indent) + '\\n');
     let offset = 0;
@@ -10335,6 +10337,7 @@ function startJsonHeartbeat(filePath, options) {
       String(options.indent ?? 0),
       String(intervalMs),
       String(process.pid),
+      options.skipIfExists ?? "",
       options.testPauseAfterRead?.readyPath ?? "",
       options.testPauseAfterRead?.resumePath ?? "",
       options.testPauseAfterRead?.donePath ?? ""
@@ -10869,6 +10872,7 @@ function acquireLock(path, opts) {
 var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
 var MAX_PID = 2147483647;
 var MAX_FUTURE_BEAT_SKEW_MS = 5e3;
+var MAX_ACTIVITY_FILE_BYTES = 64 * 1024;
 var RECLAIM_LEASE_MS2 = 3e4;
 var activityTestHook;
 function reachActivityTestPoint(point) {
@@ -10934,7 +10938,8 @@ function writeActivity(path, activity) {
 }
 function readActivity(path) {
   try {
-    return parseActivity(JSON.parse(readFileSync4(path, "utf8")));
+    const snapshot = fileSnapshot(path);
+    return snapshot === null ? null : parseActivity(JSON.parse(snapshot.text));
   } catch {
     return null;
   }
@@ -10948,15 +10953,27 @@ function sameIdentity2(left, right) {
 function fileSnapshot(path) {
   let fd;
   try {
-    fd = openSync3(path, "r");
+    fd = openSync3(
+      path,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
+    );
   } catch (error) {
     if (errorCode2(error) === "ENOENT") return null;
     throw error;
   }
   try {
     const stat = fstatSync2(fd, { bigint: true });
+    if (!stat.isFile() || stat.size > BigInt(MAX_ACTIVITY_FILE_BYTES)) return null;
+    const bytes = Buffer.allocUnsafe(MAX_ACTIVITY_FILE_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_ACTIVITY_FILE_BYTES) return null;
     return {
-      text: readFileSync4(fd, "utf8"),
+      text: bytes.subarray(0, length).toString("utf8"),
       identity: { dev: stat.dev, ino: stat.ino },
       mtimeMs: Number(stat.mtimeNs / 1000000n)
     };
@@ -11046,6 +11063,13 @@ function stillReclaiming2(path, token) {
     return false;
   }
 }
+function renewReclaimer2(path, token) {
+  if (!stillReclaiming2(path, token)) return;
+  try {
+    writeFileSync2(path, reclaimerText2(token));
+  } catch {
+  }
+}
 function releaseReclaimer2(path, token) {
   if (!stillReclaiming2(path, token)) return;
   try {
@@ -11060,11 +11084,14 @@ function reclaimDisconnectedActivity(path, expected, candidate) {
     return clearDeadReclaimer2(reclaimPath) ? "recovered" : "busy";
   }
   try {
+    renewReclaimer2(reclaimPath, token);
     reachActivityTestPoint("reclaim-guard-established");
     const held = activitySnapshot(path);
     if (held === null || !sameSnapshot(held, expected)) return "retry";
     if (activityState(held.record) !== "disconnected") return "retry";
+    renewReclaimer2(reclaimPath, token);
     reachActivityTestPoint("reclaim-liveness-confirmed");
+    renewReclaimer2(reclaimPath, token);
     reachActivityTestPoint("reclaim-before-unlink");
     if (!stillReclaiming2(reclaimPath, token)) return "retry";
     const confirmed = activitySnapshot(path);
@@ -11077,6 +11104,7 @@ function reclaimDisconnectedActivity(path, expected, candidate) {
       if (errorCode2(error) === "ENOENT") return "retry";
       throw error;
     }
+    renewReclaimer2(reclaimPath, token);
     reachActivityTestPoint("reclaim-before-install");
     if (!stillReclaiming2(reclaimPath, token)) return "retry";
     try {
@@ -11208,12 +11236,15 @@ function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
     // writeJsonAtomic pretty-prints with two spaces. Matching that shape makes a heartbeat only
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,
-    intervalMs
+    intervalMs,
+    // An old owner must not revive this inode inside the reclaimer's final-confirm/unlink window.
+    // Skipping, rather than exiting, lets it resume if reclaim ultimately stands down.
+    skipIfExists: `${path}.reclaim`
   });
 }
 
 // src/app/gateConfig.ts
-import { lstatSync, readFileSync as readFileSync5 } from "node:fs";
+import { lstatSync, readFileSync as readFileSync4 } from "node:fs";
 import { join as join3 } from "node:path";
 var KEYS = /* @__PURE__ */ new Set([
   "mode",
@@ -11262,7 +11293,7 @@ function loadGateConfig(paths) {
   const path = gateYamlPath(paths);
   let text2;
   try {
-    text2 = readFileSync5(path, "utf8");
+    text2 = readFileSync4(path, "utf8");
   } catch (err2) {
     if (err2.code === "ENOENT") {
       try {
@@ -11342,7 +11373,7 @@ function selectGate(config, changes) {
 
 // src/app/stateGuard.ts
 import { createHash as createHash2 } from "node:crypto";
-import { closeSync as closeSync4, openSync as openSync4, readFileSync as readFileSync6, readSync, readdirSync as readdirSync2 } from "node:fs";
+import { closeSync as closeSync4, openSync as openSync4, readFileSync as readFileSync5, readSync as readSync2, readdirSync as readdirSync2 } from "node:fs";
 import { join as join4, relative, sep } from "node:path";
 function isOwnRunArtifact(rel, ownTaskId) {
   const parts = rel.split(sep);
@@ -11365,7 +11396,7 @@ function hashFile(abs) {
     const hash = createHash2("sha256");
     const buffer = Buffer.allocUnsafe(64 * 1024);
     for (; ; ) {
-      const read = readSync(fd, buffer, 0, buffer.length, null);
+      const read = readSync2(fd, buffer, 0, buffer.length, null);
       if (read === 0) break;
       hash.update(buffer.subarray(0, read));
     }
@@ -11379,7 +11410,7 @@ function hashFile(abs) {
 function hashActivity(abs) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync6(abs, "utf8"));
+    parsed = JSON.parse(readFileSync5(abs, "utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return hashFile(abs);
   } catch {
     return hashFile(abs);
@@ -11439,7 +11470,7 @@ function classifyStateChanges(before, after, ownTaskId) {
 }
 
 // src/io/quota.ts
-import { existsSync as existsSync4, readFileSync as readFileSync7, readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync6, readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
 import { join as join5 } from "node:path";
 function walkJsonl(dir) {
   let out2 = [];
@@ -11478,7 +11509,7 @@ function readCodexQuota(sessionsDir) {
   if (newest === void 0) return null;
   let lines;
   try {
-    lines = readFileSync7(newest, "utf8").split("\n");
+    lines = readFileSync6(newest, "utf8").split("\n");
   } catch {
     return null;
   }
@@ -11511,7 +11542,7 @@ function readClaudeQuota(usageJsonPath) {
   if (!existsSync4(usageJsonPath)) return null;
   let o;
   try {
-    o = JSON.parse(readFileSync7(usageJsonPath, "utf8"));
+    o = JSON.parse(readFileSync6(usageJsonPath, "utf8"));
   } catch {
     return null;
   }
@@ -12021,7 +12052,7 @@ deserves a closer review than usual. Report all three honestly; they are read, n
 }
 
 // src/app/modelConfig.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 import { join as join7 } from "node:path";
 var DEFAULT_MODEL_CONFIG = {
   codex: {
@@ -12059,7 +12090,7 @@ function loadModelConfig(paths) {
   const cfg = cloneDefault();
   let raw;
   try {
-    raw = load(readFileSync8(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync7(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -12090,7 +12121,7 @@ function tierWorkers(cfg, tier) {
 }
 
 // src/app/taskLoad.ts
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync8 } from "node:fs";
 
 // src/domain/validate.ts
 var import_ajv = __toESM(require_ajv(), 1);
@@ -12277,10 +12308,10 @@ var TaskContractError = class extends Error {
   }
 };
 function loadTask(paths, id) {
-  const taskYamlText = readFileSync9(paths.taskYaml(id), "utf8");
+  const taskYamlText = readFileSync8(paths.taskYaml(id), "utf8");
   let contractMdText = "";
   try {
-    contractMdText = readFileSync9(paths.contractMd(id), "utf8");
+    contractMdText = readFileSync8(paths.contractMd(id), "utf8");
   } catch {
     contractMdText = "";
   }
@@ -12298,7 +12329,7 @@ function loadTask(paths, id) {
 }
 
 // src/app/runStatus.ts
-import { readFileSync as readFileSync10 } from "node:fs";
+import { readFileSync as readFileSync9 } from "node:fs";
 import { basename, isAbsolute, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 var ACTIVITY_THROTTLE_MS = 2e3;
 var LOG_POLL_MS = 250;
@@ -12464,7 +12495,7 @@ var RunStatusWriter = class {
     if (this.logPath === null || this.logKind === null) return;
     let text2;
     try {
-      text2 = readFileSync10(this.logPath, "utf8");
+      text2 = readFileSync9(this.logPath, "utf8");
     } catch {
       return;
     }
@@ -12514,7 +12545,7 @@ var TERMINAL_STATES = /* @__PURE__ */ new Set([
 function readRunStatus(path) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync10(path, "utf8"));
+    parsed = JSON.parse(readFileSync9(path, "utf8"));
   } catch {
     return null;
   }
@@ -12655,7 +12686,7 @@ function seconds(ms) {
 
 // src/app/taskContext.ts
 import { createHash as createHash3 } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync10 } from "node:fs";
 var TASK_CONTEXT_SOFT_LIMIT = 8e3;
 function contextError(taskId, message) {
   return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
@@ -12663,7 +12694,7 @@ function contextError(taskId, message) {
 function loadTaskContext(paths, task) {
   const path = paths.taskContext(task.id);
   if (!existsSync6(path)) return null;
-  const text2 = readFileSync11(path, "utf8");
+  const text2 = readFileSync10(path, "utf8");
   const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
   if (frontmatter === null) {
     throw contextError(task.id, "missing YAML frontmatter (expected a leading --- fenced block)");
@@ -13573,7 +13604,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
 }
 function safeRead(path) {
   try {
-    return readFileSync12(path, "utf8");
+    return readFileSync11(path, "utf8");
   } catch {
     return "";
   }
@@ -13928,7 +13959,7 @@ function deriveBaselineCost(tokensIn, tokensOut) {
 }
 
 // src/io/transcript.ts
-import { closeSync as closeSync6, openSync as openSync6, readSync as readSync2 } from "node:fs";
+import { closeSync as closeSync6, openSync as openSync6, readSync as readSync3 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 var emptyUsage = () => ({
   inputTokens: 0,
@@ -13972,7 +14003,7 @@ function sumMainModelUsageSince(transcriptPath, sinceIso, model, untilIso) {
   let readFailed = false;
   try {
     let bytesRead;
-    while ((bytesRead = readSync2(fd, buffer, 0, buffer.length, null)) > 0) {
+    while ((bytesRead = readSync3(fd, buffer, 0, buffer.length, null)) > 0) {
       pending += decoder.write(buffer.subarray(0, bytesRead));
       let newlineAt;
       while ((newlineAt = pending.indexOf("\n")) !== -1) {
@@ -14053,7 +14084,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync15, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync14, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync6 } from "node:fs";
 import { resolve as resolve4 } from "node:path";
 
 // src/core/symbols.ts
@@ -14167,11 +14198,11 @@ function renderMethods(r) {
 
 // src/io/symbolCache.ts
 import { createHash as createHash6 } from "node:crypto";
-import { existsSync as existsSync8, readdirSync as readdirSync5, readFileSync as readFileSync14, statSync as statSync6 } from "node:fs";
+import { existsSync as existsSync8, readdirSync as readdirSync5, readFileSync as readFileSync13, statSync as statSync6 } from "node:fs";
 import { relative as relative3, resolve as resolve3 } from "node:path";
 
 // src/io/treeSitter.ts
-import { existsSync as existsSync7, readFileSync as readFileSync13 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync12 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join12 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14208,9 +14239,9 @@ async function getParser() {
     ready = (async () => {
       const rt = locateRuntime();
       const mod = await import(rt.moduleHref);
-      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync13(rt.tsWasm)) });
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync12(rt.tsWasm)) });
       const parser = new mod.Parser();
-      const cpp = await mod.Language.load(new Uint8Array(readFileSync13(rt.cppWasm)));
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync12(rt.cppWasm)));
       parser.setLanguage(cpp);
       return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
     })();
@@ -14312,7 +14343,7 @@ function walkFiles(root, acc) {
 }
 function loadRaw(cachePath) {
   try {
-    return JSON.parse(readFileSync14(cachePath, "utf8"));
+    return JSON.parse(readFileSync13(cachePath, "utf8"));
   } catch {
     return null;
   }
@@ -14340,7 +14371,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
       symbols += cached.symbols.length;
       continue;
     }
-    const src = readFileSync14(abs, "utf8");
+    const src = readFileSync13(abs, "utf8");
     bytes += src.length;
     if (bytes > limits.maxBytes) {
       return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
@@ -14377,7 +14408,7 @@ async function refreshIndex(cachePath, repoRoot) {
       out2.push(f);
       continue;
     }
-    const parsed = await parseSymbols(readFileSync14(abs, "utf8"));
+    const parsed = await parseSymbols(readFileSync13(abs, "utf8"));
     grammar = parsed.grammar;
     out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
@@ -14398,7 +14429,7 @@ function loadCodeIntelConfig(paths) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
   let raw;
   try {
-    raw = load(readFileSync15(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync14(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -14449,7 +14480,7 @@ async function runQuery(paths, cfg, sub, args) {
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
   } else if (existsSync9(paths.symbolLatest)) {
-    cache2 = paths.symbolCache(readFileSync15(paths.symbolLatest, "utf8").trim());
+    cache2 = paths.symbolCache(readFileSync14(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
@@ -15416,7 +15447,7 @@ var result = (ctx) => {
   if (res === null) throw new CliError(`no result for ${id} (dispatch it first)`, 3);
   let tail = "";
   try {
-    tail = readFileSync16(paths.workerLog(id), "utf8").split("\n").slice(-50).join("\n");
+    tail = readFileSync15(paths.workerLog(id), "utf8").split("\n").slice(-50).join("\n");
   } catch {
   }
   emit(ctx.json, { ok: true, result: res }, () => {
@@ -15446,7 +15477,7 @@ var list = (ctx) => {
   const rows = ids.map((id) => {
     let title = "";
     try {
-      title = load(readFileSync16(paths.taskYaml(id), "utf8"))?.title ?? "";
+      title = load(readFileSync15(paths.taskYaml(id), "utf8"))?.title ?? "";
     } catch {
     }
     const res = readResult(paths, id);
@@ -15501,7 +15532,7 @@ function planRevision(frontmatter) {
 }
 function planDocumentFrontmatter(paths, planId, name) {
   try {
-    return documentFrontmatter(readFileSync16(join13(paths.planDir(planId), name), "utf8"));
+    return documentFrontmatter(readFileSync15(join13(paths.planDir(planId), name), "utf8"));
   } catch {
     return null;
   }
@@ -15529,7 +15560,7 @@ var plans = (ctx) => {
     let planFrontmatter = null;
     let hasPlan = true;
     try {
-      planFrontmatter = documentFrontmatter(readFileSync16(paths.planMd(id), "utf8"));
+      planFrontmatter = documentFrontmatter(readFileSync15(paths.planMd(id), "utf8"));
     } catch (error) {
       if (error.code === "ENOENT") hasPlan = false;
     }
@@ -15537,7 +15568,7 @@ var plans = (ctx) => {
     let designRevision = null;
     let designFrontmatter = null;
     try {
-      designFrontmatter = documentFrontmatter(readFileSync16(join13(paths.planDir(id), "DESIGN.md"), "utf8"));
+      designFrontmatter = documentFrontmatter(readFileSync15(join13(paths.planDir(id), "DESIGN.md"), "utf8"));
       designRevision = scalarText(designFrontmatter?.revision);
     } catch {
     }
@@ -15670,7 +15701,7 @@ var setupStatusline = (ctx) => {
   let settings = {};
   if (existsSync10(settingsPath)) {
     try {
-      settings = JSON.parse(readFileSync16(settingsPath, "utf8"));
+      settings = JSON.parse(readFileSync15(settingsPath, "utf8"));
     } catch (e) {
       throw new CliError(`cannot parse ${settingsPath}: ${e.message}`, 1);
     }

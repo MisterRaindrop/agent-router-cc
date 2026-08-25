@@ -412,3 +412,26 @@ test('the heartbeat child exits when its parent dies, so the lock can go stale',
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a lock heartbeat keeps beating while gate.lock.reclaim exists', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'gate.lock');
+  try {
+    const handle = acquireLock(path, { waitMs: 0 });
+    assert.ok(!('blocked' in handle));
+    writeFileSync(`${path}.reclaim`, 'another lock protocol file');
+    const before = beatAt(path);
+    const beater = startHeartbeat(path, handle.ownerToken, 40);
+    try {
+      assert.ok(
+        await waitUntil(() => beatAt(path) > before),
+        'the lock heartbeat inherited the activity-only reclaim fence',
+      );
+    } finally {
+      beater.stop();
+      handle.release();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

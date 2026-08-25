@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -11,6 +11,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -27,6 +28,7 @@ import {
   observeActivities,
   readActivities,
   readActivity,
+  setActivityTestHookForTesting,
   startActivityHeartbeat,
   writeActivity,
   type ActivityTestPoint,
@@ -111,6 +113,72 @@ test('activity storage round-trips the schema, removes ended records, and ignore
     });
     assert.equal(existsSync(completePath), false, 'ended activity was retained as unbounded history');
   } finally {
+    fx.cleanup();
+  }
+});
+
+test('oversized and symlink activity files are ignored without hiding a valid sibling', () => {
+  const fx = fixture();
+  try {
+    mkdirSync(fx.activityDir, { recursive: true });
+    const goodPath = join(fx.activityDir, 'good.json');
+    const hugePath = join(fx.activityDir, 'huge.json');
+    const symlinkPath = join(fx.activityDir, 'symlink.json');
+    const good = record({ label: 'good' });
+    writeActivity(goodPath, good);
+    writeFileSync(
+      hugePath,
+      `${JSON.stringify(record({ label: 'huge', status_path: 'x'.repeat(64 * 1024) }))}\n`,
+    );
+    symlinkSync(goodPath, symlinkPath);
+
+    assert.equal(readActivity(hugePath), null);
+    assert.equal(readActivity(symlinkPath), null);
+    assert.deepEqual(readActivities(fx.activityDir), [{ path: goodPath, record: good }]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a FIFO activity file is ignored without blocking or hiding a valid sibling', async () => {
+  const fx = fixture();
+  const moduleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  let reader: ChildProcess | undefined;
+  try {
+    mkdirSync(fx.activityDir, { recursive: true });
+    const goodPath = join(fx.activityDir, 'good.json');
+    const fifoPath = join(fx.activityDir, 'fifo.json');
+    const good = record({ label: 'good' });
+    writeActivity(goodPath, good);
+    const madeFifo = spawnSync('mkfifo', [fifoPath], { encoding: 'utf8' });
+    assert.equal(madeFifo.status, 0, madeFifo.stderr);
+
+    reader = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const { readActivity } = await import(${JSON.stringify(moduleUrl)});\n` +
+          `process.exit(readActivity(${JSON.stringify(fifoPath)}) === null ? 0 : 91);\n`,
+      ],
+      { stdio: 'ignore' },
+    );
+    const returned = await waitUntil(
+      () => reader!.exitCode !== null || reader!.signalCode !== null,
+      750,
+    );
+    if (!returned) {
+      reader.kill('SIGKILL');
+      await waitForExit(reader);
+    }
+    assert.ok(returned, 'readActivity blocked while opening a FIFO');
+    assert.equal(reader.exitCode, 0);
+    assert.deepEqual(readActivities(fx.activityDir), [{ path: goodPath, record: good }]);
+  } finally {
+    if (reader !== undefined && reader.exitCode === null && reader.signalCode === null) {
+      reader.kill('SIGKILL');
+      await waitForExit(reader).catch(() => undefined);
+    }
     fx.cleanup();
   }
 });
@@ -222,6 +290,79 @@ test('a live reclaim lease is not broken, and an unparseable one is only cleared
   }
 });
 
+test('a live reclaimer renews its lease across every claim boundary', () => {
+  const fx = fixture();
+  const paths = routerPaths(join(fx.root, '.router'));
+  const label = 'review:renewed-reclaimer';
+  const path = paths.activity(activityKey(label));
+  const reclaimPath = `${path}.reclaim`;
+  const activityModuleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  const pathsModuleUrl = new URL('../src/io/paths.ts', import.meta.url).href;
+  const boundaries: ActivityTestPoint[] = [
+    'reclaim-guard-established',
+    'reclaim-liveness-confirmed',
+    'reclaim-before-unlink',
+    'reclaim-before-install',
+  ];
+  const seen: ActivityTestPoint[] = [];
+  try {
+    const at = new Date(Date.now() - DEFAULT_STALE_MS - 1_000).toISOString();
+    writeActivity(path, { label, pid: 2_147_483_647, started_at: at, beat_at: at });
+
+    setActivityTestHookForTesting((point) => {
+      if (!boundaries.includes(point)) return;
+      seen.push(point);
+      const guard = JSON.parse(readFileSync(reclaimPath, 'utf8')) as {
+        pid: number;
+        beatAtMs: number;
+        token: string;
+      };
+      assert.ok(
+        Date.now() - guard.beatAtMs < 5_000,
+        `${point} crossed with an expired reclaim lease`,
+      );
+
+      const contender = spawnSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `const { ActivityAlreadyExistsError, claimActivity } = await import(${JSON.stringify(activityModuleUrl)});\n` +
+            `const { routerPaths } = await import(${JSON.stringify(pathsModuleUrl)});\n` +
+            `try {\n` +
+            `  claimActivity(routerPaths(${JSON.stringify(join(fx.root, '.router'))}), ${JSON.stringify(label)});\n` +
+            `  process.exit(91);\n` +
+            `} catch (error) {\n` +
+            `  if (error instanceof ActivityAlreadyExistsError) process.exit(23);\n` +
+            `  console.error(error); process.exit(92);\n` +
+            `}\n`,
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(contender.status, 23, contender.stderr);
+
+      if (point !== 'reclaim-before-install') {
+        writeFileSync(
+          reclaimPath,
+          `${JSON.stringify({ ...guard, beatAtMs: Date.now() - 60_000 })}\n`,
+        );
+      }
+    });
+
+    const claimed = claimActivity(paths, label);
+    assert.deepEqual(seen, boundaries);
+    assert.equal(claimed.record.pid, process.pid);
+    assert.equal(activityState(readActivity(path)), 'running');
+    assert.equal(existsSync(reclaimPath), false);
+    const diagnostics: string[] = [];
+    finishActivity(claimed, 'ok', diagnostics);
+    assert.deepEqual(diagnostics, []);
+  } finally {
+    setActivityTestHookForTesting(undefined);
+    fx.cleanup();
+  }
+});
+
 test('every reclaim crash boundary leaves at most one owner and remains recoverable', async (t) => {
   const reclaimPoints: ActivityTestPoint[] = [
     'reclaim-guard-established',
@@ -319,7 +460,7 @@ test('every reclaim crash boundary leaves at most one owner and remains recovera
   }
 });
 
-test('an in-place heartbeat after stale detection makes reclaim stand down before unlink', async () => {
+test('an in-place owner update after stale detection makes reclaim stand down before unlink', async () => {
   const fx = fixture();
   const paths = routerPaths(join(fx.root, '.router'));
   const label = 'review:heartbeat-resumed';
@@ -337,7 +478,6 @@ test('an in-place heartbeat after stale detection makes reclaim stand down befor
   });
   const originalStat = statSync(path, { bigint: true });
   let contender: ChildProcess | undefined;
-  let heartbeat: ReturnType<typeof startActivityHeartbeat> | undefined;
   let stderr = '';
   try {
     contender = spawn(
@@ -368,12 +508,9 @@ test('an in-place heartbeat after stale detection makes reclaim stand down befor
     contender.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
     assert.ok(await waitUntil(() => existsSync(marker)), `reclaimer never paused: ${stderr}`);
 
-    heartbeat = startActivityHeartbeat(path, stale, 20);
-    const started = await heartbeat.started;
-    if (!started.ok) assert.fail(started.error.message);
-    assert.ok(
-      await waitUntil(() => readActivity(path)?.beat_at !== staleBeat),
-      'old owner did not resume its heartbeat',
+    writeFileSync(
+      path,
+      `${JSON.stringify({ ...stale, beat_at: new Date().toISOString() }, null, 2)}\n`,
     );
     const resumed = readActivity(path);
     assert.ok(resumed);
@@ -391,11 +528,51 @@ test('an in-place heartbeat after stale detection makes reclaim stand down befor
     assert.equal(activityState(retained), 'running');
     assert.equal(existsSync(`${path}.reclaim`), false);
   } finally {
-    heartbeat?.stop();
     if (contender !== undefined && contender.exitCode === null && contender.signalCode === null) {
       contender.kill('SIGKILL');
       await waitForExit(contender).catch(() => undefined);
     }
+    fx.cleanup();
+  }
+});
+
+test('an activity heartbeat skips every beat while its reclaim guard exists, then resumes', async () => {
+  const fx = fixture();
+  const path = join(fx.activityDir, 'guarded-heartbeat.json');
+  const reclaimPath = `${path}.reclaim`;
+  const initialBeat = '2000-01-01T00:00:00.000Z';
+  try {
+    const activity = writeActivity(path, {
+      label: 'review:guarded-heartbeat',
+      pid: process.pid,
+      started_at: new Date().toISOString(),
+      beat_at: initialBeat,
+    });
+    writeFileSync(reclaimPath, 'reclaim in progress');
+    const heartbeat = startActivityHeartbeat(path, activity, 40);
+    try {
+      const started = await heartbeat.started;
+      if (!started.ok) assert.fail(started.error.message);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.equal(
+        readActivity(path)?.beat_at,
+        initialBeat,
+        'the old owner wrote through an active reclaim guard',
+      );
+      assert.doesNotThrow(
+        () => process.kill(heartbeat.pid!, 0),
+        'the skipped heartbeat exited instead of waiting for reclaim to finish',
+      );
+
+      rmSync(reclaimPath, { force: true });
+      assert.ok(
+        await waitUntil(() => readActivity(path)?.beat_at !== initialBeat),
+        'the old owner did not resume after reclaim stood down',
+      );
+    } finally {
+      heartbeat.stop();
+    }
+  } finally {
     fx.cleanup();
   }
 });

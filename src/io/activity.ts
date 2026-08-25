@@ -4,12 +4,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
+  constants,
   fstatSync,
   fsyncSync,
   linkSync,
   openSync,
   readdirSync,
-  readFileSync,
+  readSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -30,8 +31,12 @@ const MAX_PID = 0x7fff_ffff;
 // is not evidence of a fresh heartbeat. Keep the allowance deliberately much smaller than the
 // shared 90-second stale window.
 const MAX_FUTURE_BEAT_SKEW_MS = 5_000;
-// A reclaim is a short synchronous critical section. The lease exists so SIGKILL cannot leave
-// its mutex behind forever; unlike lock reclaim, activity reclaim has no slow reap loop to renew.
+// Activity documents are a few hundred bytes. Bound every read so the 2-second statusline poll
+// cannot be made to synchronously consume an attacker-controlled file.
+const MAX_ACTIVITY_FILE_BYTES = 64 * 1024;
+// A reclaim is a synchronous critical section whose filesystem boundaries may still be delayed.
+// Renew at every boundary so a live reclaimer keeps its mutex; the lease exists only so SIGKILL
+// cannot leave that mutex behind forever.
 const RECLAIM_LEASE_MS = 30_000;
 
 export type ActivityState = 'idle' | 'running' | 'disconnected';
@@ -182,7 +187,8 @@ export function writeActivity(path: string, activity: ActivityInput): ActivityRe
 /** Read one activity document; missing, torn, or schema-invalid contents are ignored. */
 export function readActivity(path: string): ActivityRecord | null {
   try {
-    return parseActivity(JSON.parse(readFileSync(path, 'utf8')));
+    const snapshot = fileSnapshot(path);
+    return snapshot === null ? null : parseActivity(JSON.parse(snapshot.text));
   } catch {
     return null;
   }
@@ -200,15 +206,27 @@ function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
 function fileSnapshot(path: string): FileSnapshot | null {
   let fd: number;
   try {
-    fd = openSync(path, 'r');
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return null;
     throw error;
   }
   try {
     const stat = fstatSync(fd, { bigint: true });
+    if (!stat.isFile() || stat.size > BigInt(MAX_ACTIVITY_FILE_BYTES)) return null;
+    const bytes = Buffer.allocUnsafe(MAX_ACTIVITY_FILE_BYTES + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > MAX_ACTIVITY_FILE_BYTES) return null;
     return {
-      text: readFileSync(fd, 'utf8'),
+      text: bytes.subarray(0, length).toString('utf8'),
       identity: { dev: stat.dev, ino: stat.ino },
       mtimeMs: Number(stat.mtimeNs / 1_000_000n),
     };
@@ -324,6 +342,16 @@ function stillReclaiming(path: string, token: string): boolean {
   }
 }
 
+/** Push the lease out at a reclaim boundary. Silent if the guard is no longer ours. */
+function renewReclaimer(path: string, token: string): void {
+  if (!stillReclaiming(path, token)) return;
+  try {
+    writeFileSync(path, reclaimerText(token));
+  } catch {
+    /* a failed renewal only risks being overtaken; the token checks below still fail closed */
+  }
+}
+
 function releaseReclaimer(path: string, token: string): void {
   if (!stillReclaiming(path, token)) return;
   try {
@@ -354,14 +382,17 @@ function reclaimDisconnectedActivity(
   }
 
   try {
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-guard-established');
     const held = activitySnapshot(path);
     if (held === null || !sameSnapshot(held, expected)) return 'retry';
     if (activityState(held.record) !== 'disconnected') return 'retry';
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-liveness-confirmed');
 
     // The test point is intentionally before the final confirmation: a heartbeat resumed at the
     // last observable boundary must change the bytes and make this reclaim stand down.
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-before-unlink');
     if (!stillReclaiming(reclaimPath, token)) return 'retry';
     const confirmed = activitySnapshot(path);
@@ -379,6 +410,7 @@ function reclaimDisconnectedActivity(
       throw error;
     }
 
+    renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-before-install');
     if (!stillReclaiming(reclaimPath, token)) return 'retry';
     try {
@@ -619,5 +651,8 @@ export function startActivityHeartbeat(
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,
     intervalMs,
+    // An old owner must not revive this inode inside the reclaimer's final-confirm/unlink window.
+    // Skipping, rather than exiting, lets it resume if reclaim ultimately stands down.
+    skipIfExists: `${path}.reclaim`,
   });
 }
