@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -254,6 +263,91 @@ test('forging ANOTHER activity identity is fatal, while its heartbeat alone is n
       );
       assert.deepEqual(tiers.reported, []);
     }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('replacing an activity record with a symlink, or retargeting that link, is fatal', () => {
+  const fx = freshState();
+  const activityRel = 'activity/reviewer.json';
+  const activityPath = join(fx.paths.root, activityRel);
+  const record = JSON.stringify({
+    label: 'review:architect',
+    owner_token: 'theirs',
+    pid: 4242,
+    started_at: 'A',
+    beat_at: 'B',
+  });
+  try {
+    fx.write(activityRel, record);
+    fx.write('plans/target-a.json', record);
+    fx.write('plans/target-b.json', record);
+    let before = fingerprintState(fx.paths, 'mine');
+
+    rmSync(activityPath);
+    symlinkSync('../plans/target-a.json', activityPath);
+    let tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+    assert.deepEqual(tiers, { reported: [], fatal: [`modified ${activityRel}`] });
+
+    before = fingerprintState(fx.paths, 'mine');
+    rmSync(activityPath);
+    symlinkSync('../plans/target-b.json', activityPath);
+    tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+    assert.deepEqual(tiers, { reported: [], fatal: [`modified ${activityRel}`] });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('replacing an activity record with a FIFO is fatal without opening the FIFO', () => {
+  const fx = freshState();
+  const activityRel = 'activity/reviewer.json';
+  const activityPath = join(fx.paths.root, activityRel);
+  try {
+    fx.write(
+      activityRel,
+      JSON.stringify({
+        label: 'review:architect',
+        owner_token: 'theirs',
+        pid: 4242,
+        started_at: 'A',
+        beat_at: 'B',
+      }),
+    );
+    const before = fingerprintState(fx.paths, 'mine');
+
+    rmSync(activityPath);
+    execFileSync('mkfifo', [activityPath]);
+    const tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+    assert.deepEqual(tiers, { reported: [], fatal: [`modified ${activityRel}`] });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('ordinary heartbeat and plan-file changes retain their existing reporting tiers', () => {
+  const fx = freshState();
+  const activityRel = 'activity/reviewer.json';
+  const record = (beatAt: string) =>
+    JSON.stringify({
+      label: 'review:architect',
+      owner_token: 'theirs',
+      pid: 4242,
+      started_at: 'A',
+      beat_at: beatAt,
+    });
+  try {
+    fx.write(activityRel, record('B'));
+    fx.write('plans/p1/WORKPLAN.md', '# Before\n');
+    const before = fingerprintState(fx.paths, 'mine');
+
+    fx.write(activityRel, record('C'));
+    fx.write('plans/p1/WORKPLAN.md', '# After\n');
+    assert.deepEqual(
+      classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine'),
+      { reported: ['modified plans/p1/WORKPLAN.md'], fatal: [] },
+    );
   } finally {
     fx.cleanup();
   }

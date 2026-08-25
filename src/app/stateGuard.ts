@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { closeSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readlinkSync,
+  readSync,
+  readdirSync,
+} from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { activityKey } from '../io/activity.ts';
 import type { RouterPaths } from '../io/paths.ts';
@@ -57,14 +66,30 @@ function isOwnRunArtifact(rel: string, ownTaskId: string): boolean {
   return leaf === 'status.json' || leaf === 'heartbeat' || leaf === 'logs';
 }
 
-/** sha256 of a file's bytes, read in chunks so a large log cannot be held in memory whole. */
-function hashFile(abs: string): string | null {
+/** Open a path only if that exact directory entry is still a regular file. */
+function openRegularFile(abs: string): number | null {
   let fd: number;
   try {
-    fd = openSync(abs, 'r');
+    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     return null; // vanished or unreadable between readdir and here
   }
+  try {
+    if (!fstatSync(fd).isFile()) {
+      closeSync(fd);
+      return null;
+    }
+    return fd;
+  } catch {
+    closeSync(fd);
+    return null;
+  }
+}
+
+/** sha256 of a file's bytes, read in chunks so a large log cannot be held in memory whole. */
+function hashFile(abs: string): string | null {
+  const fd = openRegularFile(abs);
+  if (fd === null) return null;
   try {
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -81,6 +106,26 @@ function hashFile(abs: string): string | null {
   }
 }
 
+/** Read a regular file without following a link or blocking on a special file after a race. */
+function readRegularFile(abs: string): Buffer | null {
+  const fd = openRegularFile(abs);
+  if (fd === null) return null;
+  try {
+    const chunks: Buffer[] = [];
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      const read = readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, read)));
+    }
+    return Buffer.concat(chunks);
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Hash of an activity record with the heartbeat field normalised away.
  *
@@ -88,12 +133,16 @@ function hashFile(abs: string): string | null {
  * `activity/` is itself suspicious, and quietly ignoring it would be another hole.
  */
 function hashActivity(abs: string): string | null {
+  const bytes = readRegularFile(abs);
+  if (bytes === null) return null;
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(readFileSync(abs, 'utf8')) as Record<string, unknown>;
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return hashFile(abs);
+    parsed = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return createHash('sha256').update(bytes).digest('hex');
+    }
   } catch {
-    return hashFile(abs);
+    return createHash('sha256').update(bytes).digest('hex');
   }
   const normalised: Record<string, unknown> = { ...parsed, beat_at: '<beat>' };
   const canonical = Object.keys(normalised)
@@ -101,6 +150,27 @@ function hashActivity(abs: string): string | null {
     .map((key) => `${key}=${JSON.stringify(normalised[key])}`)
     .join('\n');
   return createHash('sha256').update(canonical).digest('hex');
+}
+
+/** Stable signature for a non-directory, non-regular entry without opening its contents. */
+function specialEntryFingerprint(abs: string): string | null {
+  try {
+    const stat = lstatSync(abs);
+    if (stat.isFile() || stat.isDirectory()) return null;
+    if (stat.isSymbolicLink()) return `symlink:${readlinkSync(abs)}`;
+    const type = stat.isFIFO()
+      ? 'fifo'
+      : stat.isSocket()
+        ? 'socket'
+        : stat.isBlockDevice()
+          ? 'block-device'
+          : stat.isCharacterDevice()
+            ? 'character-device'
+            : 'unknown';
+    return `special:${type}`;
+  } catch {
+    return null;
+  }
 }
 
 /** `relative path -> content hash` for every orchestration-state file that is not ours to write. */
@@ -121,12 +191,14 @@ export function fingerprintState(paths: RouterPaths, ownTaskId: string): Map<str
         walk(abs);
         continue;
       }
-      if (!entry.isFile()) continue;
-      // Somebody else's activity record: a concurrent, legitimate heartbeat rewrites `beat_at`
-      // every few seconds, and failing a run over that would be a false alarm. Everything else
-      // about the record is watched -- it appearing, vanishing, or changing identity is exactly
-      // the forgery this guard exists to catch.
-      const hash = rel.split(sep)[0] === 'activity' ? hashActivity(abs) : hashFile(abs);
+      // Somebody else's regular activity record: a concurrent, legitimate heartbeat rewrites
+      // `beat_at` every few seconds, and failing a run over that would be a false alarm. A
+      // symlink, FIFO, device, or socket is never opened; its type (and a link's target) is the
+      // fingerprint, so replacing a watched file cannot make that path disappear from the guard.
+      const hash = entry.isFile()
+        ? (rel.split(sep)[0] === 'activity' ? hashActivity(abs) : hashFile(abs)) ??
+          specialEntryFingerprint(abs)
+        : specialEntryFingerprint(abs);
       if (hash !== null) out.set(rel, hash);
     }
   };
