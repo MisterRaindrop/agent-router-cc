@@ -108,7 +108,11 @@ test('the three-state rule requires both a live pid and a fresh heartbeat', () =
 test('owner stays running while spawnSync blocks it, then becomes disconnected after SIGKILL', async () => {
   const fx = fixture();
   const path = join(fx.activityDir, 'blocked.json');
+  const blockedMarker = join(fx.root, 'owner-is-blocked');
   const moduleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  const blockerSource =
+    `require('node:fs').writeFileSync(${JSON.stringify(blockedMarker)}, 'blocked');` +
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,3000);`;
   let owner: ChildProcess | undefined;
   try {
     const spawnedOwner = spawn(
@@ -123,7 +127,7 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
           `writeActivity(${JSON.stringify(path)}, activity);\n` +
           `const heartbeat = startActivityHeartbeat(${JSON.stringify(path)}, activity, 40);\n` +
           `console.log(JSON.stringify({ started_at, heartbeat_pid: heartbeat.pid }));\n` +
-          `spawnSync(process.execPath, ['-e', 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,3000)']);\n` +
+          `spawnSync(process.execPath, ['-e', ${JSON.stringify(blockerSource)}]);\n` +
           `setInterval(() => {}, 1000);\n`,
       ],
       { stdio: ['ignore', 'pipe', 'inherit'] },
@@ -132,12 +136,14 @@ test('owner stays running while spawnSync blocks it, then becomes disconnected a
     let stdout = '';
     spawnedOwner.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     assert.ok(await waitUntil(() => stdout.trim() !== ''), 'owner never initialized its activity');
-    const startedAt = (JSON.parse(stdout.trim()) as { started_at: string }).started_at;
+    assert.ok(await waitUntil(() => existsSync(blockedMarker)), 'owner never entered spawnSync');
+    const firstBlockedBeat = readActivity(path)?.beat_at;
+    assert.ok(firstBlockedBeat !== undefined);
 
     assert.ok(
       await waitUntil(() => {
         const current = readActivity(path);
-        return current !== null && current.beat_at !== startedAt;
+        return current !== null && current.beat_at !== firstBlockedBeat;
       }),
       'no heartbeat landed while the owner was blocked',
     );
