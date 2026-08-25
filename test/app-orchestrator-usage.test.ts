@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -13,6 +13,7 @@ import { deriveCost } from '../src/core/pricing.ts';
 import type { MetricRecord } from '../src/domain/types.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
+import { acquireLock } from '../src/io/lock.ts';
 import { routerPaths } from '../src/io/paths.ts';
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/claude-session.jsonl', import.meta.url));
@@ -137,6 +138,48 @@ test('orchestrator-usage command records JSON output and degrades with exit code
       /orchestrator usage not recorded: no matching main-model turns; usage will show execution side only/,
     );
     assert.equal(readJsonl<MetricRecord>(join(routerDir, 'metrics.jsonl')).length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// `metrics.jsonl` is watched by the dispatch state guard, because a forged metrics row falsifies
+// the usage report and so cannot simply be ignored. That made THIS command -- the one legitimate
+// writer that was not already holding the checkout lock -- able to fail a running dispatch by
+// appending a perfectly ordinary row. It takes the lock now, and says so rather than waiting.
+test('orchestrator-usage refuses while a run holds the checkout, instead of failing that run', () => {
+  const dir = tmp();
+  try {
+    const routerDir = join(dir, '.router');
+    mkdirSync(routerDir, { recursive: true });
+    const paths = routerPaths(routerDir);
+    const held = acquireLock(paths.gateLock(), { waitMs: 0 });
+    assert.ok(!('blocked' in held), 'could not stage a held checkout');
+    try {
+      const args = [
+        ENTRY, 'orchestrator-usage',
+        '--plan', 'plan-busy',
+        '--since', SINCE,
+        '--until', UNTIL,
+        '--transcript', FIXTURE,
+        '--router-dir', routerDir,
+      ];
+      let code = 0;
+      let out = '';
+      try {
+        out = execFileSync(process.execPath, args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+      } catch (e) {
+        const err = e as { status?: number; stdout?: string; stderr?: string };
+        code = err.status ?? 1;
+        out = (err.stdout ?? '') + (err.stderr ?? '');
+      }
+      assert.notEqual(code, 0, `it appended into a running dispatch's state: ${out}`);
+      assert.match(out, /using this checkout/, out);
+      // Nothing was written, so nothing for the state guard to call tampering.
+      assert.equal(existsSync(paths.metrics), false, 'metrics.jsonl was appended anyway');
+    } finally {
+      held.release();
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

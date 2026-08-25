@@ -18,7 +18,7 @@ import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
 import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
 import { runQueueGate } from '../app/gateQueue.ts';
 import { pinnedHead } from '../app/verifiedHead.ts';
-import { readLock } from '../io/lock.ts';
+import { acquireLock, readLock } from '../io/lock.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
 import { readRunStatus } from '../app/runStatus.ts';
@@ -741,14 +741,32 @@ const orchestratorUsage: Handler = (ctx) => {
   const transcriptPath = flagStr(ctx.args.flags, 'transcript');
   const projectsDir = flagStr(ctx.args.flags, 'projects-dir');
   const model = flagStr(ctx.args.flags, 'model') ?? STRONG_BASELINE_MODEL;
-  const recorded = recordOrchestratorUsage(paths, clock, {
-    planId,
-    sinceIso,
-    model,
-    ...(untilIso !== undefined ? { untilIso } : {}),
-    ...(transcriptPath !== undefined ? { transcriptPath } : {}),
-    ...(projectsDir !== undefined ? { projectsDir } : {}),
-  });
+  // Under the checkout lock, because appending to `metrics.jsonl` while a dispatch is running
+  // is now a way to FAIL that dispatch: its state guard watches the file (a forged metrics row
+  // falsifies the usage report, so it cannot be ignored), and this command is the one legitimate
+  // writer that was not already holding the lock. Recording it a minute later costs nothing;
+  // discarding a run that has been going for six is the outcome worth avoiding.
+  const usageLock = acquireLock(paths.gateLock(), { waitMs: 0 });
+  if ('blocked' in usageLock) {
+    throw new CliError(
+      `a run is using this checkout (pid ${usageLock.holder?.pid ?? 'unknown'}); ` +
+        `record orchestrator usage once it finishes -- the transcript is not going anywhere`,
+      1,
+    );
+  }
+  let recorded;
+  try {
+    recorded = recordOrchestratorUsage(paths, clock, {
+      planId,
+      sinceIso,
+      model,
+      ...(untilIso !== undefined ? { untilIso } : {}),
+      ...(transcriptPath !== undefined ? { transcriptPath } : {}),
+      ...(projectsDir !== undefined ? { projectsDir } : {}),
+    });
+  } finally {
+    usageLock.release();
+  }
 
   if (!recorded.recorded) {
     const message = `orchestrator usage not recorded: ${recorded.reason}; usage will show execution side only`;
