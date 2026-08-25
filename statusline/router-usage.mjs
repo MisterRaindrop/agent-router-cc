@@ -237,12 +237,38 @@ function routerSegment(routerDir, now, activityApi) {
   }
 }
 
+// Bounded, because this runs before the inner HUD does. `readFileSync(0)` buffers whatever the
+// caller writes -- and a payload we would discard anyway (parsePayload rejects over the cap) must
+// not be able to hold the whole statusline hostage while it is read. Reading one byte past the cap
+// is enough to know it is oversized; we stop there and let the payload be discarded as before.
+// Bounded in MEMORY, but stdin is still DRAINED to the end.
+//
+// A first attempt stopped reading once past the cap. That makes the writer -- Claude Code itself
+// in production -- see EPIPE, and package H's own test caught it: `spawnSync ... EPIPE`. So the
+// pipe is always read to EOF; what is bounded is how much of it we keep. Anything past the cap is
+// read and thrown away, which is what parsePayload would have done with it anyway.
 function readStdin() {
-  try {
-    return readFileSync(0, 'utf8');
-  } catch {
-    return '';
+  const limit = MAX_STDIN_JSON_BYTES + 1;
+  const kept = Buffer.allocUnsafe(limit);
+  const scratch = Buffer.allocUnsafe(64 * 1024);
+  let length = 0;
+  for (;;) {
+    let read;
+    try {
+      read = readSync(0, scratch, 0, scratch.length, null);
+    } catch (error) {
+      // EAGAIN is not end of input; a pipe with nothing ready yet throws it.
+      if (error?.code === 'EAGAIN') continue;
+      break;
+    }
+    if (read === 0) break;
+    if (length < limit) {
+      const room = Math.min(limit - length, read);
+      scratch.copy(kept, length, 0, room);
+      length += room;
+    }
   }
+  return kept.subarray(0, length).toString('utf8');
 }
 
 function parsePayload(raw) {

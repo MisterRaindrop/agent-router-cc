@@ -475,6 +475,25 @@ for (const [name, raw] of [
   });
 }
 
+// The read itself is bounded, not just the parse. This runs before the inner HUD starts, so an
+// oversized payload must not be buffered whole just to be discarded afterwards.
+test('an oversized stdin payload is not buffered whole and the inner HUD still runs', () => {
+  const fx = repo();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    const oversized = JSON.stringify({ cwd: fx.dir, pad: 'x'.repeat(2 * 1024 * 1024) });
+    const out = execFileSync(process.execPath, [SCRIPT], {
+      input: oversized,
+      encoding: 'utf8',
+      // The writer may see EPIPE once we stop reading; that is the caller's business, not ours.
+      env: { ...process.env, ...pinned(), ROUTER_INNER_STATUSLINE: "cat >/dev/null; printf 'my-hud'" },
+    });
+    assert.match(out, /^my-hud/, `inner HUD was lost: ${out}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a missing activity bundle omits only the activity segment and preserves the inner output', () => {
   const fx = repo();
   try {
