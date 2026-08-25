@@ -6,7 +6,7 @@ import { closeSync, existsSync, mkdirSync, openSync, statSync, writeFileSync } f
 import { dirname, join } from 'node:path';
 import type { ExitClass } from '../domain/types.ts';
 import { classifyExit } from '../core/exitTaxonomy.ts';
-import { killProcessGroup } from './signals.ts';
+import { killProcessGroup, processGroupIsGone } from './signals.ts';
 
 // Worker supervision. The worker is spawned as the leader of its OWN process
 // group (detached) so we can kill the WHOLE group - worker + every child it
@@ -50,6 +50,49 @@ export interface SupervisionOutcome {
   spawnError: string | null;
   startedAtMs: number;
   endedAtMs: number;
+  /**
+   * True when the worker's process group still had members after SIGTERM *and* SIGKILL.
+   *
+   * The caller is about to run closeout checks and the project's own build in the same
+   * checkout, so "a writer we could not stop is still in there" has to be a value it can act
+   * on, not something only a comment mentions.
+   */
+  groupSurvived: boolean;
+}
+
+/** Poll until the group is empty, or the budget runs out. Async on purpose: the caller's event
+ *  loop is idle at this point and a synchronous spin would stop the child's own `exit` events
+ *  from ever being delivered. */
+function waitForGroupGone(pgid: number, budgetMs: number, stepMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + budgetMs;
+    const tick = (): void => {
+      if (processGroupIsGone(pgid)) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve(false);
+        return;
+      }
+      setTimeout(tick, stepMs).unref();
+    };
+    tick();
+  });
+}
+
+/**
+ * Signal the worker's whole group and do not resolve until it is actually empty.
+ *
+ * Resolves `true` when something survived even SIGKILL.
+ */
+async function drainGroup(pgid: number, graceMs: number, stepMs: number): Promise<boolean> {
+  if (processGroupIsGone(pgid)) return false;
+  killProcessGroup(pgid, 'SIGTERM');
+  if (await waitForGroupGone(pgid, graceMs, stepMs)) return false;
+  killProcessGroup(pgid, 'SIGKILL');
+  if (await waitForGroupGone(pgid, graceMs, stepMs)) return false;
+  return true;
 }
 
 function activitySignal(logPath: string, watchPaths: readonly string[]): number {
@@ -73,6 +116,7 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
   const heartbeatIntervalMs = spec.heartbeatIntervalMs ?? 20_000;
   const pollIntervalMs = spec.pollIntervalMs ?? 1_000;
   const sigkillGraceMs = spec.sigkillGraceMs ?? 10_000;
+  const drainPollMs = Math.max(1, Math.min(50, pollIntervalMs));
 
   return new Promise((resolve) => {
     mkdirSync(dirname(spec.logPath), { recursive: true });
@@ -121,7 +165,14 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
 
     child.on('error', (err) => {
       // Could not launch the worker at all (e.g. codex not installed).
-      finish({ rc: null, signal: null, timedOut: false, stalled: false, spawnError: err.message });
+      finish({
+        rc: null,
+        signal: null,
+        timedOut: false,
+        stalled: false,
+        spawnError: err.message,
+        groupSurvived: false,
+      });
     });
 
     child.on('exit', (code, signal) => {
@@ -131,11 +182,21 @@ export function superviseWorker(spec: SuperviseSpec): Promise<SupervisionOutcome
       // survivors kept writing the same checkout. The escalation path only ran on timeout and
       // stall, so the SUCCESS path was the one that leaked.
       //
-      // Best effort and non-blocking: the run's verdict is already decided, so a survivor that
-      // ignores SIGTERM must not turn a finished run into a hang. The caller kills the group
-      // again before releasing the lock, which is where the ordering guarantee belongs.
-      if (child.pid !== undefined) killProcessGroup(child.pid, 'SIGTERM');
-      finish({ rc: code, signal, timedOut, stalled, spawnError: null });
+      // One SIGTERM used to be the whole of it, sent and then immediately forgotten. That is not
+      // enough for the case it exists to stop: a child that INSTALLS a SIGTERM handler ignores
+      // the polite request, outlives this function, and goes on writing the checkout all through
+      // closeout and verification -- the caller's own SIGKILL does not arrive until verification
+      // is over. So escalate here, and do not resolve while the group still has members.
+      clearAll(); // the watchdogs have nothing left to watch, and a wall timer firing during the
+      // drain below would turn a normal exit into a reported timeout.
+      const pgid = child.pid;
+      if (pgid === undefined) {
+        finish({ rc: code, signal, timedOut, stalled, spawnError: null, groupSurvived: false });
+        return;
+      }
+      void drainGroup(pgid, sigkillGraceMs, drainPollMs).then((groupSurvived) => {
+        finish({ rc: code, signal, timedOut, stalled, spawnError: null, groupSurvived });
+      });
     });
 
     const pgid = child.pid;

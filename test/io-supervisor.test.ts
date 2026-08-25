@@ -174,20 +174,78 @@ test('a normal exit terminates the whole process group, not just the leader (fin
 
     const survivor = Number(readFileSync(survivorPidFile, 'utf8').trim());
     assert.ok(Number.isInteger(survivor) && survivor > 1, 'the leader never reported its child');
-    // Give the signal a moment to land; the kill is deliberately non-blocking.
-    for (let i = 0; i < 100; i++) {
-      try {
-        process.kill(survivor, 0);
-      } catch {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
+    // No polling loop here any more, and that is the point: supervision does not resolve until
+    // the group is actually empty, so the survivor has to be gone the instant we get the
+    // outcome. Waiting up to two seconds for it -- as this test used to -- measured only that
+    // the signal eventually landed, which says nothing about whether the caller was already
+    // running closeout and the project's build in the same checkout by then.
     assert.throws(
       () => process.kill(survivor, 0),
       /ESRCH|no such process/i,
       'a child of the executor outlived a normal exit and would keep writing the checkout',
     );
+    assert.equal(outcome.groupSurvived, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The case the finding-5 test could not see: a child that INSTALLS a SIGTERM handler. One
+// polite SIGTERM, sent and immediately forgotten, does nothing to it -- so it outlived
+// superviseWorker() and went on writing the user's checkout right through closeout and
+// verification, because the caller's own SIGKILL does not arrive until verification is over.
+test('a SIGTERM-ignoring child is escalated and waited out before supervision returns', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'router-supervise-stubborn-'));
+  const script = join(dir, 'leader.mjs');
+  const survivorPidFile = join(dir, 'survivor.pid');
+  const ready = join(dir, 'ready');
+  // The child reports ready only AFTER its handler is installed, so the leader cannot exit --
+  // and the drain cannot start -- while SIGTERM would still kill it on the default disposition.
+  writeFileSync(
+    join(dir, 'stubborn.mjs'),
+    "import { writeFileSync } from 'node:fs';\n" +
+      "process.on('SIGTERM', () => {});\n" +
+      `writeFileSync(${JSON.stringify(ready)}, '1');\n` +
+      'setInterval(() => {}, 1000);\n',
+  );
+  writeFileSync(
+    script,
+    "import { spawn } from 'node:child_process';\n" +
+      "import { existsSync, writeFileSync } from 'node:fs';\n" +
+      `const c = spawn(process.execPath, [${JSON.stringify(join(dir, 'stubborn.mjs'))}], { stdio: 'ignore' });\n` +
+      `writeFileSync(${JSON.stringify(survivorPidFile)}, String(c.pid));\n` +
+      'c.unref();\n' +
+      `const deadline = Date.now() + 5000;\n` +
+      `while (!existsSync(${JSON.stringify(ready)}) && Date.now() < deadline) {}\n` +
+      'process.exit(0);\n',
+  );
+  try {
+    const outcome = await superviseWorker({
+      argv: [process.execPath, script],
+      cwd: dir,
+      env: process.env,
+      logPath: join(dir, 'worker.log'),
+      heartbeatPath: join(dir, 'heartbeat'),
+      watchPaths: [dir],
+      maxWallMs: 20_000,
+      stallMs: 20_000,
+      pollIntervalMs: 50,
+      sigkillGraceMs: 300,
+    });
+    assert.equal(outcome.exitClass, 'ok');
+    assert.equal(outcome.rc, 0);
+    assert.ok(existsSync(ready), 'the survivor never installed its SIGTERM handler');
+
+    const survivor = Number(readFileSync(survivorPidFile, 'utf8').trim());
+    assert.ok(Number.isInteger(survivor) && survivor > 1, 'the leader never reported its child');
+    // Asserted with no grace period at all: SIGTERM was ignored, so the only way this is gone is
+    // that supervision escalated to SIGKILL and waited for the group to empty before returning.
+    assert.throws(
+      () => process.kill(survivor, 0),
+      /ESRCH|no such process/i,
+      'a SIGTERM-ignoring child of the executor outlived supervision',
+    );
+    assert.equal(outcome.groupSurvived, false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
