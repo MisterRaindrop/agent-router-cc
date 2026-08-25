@@ -13,8 +13,9 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { activityKey, activityState, readActivity } from '../src/io/activity.ts';
+import { ActivityAlreadyExistsError, activityKey, activityState, readActivity } from '../src/io/activity.ts';
 import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
+import { superviseCommand } from '../src/app/supervise.ts';
 import { acquireLock, DEFAULT_STALE_MS, readLock } from '../src/io/lock.ts';
 import { currentBranch, uncommittedSourceFiles } from '../src/io/git.ts';
 
@@ -698,6 +699,57 @@ test('a verify command that forges router state fails the run instead of passing
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+test('dispatch refuses an activity owned by supervise without overwriting or deleting it', async () => {
+  const { repo, paths, deps } = setup();
+  const label = 'task:t1';
+  const activityPath = paths.activity(activityKey(label));
+  const releasePath = join(repo, 'release-supervised-task-label');
+  const supervised = superviseCommand({
+    paths,
+    label,
+    logPath: join(repo, 'supervised-task-label.log'),
+    argv: [
+      NODE,
+      '-e',
+      `const fs=require('node:fs');while(!fs.existsSync(${JSON.stringify(releasePath)})){` +
+        `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);}`,
+    ],
+    cwd: repo,
+    env: process.env,
+    activityHeartbeatIntervalMs: 40,
+  });
+
+  try {
+    stageTask(paths);
+    await waitUntil(() => readActivity(activityPath) !== null);
+    const original = readActivity(activityPath);
+    assert.ok(original);
+
+    await assert.rejects(dispatchTask(deps, 't1'), (error: unknown) => {
+      assert.ok(error instanceof ActivityAlreadyExistsError, String(error));
+      assert.equal(error.activity?.owner_token, original.owner_token);
+      assert.match(error.message, new RegExp(`pid ${process.pid}`));
+      return true;
+    });
+
+    const afterRefusal = readActivity(activityPath);
+    assert.ok(afterRefusal);
+    assert.equal(afterRefusal.owner_token, original.owner_token);
+    assert.equal(activityState(afterRefusal), 'running');
+    assert.equal(existsSync(paths.runStatus('t1')), false, 'dispatch wrote status before claiming its activity');
+    assert.equal(currentBranch(repo), 'main');
+
+    writeFileSync(releasePath, 'release');
+    const result = await supervised;
+    assert.equal(result.exitCode, 0);
+    assert.equal(existsSync(activityPath), false);
+  } finally {
+    writeFileSync(releasePath, 'release');
+    await supervised.catch(() => undefined);
     fx.cleanup(repo);
   }
 });

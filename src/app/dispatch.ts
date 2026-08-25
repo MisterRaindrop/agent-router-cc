@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { ActivityOutcome, DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
@@ -32,7 +32,7 @@ import {
   uncommittedSourceFilesOrUnknown,
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
-import { activityKey, startActivityHeartbeat, writeActivity } from '../io/activity.ts';
+import { claimActivity, finishActivity, startActivityHeartbeat } from '../io/activity.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
 import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
@@ -78,6 +78,8 @@ export interface DispatchDeps {
   clock: Clock;
   /** Internal test seam; production uses the shared 15-second activity heartbeat. */
   activityHeartbeatIntervalMs?: number;
+  /** Internal test seam for observing non-fatal activity cleanup diagnostics. */
+  activityDiagnostic?: (message: string) => void;
 }
 
 /**
@@ -587,16 +589,14 @@ async function withTaskActivity(
   body: () => Promise<RunResult>,
 ): Promise<RunResult> {
   const label = `task:${id}`;
-  const path = deps.paths.activity(activityKey(label));
-  const startedAt = new Date().toISOString();
-  const activity = writeActivity(path, {
-    label,
-    pid: process.pid,
-    started_at: startedAt,
-    beat_at: startedAt,
-    status_path: deps.paths.runStatus(id),
+  const claimed = claimActivity(deps.paths, label, {
+    statusPath: deps.paths.runStatus(id),
   });
-  const heartbeat = startActivityHeartbeat(path, activity, deps.activityHeartbeatIntervalMs);
+  const heartbeat = startActivityHeartbeat(
+    claimed.path,
+    claimed.record,
+    deps.activityHeartbeatIntervalMs,
+  );
   let outcome: ActivityOutcome = 'failed';
   try {
     const started = await heartbeat.started;
@@ -608,15 +608,14 @@ async function withTaskActivity(
     return result;
   } finally {
     heartbeat.stop();
-    try {
-      writeActivity(path, {
-        ...activity,
-        ended_at: new Date().toISOString(),
-        outcome,
-      });
-    } catch {
-      // Activity is display-only. A cleanup failure must not replace the dispatch result or
-      // loosen the checkout transaction; the dead owner pid will make any remnant disconnected.
+    const diagnostics: string[] = [];
+    finishActivity(claimed, outcome, diagnostics, undefined, {
+      attempts: 3,
+      retryDelayMs: 25,
+    });
+    for (const diagnostic of diagnostics) {
+      if (deps.activityDiagnostic !== undefined) deps.activityDiagnostic(diagnostic);
+      else process.stderr.write(`router: dispatch cleanup: ${diagnostic}\n`);
     }
   }
 }
@@ -1014,12 +1013,6 @@ function safeRead(path: string): string {
     return '';
   }
 }
-
-/**
- * Activity files are display-only and may be updated by this run or an independent reviewer.
- * Remove that namespace from the generic orchestration-state snapshot before it can influence a
- * dispatch decision; task/result/lock state remains covered exactly as before.
- */
 
 function persistDelivery(
   paths: RouterPaths,
