@@ -9387,8 +9387,8 @@ function writeFlowMapping(state, level, node) {
     if (explicitPair) pairBuffer += "? ";
     else if (state.quoteFlowKeys) pairBuffer += '"';
     const valueText = writeNode(state, level, value, {});
-    const sep3 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep3}${valueText}`;
+    const sep4 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep4}${valueText}`;
     result2 += pairBuffer;
   }
   const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
@@ -9485,8 +9485,8 @@ function writeNode(state, level, node, ctx) {
       if (anchor !== null) props.push(anchor);
       if (tag !== null) props.push(tag);
     }
-    const sep3 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    body = `${props.join(" ")}${sep3}${body}`;
+    const sep4 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    body = `${props.join(" ")}${sep4}${body}`;
   }
   return body;
 }
@@ -9531,8 +9531,8 @@ function present(documents, options) {
         block: true,
         compact: true
       });
-      const sep3 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result2 += `---${sep3}${body}
+      const sep4 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result2 += `---${sep4}${body}
 `;
     } else result2 += writeNode(state, 0, doc.contents, {
       block: true,
@@ -10100,10 +10100,10 @@ function appendMetric(p, record) {
 }
 
 // src/app/dispatch.ts
-import { createHash as createHash3 } from "node:crypto";
-import { readFileSync as readFileSync10, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { createHash as createHash4 } from "node:crypto";
+import { readFileSync as readFileSync11, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join9, sep as sep3 } from "node:path";
 
 // src/core/pickExecutor.ts
 function pickExecutor(quotas) {
@@ -10256,6 +10256,10 @@ function effectiveRisk(declared, signals) {
   }
   return { risk, raisedBy };
 }
+
+// src/io/activity.ts
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync as readFileSync4, unlinkSync as unlinkSync3 } from "node:fs";
 
 // src/io/heartbeat.ts
 import { spawn } from "node:child_process";
@@ -10851,8 +10855,91 @@ function acquireLock(path, opts) {
   }
 }
 
+// src/io/activity.ts
+var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
+var MAX_PID = 2147483647;
+function finiteDate(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+function validPid(value) {
+  return Number.isInteger(value) && value > 0 && value <= MAX_PID;
+}
+function parseActivity(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const object = value;
+  if (typeof object.label !== "string" || object.label.length === 0) return null;
+  if (typeof object.owner_token !== "string" || object.owner_token.length === 0) return null;
+  if (!validPid(object.pid)) return null;
+  if (!finiteDate(object.started_at) || !finiteDate(object.beat_at)) return null;
+  if (object.ended_at !== void 0 && !finiteDate(object.ended_at)) return null;
+  if (object.outcome !== void 0 && !OUTCOMES.has(object.outcome)) return null;
+  if (object.status_path !== void 0 && typeof object.status_path !== "string") return null;
+  const record = {
+    label: object.label,
+    owner_token: object.owner_token,
+    pid: object.pid,
+    started_at: object.started_at,
+    beat_at: object.beat_at
+  };
+  if (typeof object.ended_at === "string") record.ended_at = object.ended_at;
+  if (typeof object.outcome === "string") record.outcome = object.outcome;
+  if (typeof object.status_path === "string") record.status_path = object.status_path;
+  return record;
+}
+function activityKey(label) {
+  if (label.length === 0) throw new Error("activity label must not be empty");
+  return createHash("sha256").update(label).digest("hex");
+}
+function writeActivity(path, activity) {
+  const candidate = Object.prototype.hasOwnProperty.call(activity, "owner_token") ? activity : { ...activity, owner_token: randomUUID() };
+  const parsed = parseActivity(candidate);
+  if (parsed === null) throw new Error(`cannot write invalid activity to ${path}`);
+  if (parsed.ended_at !== void 0) {
+    try {
+      unlinkSync3(path);
+    } catch (err2) {
+      if (err2.code !== "ENOENT") throw err2;
+    }
+    return parsed;
+  }
+  writeJsonAtomic(path, parsed);
+  return parsed;
+}
+function readActivity(path) {
+  try {
+    return parseActivity(JSON.parse(readFileSync4(path, "utf8")));
+  } catch {
+    return null;
+  }
+}
+function pidIsAlive(pid) {
+  if (!validPid(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err2) {
+    return err2.code === "EPERM";
+  }
+}
+function activityState(activity, nowMs = Date.now(), staleMs = DEFAULT_STALE_MS) {
+  if (activity === null || activity.ended_at !== void 0) return "idle";
+  const fresh = nowMs - Date.parse(activity.beat_at) <= staleMs;
+  return pidIsAlive(activity.pid) && fresh ? "running" : "disconnected";
+}
+function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
+  return startJsonHeartbeat(path, {
+    field: "beat_at",
+    valueFormat: "iso",
+    guard: { owner_token: activity.owner_token },
+    // writeJsonAtomic pretty-prints with two spaces. Matching that shape makes a heartbeat only
+    // replace fixed-width ISO timestamp bytes instead of changing the document's length.
+    indent: 2,
+    intervalMs
+  });
+}
+
 // src/app/gateConfig.ts
-import { lstatSync, readFileSync as readFileSync4 } from "node:fs";
+import { lstatSync, readFileSync as readFileSync5 } from "node:fs";
 import { join as join3 } from "node:path";
 var KEYS = /* @__PURE__ */ new Set([
   "mode",
@@ -10901,7 +10988,7 @@ function loadGateConfig(paths) {
   const path = gateYamlPath(paths);
   let text2;
   try {
-    text2 = readFileSync4(path, "utf8");
+    text2 = readFileSync5(path, "utf8");
   } catch (err2) {
     if (err2.code === "ENOENT") {
       try {
@@ -10980,8 +11067,8 @@ function selectGate(config, changes) {
 }
 
 // src/app/stateGuard.ts
-import { createHash } from "node:crypto";
-import { closeSync as closeSync3, openSync as openSync3, readSync, readdirSync } from "node:fs";
+import { createHash as createHash2 } from "node:crypto";
+import { closeSync as closeSync3, openSync as openSync3, readSync, readdirSync as readdirSync2 } from "node:fs";
 import { join as join4, relative, sep } from "node:path";
 function isOwnRunArtifact(rel, ownTaskId) {
   const parts = rel.split(sep);
@@ -11001,7 +11088,7 @@ function hashFile(abs) {
     return null;
   }
   try {
-    const hash = createHash("sha256");
+    const hash = createHash2("sha256");
     const buffer = Buffer.allocUnsafe(64 * 1024);
     for (; ; ) {
       const read = readSync(fd, buffer, 0, buffer.length, null);
@@ -11020,7 +11107,7 @@ function fingerprintState(paths, ownTaskId) {
   const walk = (dir) => {
     let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync2(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -11052,13 +11139,13 @@ function stateDiff(before, after) {
 }
 
 // src/io/quota.ts
-import { existsSync as existsSync4, readFileSync as readFileSync5, readdirSync as readdirSync2, statSync as statSync3 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync6, readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
 import { join as join5 } from "node:path";
 function walkJsonl(dir) {
   let out2 = [];
   let entries;
   try {
-    entries = readdirSync2(dir);
+    entries = readdirSync3(dir);
   } catch {
     return out2;
   }
@@ -11091,7 +11178,7 @@ function readCodexQuota(sessionsDir) {
   if (newest === void 0) return null;
   let lines;
   try {
-    lines = readFileSync5(newest, "utf8").split("\n");
+    lines = readFileSync6(newest, "utf8").split("\n");
   } catch {
     return null;
   }
@@ -11124,7 +11211,7 @@ function readClaudeQuota(usageJsonPath) {
   if (!existsSync4(usageJsonPath)) return null;
   let o;
   try {
-    o = JSON.parse(readFileSync5(usageJsonPath, "utf8"));
+    o = JSON.parse(readFileSync6(usageJsonPath, "utf8"));
   } catch {
     return null;
   }
@@ -11634,7 +11721,7 @@ deserves a closer review than usual. Report all three honestly; they are read, n
 }
 
 // src/app/modelConfig.ts
-import { readFileSync as readFileSync6 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 import { join as join7 } from "node:path";
 var DEFAULT_MODEL_CONFIG = {
   codex: {
@@ -11672,7 +11759,7 @@ function loadModelConfig(paths) {
   const cfg = cloneDefault();
   let raw;
   try {
-    raw = load(readFileSync6(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync7(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -11703,7 +11790,7 @@ function tierWorkers(cfg, tier) {
 }
 
 // src/app/taskLoad.ts
-import { readFileSync as readFileSync7 } from "node:fs";
+import { readFileSync as readFileSync8 } from "node:fs";
 
 // src/domain/validate.ts
 var import_ajv = __toESM(require_ajv(), 1);
@@ -11890,10 +11977,10 @@ var TaskContractError = class extends Error {
   }
 };
 function loadTask(paths, id) {
-  const taskYamlText = readFileSync7(paths.taskYaml(id), "utf8");
+  const taskYamlText = readFileSync8(paths.taskYaml(id), "utf8");
   let contractMdText = "";
   try {
-    contractMdText = readFileSync7(paths.contractMd(id), "utf8");
+    contractMdText = readFileSync8(paths.contractMd(id), "utf8");
   } catch {
     contractMdText = "";
   }
@@ -11911,7 +11998,7 @@ function loadTask(paths, id) {
 }
 
 // src/app/runStatus.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { readFileSync as readFileSync9 } from "node:fs";
 import { basename, isAbsolute, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 var ACTIVITY_THROTTLE_MS = 2e3;
 var LOG_POLL_MS = 250;
@@ -12077,7 +12164,7 @@ var RunStatusWriter = class {
     if (this.logPath === null || this.logKind === null) return;
     let text2;
     try {
-      text2 = readFileSync8(this.logPath, "utf8");
+      text2 = readFileSync9(this.logPath, "utf8");
     } catch {
       return;
     }
@@ -12127,7 +12214,7 @@ var TERMINAL_STATES = /* @__PURE__ */ new Set([
 function readRunStatus(path) {
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync8(path, "utf8"));
+    parsed = JSON.parse(readFileSync9(path, "utf8"));
   } catch {
     return null;
   }
@@ -12267,8 +12354,8 @@ function seconds(ms) {
 }
 
 // src/app/taskContext.ts
-import { createHash as createHash2 } from "node:crypto";
-import { existsSync as existsSync6, readFileSync as readFileSync9 } from "node:fs";
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync6, readFileSync as readFileSync10 } from "node:fs";
 var TASK_CONTEXT_SOFT_LIMIT = 8e3;
 function contextError(taskId, message) {
   return new Error(`TASK_CONTEXT.md for task ${taskId}: ${message}`);
@@ -12276,7 +12363,7 @@ function contextError(taskId, message) {
 function loadTaskContext(paths, task) {
   const path = paths.taskContext(task.id);
   if (!existsSync6(path)) return null;
-  const text2 = readFileSync9(path, "utf8");
+  const text2 = readFileSync10(path, "utf8");
   const frontmatter = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text2);
   if (frontmatter === null) {
     throw contextError(task.id, "missing YAML frontmatter (expected a leading --- fenced block)");
@@ -12322,7 +12409,7 @@ function loadTaskContext(paths, task) {
     base_sha: baseSha,
     ...planRevision2 !== void 0 ? { plan_revision: planRevision2 } : {},
     chars: text2.length,
-    sha256: createHash2("sha256").update(text2).digest("hex")
+    sha256: createHash3("sha256").update(text2).digest("hex")
   };
 }
 
@@ -12673,7 +12760,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   const refPath = branchRefPath(workDir, branch);
   if (task.mode === "probe") rmSync2(paths.diffPatch(id), { force: true });
   const verifyEnv = buildWorkerEnv(process.env);
-  const stateBefore = fingerprintState(paths, id);
+  const stateBefore = fingerprintDecisionState(paths, id);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
   let exitClass = "task_failed";
@@ -12750,7 +12837,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const conflict = detectContractConflict(parsed.finalMessage);
   if (conflict) exitClass = "contract_conflict";
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
   if (envelope !== void 0 && !envelope.stillOwned()) {
     tampering.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
   }
@@ -12817,10 +12904,10 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   }
   if (exitClass === "ok") {
     const patch = task.mode !== "probe" ? rawDiff(workDir, baseSha, "HEAD") : null;
-    if (patch !== null) result2.diff_sha = createHash3("sha256").update(patch).digest("hex");
+    if (patch !== null) result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
     result2.verified_head = resolveCommit(workDir, "HEAD");
     prep.status.transition("verify");
-    const stateBeforeVerify = fingerprintState(paths, id);
+    const stateBeforeVerify = fingerprintDecisionState(paths, id);
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -12839,7 +12926,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
       ...gateConfig !== void 0 ? { gate: gateConfig } : {},
       ...gateConfig !== void 0 ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+    const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
     }
@@ -12884,9 +12971,49 @@ async function dispatchTask(deps, id) {
   const gateConfig = loadGateConfig(paths);
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
   return withCheckoutLock(lock, async (envelope) => {
-    const prep = prepareRun(deps, id);
-    return runPrepared(deps, prep, gateConfig, envelope);
+    return withTaskActivity(deps, id, async () => {
+      const prep = prepareRun(deps, id);
+      return runPrepared(deps, prep, gateConfig, envelope);
+    });
   });
+}
+function taskActivityOutcome(result2) {
+  if (result2.timed_out || result2.exit_class === "timeout") return "timed_out";
+  if (result2.stalled || result2.exit_class === "stalled") return "stalled";
+  return result2.exit_class === "ok" && result2.verifier?.result === "PASSED" ? "ok" : "failed";
+}
+async function withTaskActivity(deps, id, body) {
+  const label = `task:${id}`;
+  const path = deps.paths.activity(activityKey(label));
+  const startedAt = (/* @__PURE__ */ new Date()).toISOString();
+  const activity = writeActivity(path, {
+    label,
+    pid: process.pid,
+    started_at: startedAt,
+    beat_at: startedAt,
+    status_path: deps.paths.runStatus(id)
+  });
+  const heartbeat = startActivityHeartbeat(path, activity, deps.activityHeartbeatIntervalMs);
+  let outcome = "failed";
+  try {
+    const started = await heartbeat.started;
+    if (!started.ok) {
+      throw new Error(`task activity heartbeat failed to start for '${label}': ${started.error.message}`);
+    }
+    const result2 = await body();
+    outcome = taskActivityOutcome(result2);
+    return result2;
+  } finally {
+    heartbeat.stop();
+    try {
+      writeActivity(path, {
+        ...activity,
+        ended_at: (/* @__PURE__ */ new Date()).toISOString(),
+        outcome
+      });
+    } catch {
+    }
+  }
 }
 async function withCheckoutLock(lock, body) {
   const beater = startHeartbeat(lock.path, lock.ownerToken);
@@ -12977,7 +13104,10 @@ async function resumeTask(deps, id, feedback) {
   const { paths } = deps;
   const gateConfig = loadGateConfig(paths);
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
-  return withCheckoutLock(lock, (envelope) => resumeInLock(deps, id, feedback, gateConfig, envelope));
+  return withCheckoutLock(
+    lock,
+    (envelope) => withTaskActivity(deps, id, () => resumeInLock(deps, id, feedback, gateConfig, envelope))
+  );
 }
 async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   const { paths } = deps;
@@ -13004,7 +13134,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   writeFileSync3(logPath, "");
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
-  const stateBefore = fingerprintState(paths, id);
+  const stateBefore = fingerprintDecisionState(paths, id);
   const o = await superviseWorker({
     argv: launcher.buildResumeArgv(workDir, priorSession, feedback, task),
     cwd: workDir,
@@ -13022,7 +13152,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
   const mismatch = newSession !== priorSession;
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
   if (!envelope.stillOwned()) {
     tampering.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
   }
@@ -13078,9 +13208,9 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
         result2.closeout = { ok: true };
         const patch = rawDiff(workDir, baseSha, "HEAD");
         writeFileSync3(paths.diffPatch(id), patch);
-        result2.diff_sha = createHash3("sha256").update(patch).digest("hex");
+        result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
         result2.verified_head = resolveCommit(workDir, "HEAD");
-        const stateBeforeVerify = fingerprintState(paths, id);
+        const stateBeforeVerify = fingerprintDecisionState(paths, id);
         result2.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -13097,7 +13227,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? [])
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+        const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
         if (!envelope.stillOwned()) {
           duringVerify.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
         }
@@ -13125,10 +13255,18 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
 }
 function safeRead(path) {
   try {
-    return readFileSync10(path, "utf8");
+    return readFileSync11(path, "utf8");
   } catch {
     return "";
   }
+}
+function fingerprintDecisionState(paths, id) {
+  const snapshot = fingerprintState(paths, id);
+  const activityPrefix = `activity${sep3}`;
+  for (const path of snapshot.keys()) {
+    if (path.startsWith(activityPrefix)) snapshot.delete(path);
+  }
+  return snapshot;
 }
 function persistDelivery(paths, id, task, finalMessage) {
   if (finalMessage == null || finalMessage.length === 0) return void 0;
@@ -13216,7 +13354,7 @@ import { writeFileSync as writeFileSync4 } from "node:fs";
 import { join as join10 } from "node:path";
 
 // src/app/verifiedHead.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 function pinnedHead(repoRoot, branch, result2) {
   if (!branchExists(repoRoot, branch)) {
     return {
@@ -13235,7 +13373,7 @@ function pinnedHead(repoRoot, branch, result2) {
   if (result2.base_sha === void 0 || result2.diff_sha === void 0) {
     return { ok: false, reason: `this run recorded no verified commit (it predates the check)` };
   }
-  const now = createHash4("sha256").update(rawDiff(repoRoot, result2.base_sha, branch)).digest("hex");
+  const now = createHash5("sha256").update(rawDiff(repoRoot, result2.base_sha, branch)).digest("hex");
   if (now !== result2.diff_sha) {
     return { ok: false, reason: `${branch} no longer matches the diff that was verified` };
   }
@@ -13440,7 +13578,7 @@ async function runQueueGate(deps, taskId) {
 }
 
 // src/app/orchestratorUsage.ts
-import { readdirSync as readdirSync3, statSync as statSync5 } from "node:fs";
+import { readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { join as join11 } from "node:path";
 
@@ -13550,7 +13688,7 @@ function newestTranscript(projectsDir) {
   let newest;
   let entries;
   try {
-    entries = readdirSync3(projectsDir, { withFileTypes: true });
+    entries = readdirSync4(projectsDir, { withFileTypes: true });
   } catch {
     return void 0;
   }
@@ -13605,7 +13743,7 @@ function recordOrchestratorUsage(paths, clock, opts) {
 }
 
 // src/app/symbolIndex.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync13, readdirSync as readdirSync5, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync4, readFileSync as readFileSync14, readdirSync as readdirSync6, rmSync as rmSync3, statSync as statSync7, writeFileSync as writeFileSync5 } from "node:fs";
 import { resolve as resolve4 } from "node:path";
 
 // src/core/symbols.ts
@@ -13718,12 +13856,12 @@ function renderMethods(r) {
 }
 
 // src/io/symbolCache.ts
-import { createHash as createHash5 } from "node:crypto";
-import { existsSync as existsSync8, readdirSync as readdirSync4, readFileSync as readFileSync12, statSync as statSync6 } from "node:fs";
+import { createHash as createHash6 } from "node:crypto";
+import { existsSync as existsSync8, readdirSync as readdirSync5, readFileSync as readFileSync13, statSync as statSync6 } from "node:fs";
 import { relative as relative3, resolve as resolve3 } from "node:path";
 
 // src/io/treeSitter.ts
-import { existsSync as existsSync7, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync12 } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname as dirname5, join as join12 } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -13760,9 +13898,9 @@ async function getParser() {
     ready = (async () => {
       const rt = locateRuntime();
       const mod = await import(rt.moduleHref);
-      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync11(rt.tsWasm)) });
+      await mod.Parser.init({ wasmBinary: new Uint8Array(readFileSync12(rt.tsWasm)) });
       const parser = new mod.Parser();
-      const cpp = await mod.Language.load(new Uint8Array(readFileSync11(rt.cppWasm)));
+      const cpp = await mod.Language.load(new Uint8Array(readFileSync12(rt.cppWasm)));
       parser.setLanguage(cpp);
       return { parser, grammar: `cpp@${cpp.version ?? "x"}` };
     })();
@@ -13843,7 +13981,7 @@ var SRC_RE = /\.(cpp|h|hpp|cc|cxx|hh)$/;
 var SKIP_DIR = /* @__PURE__ */ new Set([".git", "node_modules", ".router", "dist"]);
 function hashRoots(roots) {
   const norm = roots.map((r) => resolve3(r)).sort();
-  return createHash5("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
+  return createHash6("sha256").update(norm.join("\n")).digest("hex").slice(0, 16);
 }
 function walkFiles(root, acc) {
   let st;
@@ -13857,14 +13995,14 @@ function walkFiles(root, acc) {
     return;
   }
   if (!st.isDirectory()) return;
-  for (const name of readdirSync4(root)) {
+  for (const name of readdirSync5(root)) {
     if (SKIP_DIR.has(name)) continue;
     walkFiles(resolve3(root, name), acc);
   }
 }
 function loadRaw(cachePath) {
   try {
-    return JSON.parse(readFileSync12(cachePath, "utf8"));
+    return JSON.parse(readFileSync13(cachePath, "utf8"));
   } catch {
     return null;
   }
@@ -13892,7 +14030,7 @@ async function buildIndex(roots, cachePath, repoRoot, limits) {
       symbols += cached.symbols.length;
       continue;
     }
-    const src = readFileSync12(abs, "utf8");
+    const src = readFileSync13(abs, "utf8");
     bytes += src.length;
     if (bytes > limits.maxBytes) {
       return { files: files.length, symbols: 0, reparsed, degraded: { reason: `scope too large: >${limits.maxBytes} bytes of source` } };
@@ -13929,7 +14067,7 @@ async function refreshIndex(cachePath, repoRoot) {
       out2.push(f);
       continue;
     }
-    const parsed = await parseSymbols(readFileSync12(abs, "utf8"));
+    const parsed = await parseSymbols(readFileSync13(abs, "utf8"));
     grammar = parsed.grammar;
     out2.push({ file: f.file, mtimeMs: st.mtimeMs, symbols: parsed.syms, calls: parsed.calls });
     reparsed++;
@@ -13950,7 +14088,7 @@ function loadCodeIntelConfig(paths) {
   const cfg = JSON.parse(JSON.stringify(DEFAULT_CODE_INTEL));
   let raw;
   try {
-    raw = load(readFileSync13(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
+    raw = load(readFileSync14(modelsYamlPath(paths), "utf8"), { schema: JSON_SCHEMA });
   } catch {
     return cfg;
   }
@@ -14001,7 +14139,7 @@ async function runQuery(paths, cfg, sub, args) {
   if (args.dirs.length > 0) {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, args.dirs)));
   } else if (existsSync9(paths.symbolLatest)) {
-    cache2 = paths.symbolCache(readFileSync13(paths.symbolLatest, "utf8").trim());
+    cache2 = paths.symbolCache(readFileSync14(paths.symbolLatest, "utf8").trim());
   } else {
     cache2 = paths.symbolCache(hashRoots(rootsFor(paths, cfg, [])));
   }
@@ -14485,93 +14623,6 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 import { existsSync as existsSync10, linkSync as linkSync2, mkdirSync as mkdirSync5, statSync as statSync8, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname as dirname6 } from "node:path";
-
-// src/io/activity.ts
-import { createHash as createHash6, randomUUID } from "node:crypto";
-import { readdirSync as readdirSync6, readFileSync as readFileSync14, unlinkSync as unlinkSync3 } from "node:fs";
-var OUTCOMES = /* @__PURE__ */ new Set(["ok", "failed", "timed_out", "stalled"]);
-var MAX_PID = 2147483647;
-function finiteDate(value) {
-  return typeof value === "string" && Number.isFinite(Date.parse(value));
-}
-function validPid(value) {
-  return Number.isInteger(value) && value > 0 && value <= MAX_PID;
-}
-function parseActivity(value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const object = value;
-  if (typeof object.label !== "string" || object.label.length === 0) return null;
-  if (typeof object.owner_token !== "string" || object.owner_token.length === 0) return null;
-  if (!validPid(object.pid)) return null;
-  if (!finiteDate(object.started_at) || !finiteDate(object.beat_at)) return null;
-  if (object.ended_at !== void 0 && !finiteDate(object.ended_at)) return null;
-  if (object.outcome !== void 0 && !OUTCOMES.has(object.outcome)) return null;
-  if (object.status_path !== void 0 && typeof object.status_path !== "string") return null;
-  const record = {
-    label: object.label,
-    owner_token: object.owner_token,
-    pid: object.pid,
-    started_at: object.started_at,
-    beat_at: object.beat_at
-  };
-  if (typeof object.ended_at === "string") record.ended_at = object.ended_at;
-  if (typeof object.outcome === "string") record.outcome = object.outcome;
-  if (typeof object.status_path === "string") record.status_path = object.status_path;
-  return record;
-}
-function activityKey(label) {
-  if (label.length === 0) throw new Error("activity label must not be empty");
-  return createHash6("sha256").update(label).digest("hex");
-}
-function writeActivity(path, activity) {
-  const candidate = Object.prototype.hasOwnProperty.call(activity, "owner_token") ? activity : { ...activity, owner_token: randomUUID() };
-  const parsed = parseActivity(candidate);
-  if (parsed === null) throw new Error(`cannot write invalid activity to ${path}`);
-  if (parsed.ended_at !== void 0) {
-    try {
-      unlinkSync3(path);
-    } catch (err2) {
-      if (err2.code !== "ENOENT") throw err2;
-    }
-    return parsed;
-  }
-  writeJsonAtomic(path, parsed);
-  return parsed;
-}
-function readActivity(path) {
-  try {
-    return parseActivity(JSON.parse(readFileSync14(path, "utf8")));
-  } catch {
-    return null;
-  }
-}
-function pidIsAlive(pid) {
-  if (!validPid(pid)) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err2) {
-    return err2.code === "EPERM";
-  }
-}
-function activityState(activity, nowMs = Date.now(), staleMs = DEFAULT_STALE_MS) {
-  if (activity === null || activity.ended_at !== void 0) return "idle";
-  const fresh = nowMs - Date.parse(activity.beat_at) <= staleMs;
-  return pidIsAlive(activity.pid) && fresh ? "running" : "disconnected";
-}
-function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
-  return startJsonHeartbeat(path, {
-    field: "beat_at",
-    valueFormat: "iso",
-    guard: { owner_token: activity.owner_token },
-    // writeJsonAtomic pretty-prints with two spaces. Matching that shape makes a heartbeat only
-    // replace fixed-width ISO timestamp bytes instead of changing the document's length.
-    indent: 2,
-    intervalMs
-  });
-}
-
-// src/app/supervise.ts
 var MAX_WALL_MS = 24 * 60 * 6e4;
 var STALL_MS = 20 * 6e4;
 var SUPERVISE_INTERNAL_ERROR_CODE = 70;
