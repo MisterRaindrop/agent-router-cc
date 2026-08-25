@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as fx from '../testkit/gitRepo.ts';
@@ -13,7 +14,13 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
-import { ActivityAlreadyExistsError, activityKey, activityState, readActivity } from '../src/io/activity.ts';
+import {
+  ActivityAlreadyExistsError,
+  activityKey,
+  activityState,
+  observeActivities,
+  readActivity,
+} from '../src/io/activity.ts';
 import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
 import { superviseCommand } from '../src/app/supervise.ts';
 import { acquireLock, DEFAULT_STALE_MS, readLock } from '../src/io/lock.ts';
@@ -919,6 +926,58 @@ test('resume publishes the same task activity and removes it after normal closeo
   }
 });
 
+test('activity cleanup retries, reports failure, and never replaces a successful dispatch result', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const mutableFs = createRequire(import.meta.url)('node:fs') as {
+    unlinkSync(path: string): void;
+  };
+  const originalUnlink = mutableFs.unlinkSync;
+  const diagnostics: string[] = [];
+  let cleanupAttempts = 0;
+  const prev = process.env.ROUTER_CODEX_BIN;
+  const prevSessions = process.env.ROUTER_CODEX_SESSIONS_DIR;
+
+  try {
+    stageTask(paths);
+    process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+    process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+    mutableFs.unlinkSync = (path: string): void => {
+      if (path === activityPath) {
+        cleanupAttempts += 1;
+        throw Object.assign(new Error('EPERM injected activity cleanup failure'), { code: 'EPERM' });
+      }
+      originalUnlink(path);
+    };
+    syncBuiltinESMExports();
+
+    const result = await dispatchTask(
+      { ...deps, activityDiagnostic: (message) => diagnostics.push(message) },
+      't1',
+    );
+
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.verifier?.result, 'PASSED');
+    assert.equal(cleanupAttempts, 3, 'dispatch did not retry an owner-safe activity cleanup');
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0]!, /could not remove activity.*EPERM injected activity cleanup failure/);
+    const remnant = readActivity(activityPath);
+    assert.ok(remnant);
+    assert.equal(remnant.pid, process.pid);
+    assert.equal(activityState(remnant), 'running');
+  } finally {
+    mutableFs.unlinkSync = originalUnlink;
+    syncBuiltinESMExports();
+    if (existsSync(activityPath)) originalUnlink(activityPath);
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    if (prevSessions === undefined) delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    else process.env.ROUTER_CODEX_SESSIONS_DIR = prevSessions;
+    fx.cleanup(repo);
+  }
+});
+
 test('SIGKILL leaves dispatch disconnected within the stale threshold without claiming a phase', async () => {
   const { repo, paths } = setup();
   const activityPath = paths.activity(activityKey('task:t1'));
@@ -952,7 +1011,8 @@ test('SIGKILL leaves dispatch disconnected within the stale threshold without cl
       phase?: string;
     };
     assert.equal(statusBeforeKill.phase, 'executor_working');
-    assert.equal('phase' in running, false, 'dispatch copied phase into the activity record');
+    const rawRunning = JSON.parse(readFileSync(activityPath, 'utf8')) as Record<string, unknown>;
+    assert.equal('phase' in rawRunning, false, 'dispatch copied phase into the activity record');
 
     const killedAt = Date.now();
     owner.child.kill('SIGKILL');
@@ -965,14 +1025,18 @@ test('SIGKILL leaves dispatch disconnected within the stale threshold without cl
     assert.ok(disconnected);
     assert.equal(activityState(disconnected), 'disconnected');
     assert.equal(disconnected.pid, owner.child.pid);
-    assert.equal('phase' in disconnected, false, 'a disconnected activity still claimed a phase');
+    const rawDisconnected = JSON.parse(readFileSync(activityPath, 'utf8')) as Record<string, unknown>;
+    assert.equal('phase' in rawDisconnected, false, 'the on-disk disconnected activity claimed a phase');
     assert.equal(existsSync(activityPath), true, 'SIGKILL unexpectedly ran normal activity cleanup');
     // The richer status file is intentionally left untouched; consumers may follow it only for
-    // running activities, so the disconnected record itself makes no stale phase claim.
+    // running activities. Exercise the real activity projection rather than reproducing that
+    // decision in this test.
     const staleStatus = JSON.parse(readFileSync(disconnected.status_path!, 'utf8')) as { phase?: string };
     assert.equal(staleStatus.phase, 'executor_working');
-    const claimedPhase = activityState(disconnected) === 'running' ? staleStatus.phase : undefined;
-    assert.equal(claimedPhase, undefined);
+    const projected = observeActivities(paths.activityDir);
+    assert.equal(projected.length, 1);
+    assert.equal(projected[0]!.state, 'disconnected');
+    assert.equal(projected[0]!.record.owner_token, disconnected.owner_token);
   } finally {
     if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
       owner.child.kill('SIGKILL');
