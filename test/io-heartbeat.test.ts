@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLock, readLock } from '../src/io/lock.ts';
-import { startHeartbeat } from '../src/io/heartbeat.ts';
+import { startHeartbeat, startJsonHeartbeat } from '../src/io/heartbeat.ts';
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'router-heartbeat-'));
@@ -46,6 +46,59 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<bo
   }
   return predicate();
 }
+
+test('a generic heartbeat refreshes the selected JSON field and stops at a changed guard', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'activity.json');
+  const startedAt = '2026-08-25T00:00:00.000Z';
+  try {
+    writeFileSync(
+      path,
+      `${JSON.stringify({ pid: process.pid, started_at: startedAt, beat_at: startedAt, label: 'test' })}\n`,
+    );
+    const beater = startJsonHeartbeat(path, {
+      field: 'beat_at',
+      valueFormat: 'iso',
+      guard: { pid: process.pid, started_at: startedAt },
+      intervalMs: 40,
+    });
+    try {
+      assert.ok(
+        await waitUntil(() => {
+          const value = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+          return value.beat_at !== startedAt;
+        }),
+        'the selected field was never refreshed',
+      );
+      const refreshed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      assert.equal(refreshed.label, 'test', 'unrelated fields must survive an in-place beat');
+      assert.equal(refreshed.started_at, startedAt);
+
+      writeFileSync(
+        path,
+        `${JSON.stringify({ pid: process.pid, started_at: 'replacement', beat_at: 'replacement' })}\n`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const replacement = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      assert.equal(replacement.beat_at, 'replacement', 'an old heartbeat refreshed a replacement file');
+      assert.ok(
+        await waitUntil(() => {
+          try {
+            process.kill(beater.pid!, 0);
+            return false;
+          } catch {
+            return true;
+          }
+        }),
+        'the heartbeat child survived a guard mismatch',
+      );
+    } finally {
+      beater.stop();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // Fault-injection case 8b, rewritten after review finding 10 showed the original could not catch
 // its own regression.
