@@ -315,3 +315,49 @@ test('supervision keeps a standalone process alive until the group is drained', 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// `groupSurvived` is reported, not merely commented on -- dispatch fails the run on it and keeps
+// the checkout lock rather than handing the next process a checkout with a live writer in it.
+// A grace of 0 is how this is made deterministic: a real unkillable group needs an uninterruptible
+// syscall, so the drain is instead given no time at all to confirm the SIGKILL landed. That is the
+// same code path and the same verdict, without needing a process nothing can stop.
+test('a group the drain cannot confirm dead is reported, not assumed gone', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'router-supervise-survivor-'));
+  const ready = join(dir, 'ready');
+  writeFileSync(
+    join(dir, 'stubborn.mjs'),
+    "import { writeFileSync } from 'node:fs';\n" +
+      "process.on('SIGTERM', () => {});\n" +
+      `writeFileSync(${JSON.stringify(ready)}, '1');\n` +
+      'setInterval(() => {}, 1000);\n',
+  );
+  const script = join(dir, 'leader.mjs');
+  writeFileSync(
+    script,
+    "import { spawn } from 'node:child_process';\n" +
+      "import { existsSync } from 'node:fs';\n" +
+      `const c = spawn(process.execPath, [${JSON.stringify(join(dir, 'stubborn.mjs'))}], { stdio: 'ignore' });\n` +
+      'c.unref();\n' +
+      `const deadline = Date.now() + 5000;\n` +
+      `while (!existsSync(${JSON.stringify(ready)}) && Date.now() < deadline) {}\n` +
+      'process.exit(0);\n',
+  );
+  try {
+    const outcome = await superviseWorker({
+      argv: [process.execPath, script],
+      cwd: dir,
+      env: process.env,
+      logPath: join(dir, 'worker.log'),
+      heartbeatPath: join(dir, 'heartbeat'),
+      watchPaths: [dir],
+      maxWallMs: 20_000,
+      stallMs: 20_000,
+      pollIntervalMs: 50,
+      sigkillGraceMs: 0, // no time to confirm: the drain must say so rather than assume
+    });
+    assert.equal(outcome.groupSurvived, true, 'an unconfirmed group was reported as drained');
+    assert.equal(outcome.rc, 0, 'the leader itself exited cleanly; only its child outlived it');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

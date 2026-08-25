@@ -326,6 +326,15 @@ async function runPreparedObserved(
       // name belongs to a different task, the reset would discard work that was never part of
       // this run. Refuse rather than report.
       assertTaskIdentity(workDir, { branch, baseSha });
+      // And the lock, before the reset rather than only after the last executor: this is a
+      // destructive step, so "are we still the only writer here" has to be true NOW, not at the
+      // end of the run when the damage would already be done.
+      if (envelope !== undefined && !envelope.stillOwned()) {
+        throw new Error(
+          `the checkout lock no longer names this run; refusing to reset ${branch} -- another ` +
+            `process may be working in this checkout`,
+        );
+      }
       // Then rescue. `resetHard` is deliberately NOT used here -- it also runs `git clean -fd`,
       // which deletes files created while the executor was running, the user's included. This
       // commit is unreachable after the reset but recoverable by sha, which is why the sha is
@@ -447,17 +456,21 @@ async function runPreparedObserved(
   }
 
   if (exitClass === 'ok') {
-    if (task.mode !== 'probe') {
-      const patch = rawDiff(workDir, baseSha, 'HEAD');
-      writeFileSync(paths.diffPatch(id), patch);
-      result.diff_sha = createHash('sha256').update(patch).digest('hex');
-    }
+    // Held in memory, not written yet. The final state check below has to be able to tell OUR
+    // writes from the executor's, and `diff.patch` lives in the very directory it watches.
+    const patch = task.mode !== 'probe' ? rawDiff(workDir, baseSha, 'HEAD') : null;
+    if (patch !== null) result.diff_sha = createHash('sha256').update(patch).digest('hex');
     // Exactly which commit the verifier is about to judge. `land` refuses to merge a task branch
     // whose tip has moved past it: a PASSED record used to authorize the BRANCH rather than a
     // commit, so anything appended afterwards -- by a resume, or by hand -- was merged unverified
     // on the strength of a verdict that had never seen it.
     result.verified_head = resolveCommit(workDir, 'HEAD');
     prep.status.transition('verify');
+    // The state guard's window used to close HERE, before verification. But the verify and gate
+    // commands are the executor's own committed code: running them is the executor's last and
+    // widest write channel, and a run that forged `.router` state from inside its test script was
+    // still recorded PASSED. So the window stays open across verification too.
+    const stateBeforeVerify = fingerprintState(paths, id);
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -476,7 +489,22 @@ async function runPreparedObserved(
       ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
       ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
-    attachEffectiveRisk(result, task, workDir, baseSha);
+    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+    if (!(envelope?.stillOwned() ?? true)) {
+      duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
+    }
+    if (duringVerify.length > 0) {
+      // Not a verdict to weigh against the diff: the evidence was produced in a checkout somebody
+      // else was writing, so there is no verdict left to report.
+      result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify];
+      result.exit_class = 'task_failed';
+      delete result.verifier;
+      delete result.verified_head;
+      delete result.diff_sha;
+    } else {
+      if (patch !== null) writeFileSync(paths.diffPatch(id), patch);
+      attachEffectiveRisk(result, task, workDir, baseSha);
+    }
   }
 
   const phaseTimings = prep.status.terminal(
@@ -555,14 +583,17 @@ async function withCheckoutLock(
 ): Promise<RunResult> {
   const beater = startHeartbeat(lock.path, lock.ownerToken);
   let execPgid: number | null = null;
+  let groupSurvived = false;
   try {
-    return await body({
+    const result = await body({
       onExecPgid: (pgid) => {
         execPgid = pgid;
         lock.recordExecPgid(pgid);
       },
       stillOwned: () => ownsLock(lock.path, lock.ownerToken),
     });
+    groupSurvived = result.executor_group_survived === true;
+    return result;
   } finally {
     // Step 12, in this order: kill the executor's process group, THEN release the lock. The
     // supervisor already signals the group when the leader exits, but that is best effort and
@@ -570,7 +601,12 @@ async function withCheckoutLock(
     // because the next line lets somebody else in.
     if (execPgid !== null) killProcessGroup(execPgid, 'SIGKILL');
     beater.stop();
-    lock.release();
+    // ...and when it is NOT true, we do not let anybody in. Releasing here deleted the lock --
+    // the only record of `execPgid` -- so the next dispatch walked into a checkout with a live
+    // writer in it and no way to know. Leaving the file behind with the beat stopped is what
+    // makes that impossible: it goes stale on its own, and the next acquirer has to reap the
+    // group first, which fails closed if the group still survives SIGKILL.
+    if (!groupSurvived) lock.release();
   }
 }
 
@@ -624,18 +660,26 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
   // batch started from a detached HEAD had nothing to restore, so it stacked exactly as before.
   // The baseline is a ref: the branch when there is one, the commit itself when there is not.
   const startedOnBranch = currentBranch(paths.repoRoot);
-  const baseline = startedOnBranch ?? resolveCommit(paths.repoRoot, 'HEAD');
   const gateConfig = loadGateConfig(paths);
   const results: RunResult[] = [];
   const faults: { id: string; message: string }[] = [];
+  // The commit every task is cut from, learned from the first task rather than guessed before it.
+  // It cannot be read up front: `prepareRun` commits the user's uncommitted work first, so the
+  // real shared base is task 1's `base_sha` -- taken AFTER that rescue.
+  let pin: string | null = null;
   for (const [index, id] of ids.entries()) {
     try {
       // Inside the try, and this matters: restoring used to sit outside it, so a starting branch
       // deleted between tasks threw straight out of the loop -- past the fault list, past the
       // error that names which task failed and why -- and left the user standing on the previous
       // task's branch with no explanation.
-      if (index > 0) restoreBaseline(deps, gateConfig.lock_wait_minutes ?? 0, baseline);
-      results.push(await dispatchTask(deps, id));
+      if (index > 0) {
+        if (pin === null) throw new Error(`task ${ids[0]} recorded no base commit to cut ${id} from`);
+        restoreBaseline(deps, gateConfig.lock_wait_minutes ?? 0, startedOnBranch, pin);
+      }
+      const result = await dispatchTask(deps, id);
+      results.push(result);
+      if (pin === null) pin = result.base_sha ?? null;
     } catch (e) {
       faults.push({ id, message: e instanceof Error ? e.message : String(e) });
       break; // serial: a failure means the checkout state is unknown, so do not start the next
@@ -654,7 +698,12 @@ export async function dispatchTasks(deps: DispatchDeps, ids: readonly string[]):
  * has to -- it is the same rule `prepareRun` follows, and this call used to sit outside it.
  * Refuses on a dirty tree rather than dragging the previous task's leftovers onto a new base.
  */
-function restoreBaseline(deps: DispatchDeps, waitMinutes: number, ref: string): void {
+function restoreBaseline(
+  deps: DispatchDeps,
+  waitMinutes: number,
+  branch: string | null,
+  pin: string,
+): void {
   const { paths } = deps;
   const lock = takeCheckoutLock(paths, waitMinutes);
   try {
@@ -666,7 +715,19 @@ function restoreBaseline(deps: DispatchDeps, waitMinutes: number, ref: string): 
           `commit or discard them before the batch continues`,
       );
     }
-    checkoutRef(paths.repoRoot, ref);
+    // Back to the user's own branch when they had one, so the batch leaves them where it found
+    // them -- but the branch NAME is not the promise. A branch is mutable, and an executor that
+    // moved it (or a person, in another terminal) would silently hand the next task a base
+    // containing the previous task's commits: the original stacking bug, wearing a fix.
+    checkoutRef(paths.repoRoot, branch ?? pin);
+    const at = resolveCommit(paths.repoRoot, 'HEAD');
+    if (at !== pin) {
+      throw new Error(
+        `the batch's base moved: ${branch ?? 'HEAD'} is now at ${at.slice(0, 12)}, but the batch ` +
+          `started from ${pin.slice(0, 12)}. Cutting the next task from here would put the ` +
+          `previous task's commits on its branch; re-dispatch the remaining tasks deliberately`,
+      );
+    }
   } finally {
     lock.release();
   }
@@ -770,12 +831,16 @@ async function resumeInLock(
   const model = parsed.model ?? used.model;
   const costUsd = parsed.costUsd ?? null;
   const modelMismatch = exitClass !== 'ok' && !conflict && detectModelMismatch(log);
-  const blocked =
-    conflict || mismatch || o.groupSurvived || tampering.length > 0 || exitClass !== 'ok';
+  // Two different questions, and collapsing them lost real information: a resume that ran out of
+  // quota, timed out, stalled or crashed was stored as a flat `task_failed`, so the diagnosis,
+  // the retry semantics and the usage rollup all read the wrong cause. Only a broken CONTRACT --
+  // a different session, forged state, a writer we could not stop -- overrides what happened.
+  const contractBroken = mismatch || o.groupSurvived || tampering.length > 0;
+  const mayVerify = !conflict && !contractBroken && exitClass === 'ok';
   const result: RunResult = {
     task_id: id,
     attempt_number: prev.attempt_number + 1,
-    exit_class: conflict ? 'contract_conflict' : blocked ? 'task_failed' : exitClass,
+    exit_class: conflict ? 'contract_conflict' : contractBroken ? 'task_failed' : exitClass,
     rc: o.rc,
     timed_out: o.timedOut,
     stalled: o.stalled,
@@ -817,7 +882,7 @@ async function resumeInLock(
   // `x = 3` into main on the strength of a verdict that had never seen it. Turning a fail-open
   // into a fail-closed check is only half the job; the other half is that the failure has to be
   // written down.
-  if (!blocked) {
+  if (mayVerify) {
     try {
       // Same closing invariant as a fresh dispatch: the executor commits its own units, so a
       // leftover file means the work is not finished, not that we should sweep it up.
@@ -839,6 +904,9 @@ async function resumeInLock(
         writeFileSync(paths.diffPatch(id), patch);
         result.diff_sha = createHash('sha256').update(patch).digest('hex');
         result.verified_head = resolveCommit(workDir, 'HEAD');
+        // Same reason as the fresh path: the verify and gate commands are the executor's own
+        // committed code, so the state window has to stay open across them.
+        const stateBeforeVerify = fingerprintState(paths, id);
         result.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -855,7 +923,19 @@ async function resumeInLock(
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
         });
-        attachEffectiveRisk(result, task, workDir, baseSha);
+        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+        if (!envelope.stillOwned()) {
+          duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
+        }
+        if (duringVerify.length > 0) {
+          result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify];
+          result.exit_class = 'task_failed';
+          delete result.verifier;
+          delete result.verified_head;
+          delete result.diff_sha;
+        } else {
+          attachEffectiveRisk(result, task, workDir, baseSha);
+        }
       }
     } catch (error) {
       // The attempt is recorded as failed and NOT verified. Rethrowing instead would leave the

@@ -416,3 +416,55 @@ test('a resume that forges router state fails the run, exactly as a fresh dispat
     fx.cleanup(dir);
   }
 });
+
+// Separating "may we verify?" from "what actually happened". The first version of the resume
+// transaction collapsed both into one flag, so a resume that ran out of quota, timed out, stalled
+// or crashed was all stored as a flat `task_failed` -- the diagnosis, the retry semantics and the
+// usage rollup all reading the wrong cause. Only a broken CONTRACT should override the taxonomy.
+test('a resume that hits the provider quota is recorded as quota_exhausted, not just failed', () => {
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const quota = join(dir, 'fake-quota.mjs');
+  writeFileSync(
+    quota,
+    '#!/usr/bin/env node\n' +
+      "import { execFileSync } from 'node:child_process';\n" +
+      "import { writeFileSync } from 'node:fs';\n" +
+      "const resumed = process.argv.includes('resume');\n" +
+      'if (resumed) {\n' +
+      // Re-attaches (same session id), then dies on the provider's rate limit.
+      '  process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:"fake-session-demo"})+"\\n");\n' +
+      '  process.stdout.write(JSON.stringify({type:"error",message:"429 usage limit reached for this account"})+"\\n");\n' +
+      '  process.exit(1);\n' +
+      '}\n' +
+      "writeFileSync('src/a.ts', 'export const x = 2;\\n');\n" +
+      'execFileSync("git", ["add", "--", "src/a.ts"]);\n' +
+      'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", "fake: unit a"]);\n' +
+      'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:"fake-session-demo"})+"\\n");\n' +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(quota, 0o755);
+  const env = { ROUTER_CODEX_BIN: quota, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'none') };
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(jsonLine(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+
+    const r = router(dir, ['resume', 'demo', '--feedback', 'again', '--json'], env);
+    assert.notEqual(r.code, 0, r.out);
+    const stored = JSON.parse(
+      readFileSync(join(dir, '.router', 'tasks', 'demo', 'result.json'), 'utf8'),
+    ) as { exit_class: string; attempt_number: number; verifier?: unknown; resume_session_mismatch?: boolean };
+    assert.equal(stored.attempt_number, 2, JSON.stringify(stored));
+    assert.equal(stored.resume_session_mismatch, undefined, 'the session DID re-attach');
+    assert.equal(
+      stored.exit_class,
+      'quota_exhausted',
+      `the real cause was flattened away: ${JSON.stringify(stored)}`,
+    );
+    // Still not verified -- separating the taxonomy must not loosen the gate.
+    assert.equal(stored.verifier, undefined);
+  } finally {
+    fx.cleanup(dir);
+  }
+});

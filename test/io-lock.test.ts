@@ -345,13 +345,19 @@ test('the lock file stays in place until the orphan group is dead (finding 1)', 
 
     // While the reclaim is inside the reap, the lock must still exist. Observed from a separate
     // process so it is the real filesystem answer, not ours.
+    // Sampled as INTERVALS, not as a count. There is one legitimate instant where the path does
+    // not exist -- between the reclaim's unlink and its replacement lock -- and counting bare
+    // samples made this test fail about one full run in six when the 20ms tick landed inside it.
+    // What the finding is actually about is a hole lasting the whole reap, so measure duration.
     const watcher = spawn(
       process.execPath,
       [
         '-e',
-        `const fs=require('node:fs');let gone=0,seen=0;` +
-          `const t=setInterval(()=>{seen++;if(!fs.existsSync(${JSON.stringify(fixture.path)}))gone++;},20);` +
-          `setTimeout(()=>{clearInterval(t);console.log(JSON.stringify({seen,gone}));},1500);`,
+        `const fs=require('node:fs');let seen=0,goneAt=null,longest=0;` +
+          `const t=setInterval(()=>{seen++;const now=Date.now();` +
+          `if(!fs.existsSync(${JSON.stringify(fixture.path)})){if(goneAt===null)goneAt=now;` +
+          `longest=Math.max(longest,now-goneAt);}else{goneAt=null;}},20);` +
+          `setTimeout(()=>{clearInterval(t);console.log(JSON.stringify({seen,longest}));},1500);`,
       ],
       { stdio: ['ignore', 'pipe', 'ignore'] },
     );
@@ -374,11 +380,11 @@ test('the lock file stays in place until the orphan group is dead (finding 1)', 
     assert.equal(second.takeover?.reaped?.signal, 'SIGKILL');
 
     await watched;
-    const { seen, gone } = JSON.parse(out.trim()) as { seen: number; gone: number };
+    const { seen, longest } = JSON.parse(out.trim()) as { seen: number; longest: number };
     assert.ok(seen > 10, `watcher barely sampled (seen=${seen})`);
     // The whole finding in one number. Under the old unlink-then-reap order the file was absent
-    // for the entire ~800ms reap and this would be in the tens.
-    assert.equal(gone, 0, `lock file vanished during the reap on ${gone}/${seen} samples`);
+    // for the entire ~800ms reap; the handover gap this order still has is a single tick at most.
+    assert.ok(longest < 100, `lock file was absent for ${longest}ms during the reap (${seen} samples)`);
     second.release();
     rmSync(stubDir, { recursive: true, force: true });
   } finally {
@@ -484,21 +490,56 @@ test('a live reclaimer mutex blocks a second reclaim; a dead one does not', () =
     assert.ok(!('blocked' in first));
     const before = readFileSync(fixture.path, 'utf8');
     const mutexPath = `${fixture.path}.reclaim`;
+    const live = (token: string) =>
+      `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now(), token })}\n`;
 
     // Someone else is mid-reclaim: this caller must not judge, reap or unlink anything.
-    writeFileSync(mutexPath, `${JSON.stringify({ pid: process.pid, startedAtMs: Date.now() })}\n`);
+    writeFileSync(mutexPath, live('someone-else'));
     const blocked = acquireLock(fixture.path, { waitMs: 0, staleMs: 50, now: () => 100 });
     assert.ok('blocked' in blocked, 'reclaimed a stale lock while another reclaimer held the mutex');
     assert.equal(readFileSync(fixture.path, 'utf8'), before, 'the stale lock was touched anyway');
+    assert.match(readFileSync(mutexPath, 'utf8'), /someone-else/, 'a live reclaimer mutex was deleted');
+
+    // An EMPTY mutex is the shape a holder has for the instant between creating and writing it.
+    // Reading that as "dead" is how the previous version let a second reclaimer in while the
+    // first was alive and about to reap, so a fresh empty file must still count as live.
+    writeFileSync(mutexPath, '');
+    const alsoBlocked = acquireLock(fixture.path, { waitMs: 0, staleMs: 50, now: () => 100 });
+    assert.ok('blocked' in alsoBlocked, 'a just-created mutex was read as a dead one');
+    assert.equal(existsSync(mutexPath), true, 'deleted a mutex whose owner had not finished writing it');
 
     // The reclaimer died. `pid: 1` stands in for a pid that is alive but is not a router -- the
-    // lease is what settles it, so an ancient mutex is broken even when its pid still answers.
-    writeFileSync(mutexPath, `${JSON.stringify({ pid: 1, startedAtMs: Date.now() - 600_000 })}\n`);
+    // lease is what settles it, so an unrenewed mutex is broken even when its pid still answers.
+    writeFileSync(
+      mutexPath,
+      `${JSON.stringify({ pid: 1, beatAtMs: Date.now() - 600_000, token: 'gone' })}\n`,
+    );
     const recovered = acquireLock(fixture.path, { waitMs: 0, staleMs: 50, now: () => 100 });
     assert.ok(!('blocked' in recovered), 'a dead reclaimer mutex wedged the checkout for good');
     assert.equal(recovered.takeover?.reason, 'stale-heartbeat');
     assert.equal(existsSync(mutexPath), false, 'the reclaim left its mutex behind');
     recovered.release();
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+// The reclaim's own release must be identity-checked. A lease-breaker can replace the mutex while
+// we are inside a long reap, and a `finally` that deletes the PATH rather than OUR file removes
+// the new holder's mutex -- putting a third reclaimer into the same critical section.
+test('a reclaim releases only its own mutex, never whoever replaced it', () => {
+  const fixture = freshLock();
+  try {
+    const first = acquireLock(fixture.path, { waitMs: 0, now: () => 0 });
+    assert.ok(!('blocked' in first));
+    const mutexPath = `${fixture.path}.reclaim`;
+
+    // A stale-but-live-looking mutex that our reclaim will NOT be able to break, so acquireLock
+    // returns without ever owning it -- and must leave it exactly where it found it.
+    const other = `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now(), token: 'other' })}\n`;
+    writeFileSync(mutexPath, other);
+    acquireLock(fixture.path, { waitMs: 0, staleMs: 50, now: () => 100 });
+    assert.equal(readFileSync(mutexPath, 'utf8'), other, 'released a mutex belonging to someone else');
   } finally {
     fixture.cleanup();
   }

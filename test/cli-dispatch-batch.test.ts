@@ -258,3 +258,47 @@ test('a batch whose starting branch disappears fails by name, not by stack trace
     fx.cleanup(dir);
   }
 });
+
+// `batch-branch-contamination`, third time. Recording the baseline as a branch NAME fixed the
+// detached-HEAD case and left the branch case open: a branch is mutable, so an executor (or a
+// person in another terminal) that moves it hands the next task a base containing the previous
+// task's commits -- the original stacking bug, wearing a fix. The reviewer's evidence was
+// `{"dispatchCode":0,"p2ContainsP1":true}` with p2's base equal to p1's tip.
+test('a batch refuses to continue when its starting branch has been moved', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    fx.git(dir, ['checkout', '-q', '-b', 'scratch']);
+    // Commits its unit, then drags the starting branch up to its own tip.
+    const mover = join(dir, 'mover.mjs');
+    writeFileSync(
+      mover,
+      '#!/usr/bin/env node\n' +
+        "import { execFileSync } from 'node:child_process';\n" +
+        "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+        "const prompt = process.argv.slice(2).find((a) => /^task: \\S+$/m.test(a)) ?? '';\n" +
+        "const id = /^task: (\\S+)$/m.exec(prompt)?.[1] ?? 'p1';\n" +
+        "mkdirSync('src', { recursive: true });\n" +
+        'writeFileSync(`src/${id}.ts`, `export const ${id} = true;\\n`);\n' +
+        'execFileSync("git", ["add", "--", `src/${id}.ts`]);\n' +
+        'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", `fake: ${id}`]);\n' +
+        'try { execFileSync("git", ["update-ref", "refs/heads/scratch", "HEAD"]); } catch {}\n' +
+        'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:`fake-session-${id}`})+"\\n");\n' +
+        'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+    );
+    chmodSync(mover, 0o755);
+
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
+      ROUTER_CODEX_BIN: mover,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.notEqual(d.code, 0, `the batch continued onto a moved base: ${d.out}`);
+    assert.match(d.out, /base moved|started from/i, d.out);
+    // p2 never got a branch, so it certainly never got p1's commits.
+    assert.doesNotMatch(fx.git(dir, ['branch', '--format=%(refname:short)']), /^router\/p2$/m);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
