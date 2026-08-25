@@ -4,9 +4,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { ActivityOutcome, DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import {
   detectContractConflict,
@@ -32,6 +32,7 @@ import {
   uncommittedSourceFilesOrUnknown,
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
+import { activityKey, startActivityHeartbeat, writeActivity } from '../io/activity.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
 import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
@@ -75,6 +76,8 @@ import { verifyTask } from './verifier.ts';
 export interface DispatchDeps {
   paths: RouterPaths;
   clock: Clock;
+  /** Internal test seam; production uses the shared 15-second activity heartbeat. */
+  activityHeartbeatIntervalMs?: number;
 }
 
 /**
@@ -257,7 +260,7 @@ async function runPreparedObserved(
   // Executor chain, quota-ordered: try the executor with the most headroom first;
   // quota/auth/setup failures reset the worktree and fall through to the next.
   // Must NOT 11 detection: what the orchestration state looked like before any executor ran.
-  const stateBefore = fingerprintState(paths, id);
+  const stateBefore = fingerprintDecisionState(paths, id);
   const { order } = orderByQuota(paths, workers);
   let used = order[0]!;
   let exitClass: ExitClass = 'task_failed';
@@ -373,7 +376,7 @@ async function runPreparedObserved(
   // Compare before anything else is decided: state tampering is not a code defect to be weighed
   // against the diff, it is a contract violation, and it is invisible to every gate because
   // `.router/` is gitignored.
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
   // The one file the fingerprint cannot watch, checked the only way it can be: by identity
   // rather than by content. Our heartbeat rewrites gate.lock constantly, so it is excluded from
   // the diff -- and this is what stops that exclusion from being a free channel for an executor
@@ -470,7 +473,7 @@ async function runPreparedObserved(
     // commands are the executor's own committed code: running them is the executor's last and
     // widest write channel, and a run that forged `.router` state from inside its test script was
     // still recorded PASSED. So the window stays open across verification too.
-    const stateBeforeVerify = fingerprintState(paths, id);
+    const stateBeforeVerify = fingerprintDecisionState(paths, id);
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -489,7 +492,7 @@ async function runPreparedObserved(
       ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
       ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+    const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
     }
@@ -564,9 +567,58 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   // will not hand back a handle while one is still writing to this checkout.
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
   return withCheckoutLock(lock, async (envelope) => {
-    const prep = prepareRun(deps, id);
-    return runPrepared(deps, prep, gateConfig, envelope);
+    return withTaskActivity(deps, id, async () => {
+      const prep = prepareRun(deps, id);
+      return runPrepared(deps, prep, gateConfig, envelope);
+    });
   });
+}
+
+function taskActivityOutcome(result: RunResult): ActivityOutcome {
+  if (result.timed_out || result.exit_class === 'timeout') return 'timed_out';
+  if (result.stalled || result.exit_class === 'stalled') return 'stalled';
+  return result.exit_class === 'ok' && result.verifier?.result === 'PASSED' ? 'ok' : 'failed';
+}
+
+/** Publish one task's display-only liveness for every phase inside the checkout transaction. */
+async function withTaskActivity(
+  deps: DispatchDeps,
+  id: string,
+  body: () => Promise<RunResult>,
+): Promise<RunResult> {
+  const label = `task:${id}`;
+  const path = deps.paths.activity(activityKey(label));
+  const startedAt = new Date().toISOString();
+  const activity = writeActivity(path, {
+    label,
+    pid: process.pid,
+    started_at: startedAt,
+    beat_at: startedAt,
+    status_path: deps.paths.runStatus(id),
+  });
+  const heartbeat = startActivityHeartbeat(path, activity, deps.activityHeartbeatIntervalMs);
+  let outcome: ActivityOutcome = 'failed';
+  try {
+    const started = await heartbeat.started;
+    if (!started.ok) {
+      throw new Error(`task activity heartbeat failed to start for '${label}': ${started.error.message}`);
+    }
+    const result = await body();
+    outcome = taskActivityOutcome(result);
+    return result;
+  } finally {
+    heartbeat.stop();
+    try {
+      writeActivity(path, {
+        ...activity,
+        ended_at: new Date().toISOString(),
+        outcome,
+      });
+    } catch {
+      // Activity is display-only. A cleanup failure must not replace the dispatch result or
+      // loosen the checkout transaction; the dead owner pid will make any remnant disconnected.
+    }
+  }
 }
 
 /**
@@ -755,7 +807,9 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   // dispatch, both writing the same files.
   const gateConfig = loadGateConfig(paths);
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
-  return withCheckoutLock(lock, (envelope) => resumeInLock(deps, id, feedback, gateConfig, envelope));
+  return withCheckoutLock(lock, (envelope) =>
+    withTaskActivity(deps, id, () => resumeInLock(deps, id, feedback, gateConfig, envelope)),
+  );
 }
 
 async function resumeInLock(
@@ -798,7 +852,7 @@ async function resumeInLock(
   // Must NOT 11 detection, which resume did not have at all. A fresh dispatch caught a forged
   // `.router/tasks/<other>/result.json` and failed; the identical write through a resume was
   // reported PASSED, because nothing on this path ever looked.
-  const stateBefore = fingerprintState(paths, id);
+  const stateBefore = fingerprintDecisionState(paths, id);
 
   const o = await superviseWorker({
     argv: launcher.buildResumeArgv(workDir, priorSession, feedback, task),
@@ -823,7 +877,7 @@ async function resumeInLock(
   // something went wrong.
   const mismatch = newSession !== priorSession;
 
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
   if (!envelope.stillOwned()) {
     tampering.push('modified gate.lock (it no longer carries this run’s owner token)');
   }
@@ -906,7 +960,7 @@ async function resumeInLock(
         result.verified_head = resolveCommit(workDir, 'HEAD');
         // Same reason as the fresh path: the verify and gate commands are the executor's own
         // committed code, so the state window has to stay open across them.
-        const stateBeforeVerify = fingerprintState(paths, id);
+        const stateBeforeVerify = fingerprintDecisionState(paths, id);
         result.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -923,7 +977,7 @@ async function resumeInLock(
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+        const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
         if (!envelope.stillOwned()) {
           duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
         }
@@ -959,6 +1013,20 @@ function safeRead(path: string): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * Activity files are display-only and may be updated by this run or an independent reviewer.
+ * Remove that namespace from the generic orchestration-state snapshot before it can influence a
+ * dispatch decision; task/result/lock state remains covered exactly as before.
+ */
+function fingerprintDecisionState(paths: RouterPaths, id: string): Map<string, string> {
+  const snapshot = fingerprintState(paths, id);
+  const activityPrefix = `activity${sep}`;
+  for (const path of snapshot.keys()) {
+    if (path.startsWith(activityPrefix)) snapshot.delete(path);
+  }
+  return snapshot;
 }
 
 function persistDelivery(

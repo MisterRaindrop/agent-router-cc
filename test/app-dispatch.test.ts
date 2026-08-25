@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,8 +13,9 @@ import type { MetricRecord } from '../src/domain/types.ts';
 import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
+import { activityKey, activityState, readActivity } from '../src/io/activity.ts';
 import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
-import { acquireLock, readLock } from '../src/io/lock.ts';
+import { acquireLock, DEFAULT_STALE_MS, readLock } from '../src/io/lock.ts';
 import { currentBranch, uncommittedSourceFiles } from '../src/io/git.ts';
 
 const NODE = process.execPath;
@@ -21,6 +23,10 @@ const FAKE_CODEX = fileURLToPath(new URL('../testkit/fakeCodex.mjs', import.meta
 const FAKE_SCOPED = fileURLToPath(new URL('../testkit/fakeCodexScoped.mjs', import.meta.url));
 const FAKE_CLAUDE = fileURLToPath(new URL('../testkit/fakeClaude.mjs', import.meta.url));
 const FAKE_ENV = fileURLToPath(new URL('../testkit/fakeExecutorEnv.mjs', import.meta.url));
+const DISPATCH_MODULE = new URL('../src/app/dispatch.ts', import.meta.url).href;
+const PATHS_MODULE = new URL('../src/io/paths.ts', import.meta.url).href;
+const CLOCK_MODULE = new URL('../src/io/clock.ts', import.meta.url).href;
+const ACTIVITY_MODULE = new URL('../src/io/activity.ts', import.meta.url).href;
 
 const POLICY = `schema_version: 1
 worker:
@@ -89,6 +95,79 @@ verify: []
 `,
   );
   writeFileSync(paths.contractMd(id), CONTRACT);
+}
+
+async function waitUntil(check: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(`condition was not met within ${timeoutMs}ms`);
+}
+
+async function waitForExit(child: ChildProcess): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return { code: child.exitCode, signal: child.signalCode };
+  }
+  return await new Promise((resolve) => {
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+}
+
+interface RunningDispatch {
+  child: ChildProcess;
+  done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  stdout(): string;
+  stderr(): string;
+}
+
+function startDispatchProcess(
+  repo: string,
+  paths: ReturnType<typeof routerPaths>,
+  executor: string,
+  heartbeatIntervalMs = 40,
+): RunningDispatch {
+  const source =
+    `const [{dispatchTask},{routerPaths},{systemClock}]=await Promise.all([` +
+    `import(${JSON.stringify(DISPATCH_MODULE)}),` +
+    `import(${JSON.stringify(PATHS_MODULE)}),` +
+    `import(${JSON.stringify(CLOCK_MODULE)})]);` +
+    `try{` +
+    `const result=await dispatchTask({` +
+    `paths:routerPaths(${JSON.stringify(paths.root)}),clock:systemClock,` +
+    `activityHeartbeatIntervalMs:${heartbeatIntervalMs}},'t1');` +
+    `process.stdout.write(JSON.stringify({` +
+    `exit_class:result.exit_class,verifier:result.verifier?.result,` +
+    `state_tampering:result.state_tampering})+'\\n');` +
+    `}catch(error){console.error(error?.stack??String(error));process.exitCode=1;}`;
+  const child = spawn(NODE, ['--input-type=module', '-e', source], {
+    cwd: repo,
+    env: {
+      ...process.env,
+      ROUTER_CODEX_BIN: executor,
+      ROUTER_CODEX_SESSIONS_DIR: join(repo, 'no-sessions'),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  return {
+    child,
+    done: waitForExit(child),
+    stdout: () => stdout,
+    stderr: () => stderr,
+  };
+}
+
+function killProcessGroup(pid: number): void {
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    /* already gone */
+  }
 }
 
 test('dispatchTask runs the executor synchronously to a PASSED verifier result', async () => {
@@ -613,6 +692,181 @@ test('a verify command that forges router state fails the run instead of passing
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;
     delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+test('an independent process observes running heartbeats strictly inside the spawnSync verify window', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths } = setup();
+  const observerDir = join(paths.taskDir('t1'), 'logs');
+  const verifyGo = join(observerDir, 'verify-go');
+  const verifyWindow = join(observerDir, 'verify-window.json');
+  const watcherReady = join(observerDir, 'watcher-ready');
+  const watcherStop = join(observerDir, 'watcher-stop');
+  const samples = join(observerDir, 'activity-samples.jsonl');
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const verifySource =
+    `const fs=require('node:fs');` +
+    `while(!fs.existsSync(${JSON.stringify(verifyGo)})){` +
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,5);}` +
+    `const blockedFrom=Date.now();` +
+    `fs.writeFileSync(${JSON.stringify(verifyWindow)},JSON.stringify({blockedFrom}));` +
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,1200);` +
+    `const blockedUntil=Date.now();` +
+    `fs.writeFileSync(${JSON.stringify(verifyWindow)},JSON.stringify({blockedFrom,blockedUntil}));`;
+  let owner: RunningDispatch | undefined;
+  let watcher: ChildProcess | undefined;
+
+  try {
+    stageTask(
+      paths,
+      TASK_YAML.replace('verify: []', `verify:\n  - ${JSON.stringify([NODE, '-e', verifySource])}`),
+    );
+    mkdirSync(observerDir, { recursive: true });
+    owner = startDispatchProcess(repo, paths, FAKE_CODEX);
+    await waitUntil(() => readActivity(activityPath) !== null);
+    const initial = readActivity(activityPath);
+    assert.ok(initial);
+    assert.equal(initial.label, 'task:t1');
+    assert.equal(initial.pid, owner.child.pid);
+    assert.equal(initial.status_path, paths.runStatus('t1'));
+
+    const watcherSource =
+      `const fs=await import('node:fs');` +
+      `const {readActivity,activityState}=await import(${JSON.stringify(ACTIVITY_MODULE)});` +
+      `fs.writeFileSync(${JSON.stringify(watcherReady)},'ready');` +
+      `const timer=setInterval(()=>{` +
+      `const record=readActivity(${JSON.stringify(activityPath)});` +
+      `if(record!==null){fs.appendFileSync(${JSON.stringify(samples)},` +
+      `JSON.stringify([Date.now(),record.beat_at,activityState(record)])+'\\n');}` +
+      `if(fs.existsSync(${JSON.stringify(watcherStop)})){clearInterval(timer);process.exit(0);}` +
+      `},15);` +
+      `setTimeout(()=>{clearInterval(timer);process.exit(1)},8000);`;
+    watcher = spawn(NODE, ['--input-type=module', '-e', watcherSource], { stdio: 'ignore' });
+    await waitUntil(() => existsSync(watcherReady));
+    writeFileSync(verifyGo, 'go');
+
+    let window: { blockedFrom: number; blockedUntil: number } | undefined;
+    await waitUntil(() => {
+      try {
+        const value = JSON.parse(readFileSync(verifyWindow, 'utf8')) as Partial<{
+          blockedFrom: number;
+          blockedUntil: number;
+        }>;
+        if (typeof value.blockedFrom !== 'number' || typeof value.blockedUntil !== 'number') return false;
+        window = { blockedFrom: value.blockedFrom, blockedUntil: value.blockedUntil };
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    writeFileSync(watcherStop, 'stop');
+    const watcherExit = await waitForExit(watcher);
+    assert.deepEqual(watcherExit, { code: 0, signal: null });
+
+    assert.ok(window);
+    const completedWindow = window;
+    const rows = readFileSync(samples, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as [number, string, string]);
+    const insideVerifyBlock = rows.filter(
+      ([sampledAt]) =>
+        sampledAt > completedWindow.blockedFrom && sampledAt < completedWindow.blockedUntil,
+    );
+    assert.ok(
+      insideVerifyBlock.length > 5,
+      `independent watcher barely sampled the verify block (${insideVerifyBlock.length})`,
+    );
+    assert.deepEqual(
+      new Set(insideVerifyBlock.map(([, , state]) => state)),
+      new Set(['running']),
+      'the external liveness decision changed during synchronous verification',
+    );
+    const beatsInsideBlock = new Set(insideVerifyBlock.map(([, beatAt]) => beatAt));
+    assert.ok(
+      beatsInsideBlock.size >= 2,
+      `only ${beatsInsideBlock.size} distinct beat_at values landed inside spawnSync verification`,
+    );
+
+    const ended = await owner.done;
+    assert.deepEqual(ended, { code: 0, signal: null }, owner.stderr());
+    const output = JSON.parse(owner.stdout().trim()) as Record<string, unknown>;
+    assert.equal(output.exit_class, 'ok');
+    assert.equal(output.verifier, 'PASSED');
+    assert.equal(output.state_tampering, undefined);
+    assert.equal(existsSync(activityPath), false, 'normal dispatch left an activity behind');
+  } finally {
+    if (watcher !== undefined && watcher.exitCode === null && watcher.signalCode === null) {
+      watcher.kill('SIGKILL');
+    }
+    if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+      owner.child.kill('SIGKILL');
+    }
+    fx.cleanup(repo);
+  }
+});
+
+test('SIGKILL leaves dispatch disconnected within the stale threshold without claiming a phase', async () => {
+  const { repo, paths } = setup();
+  const activityPath = paths.activity(activityKey('task:t1'));
+  const workerPidPath = join(paths.taskDir('t1'), 'logs', 'killed-worker.pid');
+  const hangingExecutor = join(repo, 'fake-hanging-executor.mjs');
+  let owner: RunningDispatch | undefined;
+  let workerPid: number | undefined;
+
+  try {
+    stageTask(paths);
+    writeFileSync(
+      hangingExecutor,
+      `#!/usr/bin/env node\n` +
+        `import {mkdirSync,writeFileSync} from 'node:fs';\n` +
+        `import {dirname} from 'node:path';\n` +
+        `mkdirSync(dirname(${JSON.stringify(workerPidPath)}),{recursive:true});\n` +
+        `writeFileSync(${JSON.stringify(workerPidPath)},String(process.pid));\n` +
+        `setInterval(()=>{},1000);\n`,
+    );
+    chmodSync(hangingExecutor, 0o755);
+    owner = startDispatchProcess(repo, paths, hangingExecutor);
+    await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
+    workerPid = Number(readFileSync(workerPidPath, 'utf8'));
+
+    const running = readActivity(activityPath);
+    assert.ok(running);
+    assert.equal(running.pid, owner.child.pid);
+    assert.equal(running.status_path, paths.runStatus('t1'));
+    assert.equal(activityState(running), 'running');
+    const statusBeforeKill = JSON.parse(readFileSync(paths.runStatus('t1'), 'utf8')) as {
+      phase?: string;
+    };
+    assert.equal(statusBeforeKill.phase, 'executor_working');
+    assert.equal('phase' in running, false, 'dispatch copied phase into the activity record');
+
+    const killedAt = Date.now();
+    owner.child.kill('SIGKILL');
+    const ended = await owner.done;
+    assert.equal(ended.signal, 'SIGKILL');
+    await waitUntil(() => activityState(readActivity(activityPath)) === 'disconnected');
+    assert.ok(Date.now() - killedAt < DEFAULT_STALE_MS, 'disconnect detection exceeded the shared threshold');
+
+    const disconnected = readActivity(activityPath);
+    assert.ok(disconnected);
+    assert.equal(activityState(disconnected), 'disconnected');
+    assert.equal(disconnected.pid, owner.child.pid);
+    assert.equal('phase' in disconnected, false, 'a disconnected activity still claimed a phase');
+    assert.equal(existsSync(activityPath), true, 'SIGKILL unexpectedly ran normal activity cleanup');
+    // The richer status file is intentionally left untouched; consumers may follow it only for
+    // running activities, so the disconnected record itself makes no stale phase claim.
+    const staleStatus = JSON.parse(readFileSync(disconnected.status_path!, 'utf8')) as { phase?: string };
+    assert.equal(staleStatus.phase, 'executor_working');
+    const claimedPhase = activityState(disconnected) === 'running' ? staleStatus.phase : undefined;
+    assert.equal(claimedPhase, undefined);
+  } finally {
+    if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+      owner.child.kill('SIGKILL');
+    }
+    if (workerPid !== undefined) killProcessGroup(workerPid);
     fx.cleanup(repo);
   }
 });
