@@ -13078,6 +13078,15 @@ function uniqueStateChanges(...groups) {
   }
   return merged;
 }
+function baselineAfterRouterWrites(original, beforeVerify, rels) {
+  const rebased = new Map(original);
+  for (const rel of rels) {
+    const fingerprint = beforeVerify.get(rel);
+    if (fingerprint === void 0) rebased.delete(rel);
+    else rebased.set(rel, fingerprint);
+  }
+  return rebased;
+}
 var ROUTER_STATE_EXCLUDE = [".router"];
 function quotaFor(paths, kind) {
   if (kind === "codex") {
@@ -13328,7 +13337,10 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
     });
     const stateAfterVerify = fingerprintState(paths, id);
     const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-    const sinceDispatchStarted = classifyStateChanges(stateBefore, stateAfterVerify, id);
+    const originalAfterDelivery = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
+      join9("tasks", id, "DELIVERY.md")
+    ]);
+    const sinceDispatchStarted = classifyStateChanges(originalAfterDelivery, stateAfterVerify, id);
     const reported = uniqueStateChanges(
       result2.state_changes,
       sinceDispatchStarted.reported,
@@ -13640,12 +13652,15 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
         });
         const stateAfterVerify = fingerprintState(paths, id);
         const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-        const originalWithOwnPatch = new Map(stateBefore);
-        const ownPatchRel = join9("tasks", id, "diff.patch");
-        const ownPatchFingerprint = stateBeforeVerify.get(ownPatchRel);
-        if (ownPatchFingerprint === void 0) originalWithOwnPatch.delete(ownPatchRel);
-        else originalWithOwnPatch.set(ownPatchRel, ownPatchFingerprint);
-        const sinceResumeStarted = classifyStateChanges(originalWithOwnPatch, stateAfterVerify, id);
+        const originalAfterRouterWrites = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
+          join9("tasks", id, "DELIVERY.md"),
+          join9("tasks", id, "diff.patch")
+        ]);
+        const sinceResumeStarted = classifyStateChanges(
+          originalAfterRouterWrites,
+          stateAfterVerify,
+          id
+        );
         const reported = uniqueStateChanges(
           result2.state_changes,
           sinceResumeStarted.reported,
