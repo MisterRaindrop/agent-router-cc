@@ -380,7 +380,7 @@ test('an executor cannot touch real router state (8h)', () => {
     const sandboxed = { ROUTER_EXECUTOR_SANDBOX: '1' };
     const smoke = router(dir, ['new', 'smoke', '--title', 'Smoke'], sandboxed);
     assert.notEqual(smoke.code, 0);
-    assert.match(smoke.out, /refusing to touch router state from inside an executor/);
+    assert.match(smoke.out, /refusing to WRITE router state from inside an executor/);
     assert.match(smoke.out, /ROUTER_EXECUTOR_SANDBOX/);
     assert.ok(!existsSync(join(dir, '.router/tasks/smoke')), 'the executor wrote real task state');
 
@@ -390,12 +390,24 @@ test('an executor cannot touch real router state (8h)', () => {
       ['new', 'smoke2', '--router-dir', join(dir, '.router')],
       ['symbol', 'index', 'src'],
       ['dispatch', 'real-task'],
-      ['result', 'real-task'],
     ]) {
       const r = router(dir, argv, sandboxed);
       assert.notEqual(r.code, 0, `${argv.join(' ')} was allowed`);
-      assert.match(r.out, /refusing to touch router state from inside an executor/);
+      assert.match(r.out, /refusing to WRITE router state from inside an executor/);
     }
+
+    // Review finding 9b: the refusal used to cover every verb, including ones that change
+    // nothing. Blocking `router list` told an executor "you may not look at the run you are part
+    // of" for no safety gain, while the writes it was meant to stop went through a plain file API
+    // anyway (see the state-tampering detection).
+    for (const argv of [['list'], ['result', 'real-task'], ['models'], ['doctor']]) {
+      const r = router(dir, argv, sandboxed);
+      // Not "exit 0" -- `result` on a task that was never dispatched legitimately reports that.
+      // The assertion is that the SANDBOX is not what stopped it.
+      assert.doesNotMatch(r.out, /refusing to/, `${argv.join(' ')} was refused: ${r.out}`);
+    }
+    assert.equal(router(dir, ['list'], sandboxed).code, 0);
+    assert.match(router(dir, ['list'], sandboxed).out, /real-task/);
     assert.ok(!existsSync(join(dir, '.router/tasks/smoke2')));
     assert.ok(!existsSync(join(dir, '.router/symbols')));
 
@@ -448,6 +460,131 @@ test('dispatch runs gate.yaml reset and picks the clean gate when a trigger is t
     assert.ok(ids.includes('reset'), ids.join(','));
     assert.ok(ids.includes('gate:clean'), ids.join(','));
     assert.ok(!ids.includes('verify'), `task.verify ran as well: ${ids.join(',')}`);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// A stored PASSED used to authorize the task BRANCH, not a commit. So anything appended to that
+// branch after the verdict -- a resume, or the user by hand -- was merged on the strength of a
+// verdict that had never seen it. Two records are checked here, because the fallback for runs
+// stored before `verified_head` existed is a different code path and it is the one that decides
+// whether upgrading silently trusts exactly the records this finding was about.
+test('land refuses a branch that has moved past the commit its verdict judged', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  const resultPath = join(dir, '.router', 'tasks', 'demo', 'result.json');
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(JSON.parse(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+    const passed = JSON.parse(readFileSync(resultPath, 'utf8')) as Record<string, unknown>;
+    assert.match(String(passed.verified_head), /^[0-9a-f]{40}$/);
+
+    // Somebody adds a commit the verifier never saw.
+    fx.write(dir, 'src/a.ts', 'export const x = 99; // never verified\n');
+    fx.addCommit(dir, 'unreviewed');
+    fx.git(dir, ['checkout', '-q', 'main']);
+
+    const l = router(dir, ['land', 'demo']);
+    assert.notEqual(l.code, 0, `land merged an unverified commit: ${l.out}`);
+    assert.match(l.out, /was verified|unverified/i, l.out);
+    assert.doesNotMatch(readFileSync(join(dir, 'src', 'a.ts'), 'utf8'), /never verified/);
+
+    // The same record without `verified_head` -- i.e. one written by the build that had the bug.
+    // It falls back to re-deriving the diff, and must reach the same answer.
+    delete passed.verified_head;
+    writeFileSync(resultPath, JSON.stringify(passed));
+    const legacy = router(dir, ['land', 'demo']);
+    assert.notEqual(legacy.code, 0, `a pre-upgrade record landed unverified work: ${legacy.out}`);
+    assert.match(legacy.out, /no longer matches the diff that was verified/, legacy.out);
+
+    // ...and an untouched branch still lands, so the guard is not simply refusing everything.
+    fx.git(dir, ['branch', '-f', 'router/demo', 'router/demo~1']);
+    const ok = router(dir, ['land', 'demo']);
+    assert.equal(ok.code, 0, ok.out);
+    assert.match(readFileSync(join(dir, 'src', 'a.ts'), 'utf8'), /fake codex/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The new head-pinning check runs before the merge, so it is also the first thing to meet a
+// branch that is not there any more -- and `git rev-parse` on a missing ref throws a raw,
+// locale-dependent GitError with noise on stderr. Landing twice is the ordinary way to get here.
+test('landing an already-landed task says so instead of failing in git', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(JSON.parse(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+    fx.git(dir, ['checkout', '-q', 'main']);
+    assert.equal(router(dir, ['land', 'demo']).code, 0);
+
+    const again = router(dir, ['land', 'demo']);
+    assert.notEqual(again.code, 0);
+    assert.match(again.out, /no longer exists/, again.out);
+    assert.match(again.out, /already landed as [0-9a-f]{12}/, again.out);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The first head-pin fix checked the tip and then merged the branch NAME, letting git resolve it
+// a second time. The reviewer moved the ref in between and landed an unverified commit:
+// `{"landStatus":0,"unverifiedFileLanded":true}`. Reproduced here with a git wrapper that moves
+// the branch on the merge call itself, which is the same window a concurrent `update-ref` gets.
+test('land merges the commit it verified, not whatever the branch means by then', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(JSON.parse(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+    const verified = fx.git(dir, ['rev-parse', 'router/demo']).trim();
+
+    // An unverified commit parked off to the side, ready to be swapped in.
+    fx.git(dir, ['checkout', '-q', '-b', 'evil', 'router/demo']);
+    fx.write(dir, 'src/a.ts', 'export const x = 666; // not verified\n');
+    fx.addCommit(dir, 'evil');
+    const evil = fx.git(dir, ['rev-parse', 'evil']).trim();
+    fx.git(dir, ['checkout', '-q', 'main']);
+
+    // A `git` on PATH that moves router/demo to the evil commit the moment land runs `merge`.
+    const shim = join(dir, 'shimbin');
+    execFileSync('mkdir', ['-p', shim]);
+    writeFileSync(
+      join(shim, 'git'),
+      '#!/bin/sh\n' +
+        'real=/usr/bin/git\n' +
+        'for a in "$@"; do\n' +
+        '  if [ "$a" = "merge" ]; then\n' +
+        `    "$real" update-ref refs/heads/router/demo ${evil} >/dev/null 2>&1\n` +
+        '    break\n' +
+        '  fi\n' +
+        'done\n' +
+        'exec "$real" "$@"\n',
+    );
+    chmodSync(join(shim, 'git'), 0o755);
+
+    const l = router(dir, ['land', 'demo'], { ...env, PATH: `${shim}:${process.env.PATH}` });
+    // Either outcome is acceptable; landing the evil commit is not.
+    assert.doesNotMatch(
+      readFileSync(join(dir, 'src', 'a.ts'), 'utf8'),
+      /not verified/,
+      `land merged a commit that was swapped in after the check: ${l.out}`,
+    );
+    // If it merged at all, it merged the SHA it verified.
+    if (l.code === 0) {
+      assert.match(fx.git(dir, ['log', '--format=%H', 'main']), new RegExp(verified));
+    }
   } finally {
     fx.cleanup(dir);
   }

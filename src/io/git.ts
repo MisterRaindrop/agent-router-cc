@@ -320,8 +320,17 @@ export function resetHardTracked(cwd: string, sha: string): void {
 }
 
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */
-export function mergeNoFF(cwd: string, branch: string): void {
-  git(cwd, ['merge', '--no-ff', '--no-edit', branch]);
+/**
+ * Merge with a merge commit. `committish` should be a SHA, not a branch name, wherever the caller
+ * has already decided WHICH commit it is merging: resolving the name a second time inside git is
+ * a second chance for the ref to have moved, and the reviewer used exactly that gap to land an
+ * unverified commit between the check and the merge. `message` keeps the human-readable subject
+ * a branch name would have produced.
+ */
+export function mergeNoFF(cwd: string, committish: string, message?: string): void {
+  const args = ['merge', '--no-ff', '--no-edit', committish];
+  if (message !== undefined) args.push('-m', message);
+  git(cwd, args);
 }
 
 /** Abort an in-progress merge, restoring the working tree. Best effort. */
@@ -333,8 +342,28 @@ export function branchExists(cwd: string, branch: string): boolean {
   return tryGit(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
 }
 
+/**
+ * Point `ref` at `sha`. Used to make a salvage commit reachable before a reset discards the
+ * branch tip that held it -- an unreachable commit is recoverable only by sha, and only until
+ * `git gc` runs. A ref survives both.
+ */
+export function updateRef(cwd: string, ref: string, sha: string): void {
+  git(cwd, ['update-ref', ref, sha]);
+}
+
 export function deleteBranch(cwd: string, branch: string): void {
   tryGit(cwd, ['branch', '-D', branch]);
+}
+
+/**
+ * Delete a branch only while it still points at `expectedSha`; returns false if it has moved.
+ *
+ * `git branch -D` deletes whatever the name currently means, so a branch that gained a commit
+ * between the merge and the cleanup was deleted along with the only reference to that commit.
+ * update-ref's expected-old-value is git's own compare-and-swap for exactly this.
+ */
+export function deleteBranchAt(cwd: string, branch: string, expectedSha: string): boolean {
+  return tryGit(cwd, ['update-ref', '-d', `refs/heads/${branch}`, expectedSha]).ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +426,9 @@ export function isAncestor(cwd: string, ancestor: string, descendant: string): b
 export function submoduleDirty(cwd: string, exclude: readonly string[] = []): string[] {
   const scope = pathspec(exclude);
   const all = tryGit(cwd, ['status', '--porcelain', ...scope]);
+  // [] on failure is acceptable HERE, unlike uncommittedSourceFiles: nothing decides on this
+  // value. It feeds one advisory report line, and the run's real safety checks fail loudly on
+  // the same broken repository a moment later.
   if (!all.ok) return [];
   const ignoring = new Set(
     tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...scope]).stdout.split('\n'),
@@ -429,9 +461,34 @@ function pathspec(exclude: readonly string[]): string[] {
  * while unreviewed code sits in the user's checkout.
  */
 export function uncommittedSourceFiles(cwd: string, exclude: readonly string[] = []): string[] {
-  const r = tryGit(cwd, ['status', '--porcelain', '--ignore-submodules=dirty', ...pathspec(exclude)]);
-  if (!r.ok) return [];
+  const args = ['status', '--porcelain', '--ignore-submodules=dirty', ...pathspec(exclude)];
+  const r = tryGit(cwd, args);
+  // THROWS on failure; it used to return [] "best effort". That turned "I could not check" into
+  // "the tree is clean" -- for the one function that decides both whether to rescue the user's
+  // work and whether the closing invariant holds. A corrupt index makes `git status` exit
+  // non-zero with a fatal message, and the old code answered "clean": the rescue would be
+  // skipped and the closeout would report {ok:true} over a working tree nobody had seen.
+  //
+  // Callers that only REPORT (rather than decide) must catch this and say "unknown" -- never
+  // "none". See uncommittedSourceFilesOrUnknown.
+  if (!r.ok) throw new GitError(args, r.stderr, r.code);
   return r.stdout.split('\n').filter((line) => line !== '');
+}
+
+/**
+ * The same question for a caller that is reporting rather than deciding, where a failure must
+ * not mask the failure being reported. `null` means "could not determine" and is deliberately
+ * distinct from `[]`, which means "nothing uncommitted".
+ */
+export function uncommittedSourceFilesOrUnknown(
+  cwd: string,
+  exclude: readonly string[] = [],
+): string[] | null {
+  try {
+    return uncommittedSourceFiles(cwd, exclude);
+  } catch {
+    return null;
+  }
 }
 
 /**

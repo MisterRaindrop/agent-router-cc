@@ -11,13 +11,14 @@ import type { RunResult, RunStatus } from '../domain/types.ts';
 import { systemClock, type Clock } from '../io/clock.ts';
 import { EXECUTOR_SANDBOX_ENV } from '../io/env.ts';
 import { writeJsonAtomic } from '../io/atomicWrite.ts';
-import { branchExists, currentBranch, deleteBranch, mergeAbort, mergeNoFF, resolveCommit } from '../io/git.ts';
+import { branchExists, currentBranch, deleteBranchAt, mergeAbort, mergeNoFF, resolveCommit } from '../io/git.ts';
 import { findRouterDir, routerPaths, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import * as store from '../io/store.ts';
 import { dispatchTask, dispatchTasks, resumeTask } from '../app/dispatch.ts';
 import { gateYamlPath, loadGateConfig } from '../app/gateConfig.ts';
 import { runQueueGate } from '../app/gateQueue.ts';
-import { readLock } from '../io/lock.ts';
+import { pinnedHead } from '../app/verifiedHead.ts';
+import { acquireLock, readLock } from '../io/lock.ts';
 import { loadModelConfig, modelsYamlPath } from '../app/modelConfig.ts';
 import { recordOrchestratorUsage } from '../app/orchestratorUsage.ts';
 import { readRunStatus } from '../app/runStatus.ts';
@@ -60,11 +61,17 @@ interface Deps {
 // it. Refusing the whole verb -- read and write -- is deliberate: the CLI is the
 // orchestrator's instrument, the executor works through files, git and its own gate, and one
 // rule cannot be half-bypassed the way an allowlist of safe verbs could be.
-function depsFor(ctx: Ctx): Deps {
-  if ((process.env[EXECUTOR_SANDBOX_ENV] ?? '') !== '') {
+function depsFor(ctx: Ctx, readOnly = false): Deps {
+  // Read-only verbs are allowed through. The refusal used to cover every verb, which was
+  // over-broad: `router list` and `router result` change nothing, and blocking them told an
+  // executor "you may not look at the run you are part of" for no safety gain. What the sandbox
+  // is for is WRITES -- and it never really stopped those anyway (a nested CLI is only one way to
+  // write a file), which is why the real enforcement is now detection in app/stateGuard.ts.
+  if (!readOnly && (process.env[EXECUTOR_SANDBOX_ENV] ?? '') !== '') {
     throw new CliError(
-      `refusing to touch router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). ` +
-        `Orchestration state belongs to the dispatching session; work through files, git and your gate.`,
+      `refusing to WRITE router state from inside an executor (${EXECUTOR_SANDBOX_ENV} is set). ` +
+        `Orchestration state belongs to the dispatching session; work through files, git and your gate. ` +
+        `Read-only verbs (list, result, models, doctor) are available.`,
       2,
     );
   }
@@ -75,11 +82,16 @@ function depsFor(ctx: Ctx): Deps {
   // Not worktreesDir: nothing creates a per-task worktree any more, and scaffolding an empty
   // directory that will stay empty is the kind of leftover that reads as "there are live runs
   // in here". The deprecated path creates its own if it is ever re-enabled.
-  for (const d of [paths.root, paths.tasksDir]) {
-    if (!existsSync(d)) mkdirSync(d, { recursive: true });
+  //
+  // A read-only verb scaffolds nothing: it would be a write, and there is nothing to read in a
+  // tree that had to be created first.
+  if (!readOnly) {
+    for (const d of [paths.root, paths.tasksDir]) {
+      if (!existsSync(d)) mkdirSync(d, { recursive: true });
+    }
+    const gi = join(paths.root, '.gitignore');
+    if (!existsSync(gi)) writeFileSync(gi, '*\n');
   }
-  const gi = join(paths.root, '.gitignore');
-  if (!existsSync(gi)) writeFileSync(gi, '*\n');
   return { paths, clock: systemClock };
 }
 
@@ -228,6 +240,7 @@ function dispatchOutput(id: string, result: Awaited<ReturnType<typeof dispatchTa
     discarded_shas: result.discarded_shas ?? [],
     closeout: result.closeout ?? null,
     dirty_submodules: result.dirty_submodules ?? [],
+    state_tampering: result.state_tampering ?? [],
   };
 }
 
@@ -251,6 +264,11 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
     result.dirty_submodules && result.dirty_submodules.length > 0
       ? `\nNOTE: ${result.dirty_submodules.length} submodule(s) have uncommitted content. That lives in ` +
         `another repository, so it was neither rescued nor reset.`
+      : '';
+  const tampered =
+    result.state_tampering && result.state_tampering.length > 0
+      ? `\nSTATE TAMPERING: the executor changed router's own state under .router/, which no gate ` +
+        `can see because it is gitignored:\n  ${result.state_tampering.join('\n  ')}`
       : '';
   const closeout =
     result.closeout && !result.closeout.ok
@@ -280,7 +298,7 @@ function dispatchLine(id: string, result: Awaited<ReturnType<typeof dispatchTask
       : '';
   return (
     `${id}: ${v} (executor ${who}${sw}); ${next}${report}` +
-    `${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`
+    `${tampered}${closeout}${recoverable}${warn}${raisedRisk}${where}${rescued}${salvaged}${submodules}`
   );
 }
 
@@ -294,16 +312,20 @@ const resume: Handler = async (ctx) => {
   if (feedback === '') throw new CliError('resume needs --feedback "<what to fix>"', 2);
   const result = await resumeTask(deps, id, feedback);
   const mism = result.resume_session_mismatch === true;
-  const v = result.verifier?.result ?? 'FAILED';
+  // `null` when the verifier never ran, exactly as `dispatch` already reports it. A session
+  // mismatch or a failed closeout skips verification entirely, and collapsing "never attempted"
+  // into a machine-readable "FAILED" is the dressed-up gap the assurance rules forbid.
+  // dispatchOutput was fixed for this; resume was missed.
+  const verifierResult = result.verifier?.result ?? null;
   emit(
     ctx.json,
     {
-      ok: !mism && v === 'PASSED',
+      ok: !mism && verifierResult === 'PASSED',
       id,
       resumed: true,
       session_mismatch: mism,
       session_id: result.session_id ?? null,
-      verifier: v,
+      verifier: verifierResult,
       exit_class: result.exit_class,
     },
     () => {
@@ -312,13 +334,25 @@ const resume: Handler = async (ctx) => {
           result.resume_reported_session == null
             ? 'reported no session id at all'
             : `reported a different session id (${result.resume_reported_session})`;
-        return `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; nothing committed. Re-dispatch, or check the resume invocation.`;
+        // Not "nothing committed" -- that was false. A resumed executor writes and commits to the
+        // task branch before we ever learn which session it was; what the mismatch stops is
+        // VERIFICATION. Telling the user nothing was committed sent them looking at a clean tree
+        // while the branch had moved.
+        return (
+          `${id}: RESUME DID NOT RE-ATTACH -- the executor ${reported}; NOT verified. ` +
+          `Anything it committed is on ${result.branch ?? `router/${id}`} and has cleared no gate: ` +
+          `review or reset that branch, then re-dispatch, or check the resume invocation.`
+        );
       }
-      const next = v === 'PASSED' ? `review the diff, then \`router land ${id}\`` : `see \`router result ${id}\``;
-      return `${id}: resumed -> ${v} (${result.exit_class}); ${next}`;
+      const next =
+        verifierResult === 'PASSED'
+          ? `review the diff, then \`router land ${id}\``
+          : `see \`router result ${id}\``;
+      // "not verified" reads differently from "FAILED", and the difference is the whole point.
+      return `${id}: resumed -> ${verifierResult ?? 'not verified'} (${result.exit_class}); ${next}`;
     },
   );
-  return !mism && v === 'PASSED' ? 0 : 1;
+  return !mism && verifierResult === 'PASSED' ? 0 : 1;
 };
 
 const land: Handler = (ctx) => {
@@ -335,6 +369,17 @@ const land: Handler = (ctx) => {
     }
     if (result.verifier?.result !== 'PASSED') throw new CliError(`${id}: last dispatch was not PASSED${prior}`, 1);
     const branch = result.branch ?? taskBranch(id);
+    // What the verdict actually covers -- a commit, not a branch name. Merging the name would
+    // resolve it a second time inside git, and the reviewer used exactly that gap to move the
+    // ref between the check and the merge and land an unverified commit.
+    const pin = pinnedHead(paths.repoRoot, branch, result);
+    if (!pin.ok) {
+      throw new CliError(
+        `${id}: ${pin.reason}; merging would land work no verifier judged. Re-run ` +
+          `\`router go\` (or \`router dispatch ${id}\`) to verify the branch as it stands${prior}`,
+        1,
+      );
+    }
     // Dispatch now leaves the user standing ON the task branch, so `land` has to say so rather
     // than attempt to merge a branch into itself (and then fail to delete the branch it is on).
     // Checking out the merge target is the user's decision: merging is irreversible, and
@@ -347,7 +392,7 @@ const land: Handler = (ctx) => {
       );
     }
     try {
-      mergeNoFF(paths.repoRoot, branch);
+      mergeNoFF(paths.repoRoot, pin.sha, `Merge branch '${branch}'`);
     } catch (e) {
       mergeAbort(paths.repoRoot);
       throw new CliError(`merge failed (aborted, tree restored): ${(e as Error).message}${prior}`, 1);
@@ -356,7 +401,16 @@ const land: Handler = (ctx) => {
     // the only durable handle on what this task changed (`git show <sha>`). Without it a
     // later review or post-mortem has no way back to the task's diff.
     const mergeCommit = resolveCommit(paths.repoRoot, 'HEAD');
-    deleteBranch(paths.repoRoot, branch);
+    // Compare-and-swap, so a branch that gained a commit while we were merging keeps it. A plain
+    // `branch -D` deletes whatever the name means NOW, taking the only reference to that commit
+    // with it -- silently discarding work rather than merely failing to merge it.
+    if (!deleteBranchAt(paths.repoRoot, branch, pin.sha)) {
+      throw new CliError(
+        `${id}: merged ${pin.sha.slice(0, 12)} as ${mergeCommit.slice(0, 12)}, but ${branch} ` +
+          `moved while we did; it is kept, not deleted -- inspect it before removing it${prior}`,
+        1,
+      );
+    }
     store.writeResult(paths, id, { ...result, merge_commit: mergeCommit });
     landed.push({ id, merged: branch, merge_commit: mergeCommit });
   }
@@ -423,11 +477,12 @@ const gate: Handler = async (ctx) => {
 };
 
 const result: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx, true /* read-only */);
   const id = requireId(ctx);
-  const run = flagStr(ctx.args.flags, 'run') ?? RUN;
+  // `--run` is accepted and ignored: the run dimension was folded away, and a message that
+  // names `run-001` sends the reader looking for a path that no longer exists.
   const res = store.readResult(paths, id);
-  if (res === null) throw new CliError(`no result for ${id} ${run} (dispatch it first)`, 3);
+  if (res === null) throw new CliError(`no result for ${id} (dispatch it first)`, 3);
   let tail = '';
   try {
     tail = readFileSync(paths.workerLog(id), 'utf8').split('\n').slice(-50).join('\n');
@@ -438,7 +493,7 @@ const result: Handler = (ctx) => {
     const checks = (res.verifier?.checks ?? [])
       .map((c) => `  ${c.ok ? 'ok' : 'x'} ${c.id}${c.detail ? ` - ${c.detail}` : ''}`)
       .join('\n');
-    return `${id} ${run}: exit=${res.exit_class} verifier=${res.verifier?.result ?? 'n/a'}\n${checks}\n--- log tail ---\n${tail}`;
+    return `: exit=${res.exit_class} verifier=${res.verifier?.result ?? 'n/a'}\n${checks}\n--- log tail ---\n${tail}`;
   });
   return 0;
 };
@@ -458,7 +513,7 @@ function statusLabel(res: RunResult | null, live: RunStatus | null, nowMs: numbe
 // List authored tasks with their last dispatch status and whether a worktree is
 // still on disk (read-only; helps you see leftovers before cleaning them).
 const list: Handler = (ctx) => {
-  const { paths, clock } = depsFor(ctx);
+  const { paths, clock } = depsFor(ctx, true /* read-only */);
   const nowMs = Date.parse(clock.nowIso());
   const ids = existsSync(paths.tasksDir)
     ? readdirSync(paths.tasksDir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
@@ -686,14 +741,32 @@ const orchestratorUsage: Handler = (ctx) => {
   const transcriptPath = flagStr(ctx.args.flags, 'transcript');
   const projectsDir = flagStr(ctx.args.flags, 'projects-dir');
   const model = flagStr(ctx.args.flags, 'model') ?? STRONG_BASELINE_MODEL;
-  const recorded = recordOrchestratorUsage(paths, clock, {
-    planId,
-    sinceIso,
-    model,
-    ...(untilIso !== undefined ? { untilIso } : {}),
-    ...(transcriptPath !== undefined ? { transcriptPath } : {}),
-    ...(projectsDir !== undefined ? { projectsDir } : {}),
-  });
+  // Under the checkout lock, because appending to `metrics.jsonl` while a dispatch is running
+  // is now a way to FAIL that dispatch: its state guard watches the file (a forged metrics row
+  // falsifies the usage report, so it cannot be ignored), and this command is the one legitimate
+  // writer that was not already holding the lock. Recording it a minute later costs nothing;
+  // discarding a run that has been going for six is the outcome worth avoiding.
+  const usageLock = acquireLock(paths.gateLock(), { waitMs: 0 });
+  if ('blocked' in usageLock) {
+    throw new CliError(
+      `a run is using this checkout (pid ${usageLock.holder?.pid ?? 'unknown'}); ` +
+        `record orchestrator usage once it finishes -- the transcript is not going anywhere`,
+      1,
+    );
+  }
+  let recorded;
+  try {
+    recorded = recordOrchestratorUsage(paths, clock, {
+      planId,
+      sinceIso,
+      model,
+      ...(untilIso !== undefined ? { untilIso } : {}),
+      ...(transcriptPath !== undefined ? { transcriptPath } : {}),
+      ...(projectsDir !== undefined ? { projectsDir } : {}),
+    });
+  } finally {
+    usageLock.release();
+  }
 
   if (!recorded.recorded) {
     const message = `orchestrator usage not recorded: ${recorded.reason}; usage will show execution side only`;
@@ -804,7 +877,7 @@ const setupStatusline: Handler = (ctx) => {
 // .router/models.yaml). Read by the go/spec/review prompts to pick tier models
 // and the reviewer chain deterministically.
 const models: Handler = (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx, true /* read-only */);
   const cfg = loadModelConfig(paths);
   const spec = (s: { model: string; effort?: string }) => `${s.model}${s.effort ? `/${s.effort}` : ''}`;
   emit(ctx.json, { ok: true, models: cfg }, () => {
@@ -863,7 +936,7 @@ const symbol: Handler = async (ctx) => {
 
 // Self-check the code-intelligence layer: config switches, wasm loadable, cache dir.
 const doctor: Handler = async (ctx) => {
-  const { paths } = depsFor(ctx);
+  const { paths } = depsFor(ctx, true /* read-only */);
   const cfg = loadCodeIntelConfig(paths);
   let wasmOk = false;
   let wasmDetail = '';

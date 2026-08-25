@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync } from 'node:fs';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as fx from '../testkit/gitRepo.ts';
 import {
@@ -24,6 +24,8 @@ import {
   submoduleDirty,
   TaskIdentityError,
   uncommittedSourceFiles,
+  uncommittedSourceFilesOrUnknown,
+  updateRef,
   worktreeAdd,
   worktreeAddDetached,
   worktreeRemove,
@@ -499,6 +501,60 @@ test('rescueCommit excludes router state even when nothing ignores it', () => {
     assert.equal(fx.git(dir, ['ls-files', '.router']).trim(), '');
     // Still on disk, just not in the commit.
     assert.ok(existsSync(join(dir, '.router', 'result.json')));
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Review finding 4. This function decides two safety questions -- whether to rescue the user's
+// uncommitted work, and whether the closing invariant holds before verification. It used to
+// return [] when `git status` failed, which answers "the tree is clean" to "I could not look".
+test('uncommittedSourceFiles throws rather than reporting a broken repo as clean (finding 4)', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'a.txt', 'v1\n');
+    fx.addCommit(dir, 'base');
+    fx.write(dir, 'a.txt', 'v2\n');
+    assert.equal(uncommittedSourceFiles(dir).length, 1);
+
+    // A corrupt index: `git status` exits non-zero with a fatal message.
+    writeFileSync(join(dir, '.git', 'index'), 'this is not an index');
+    assert.throws(() => uncommittedSourceFiles(dir), /git status/);
+    // rescueCommit asks the same question first, so it must refuse too rather than skip silently.
+    assert.throws(() => rescueCommit(dir, 'router: rescue'), /git status/);
+
+    // The reporting variant says "unknown" -- distinct from "nothing", and never masks the
+    // failure it is being used to describe.
+    assert.equal(uncommittedSourceFilesOrUnknown(dir), null);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Review finding 2. The salvage commit made before a destructive reset used to be remembered
+// only in memory until the whole run wrote result.json -- so a crash in between lost the only
+// pointer to a commit that existed precisely so nothing would be lost, and `git gc` would then
+// collect it. A ref survives both.
+test('a salvage ref keeps the commit reachable across a reset and a gc (finding 2)', () => {
+  const dir = fx.initRepo();
+  try {
+    fx.write(dir, 'a.txt', 'v1\n');
+    const base = fx.addCommit(dir, 'base');
+    createBranchStrict(dir, 'router/t1');
+    fx.write(dir, 'user-file.txt', 'work the human did mid-run\n');
+
+    const salvage = rescueCommit(dir, 'router: salvage', ['.router']);
+    assert.ok(salvage !== null);
+    updateRef(dir, 'refs/router/salvage/t1/1', salvage.sha);
+    resetHardTracked(dir, base);
+
+    // The branch tip no longer holds it...
+    assert.equal(resolveCommit(dir, 'HEAD'), base);
+    // ...but the ref does, and an aggressive gc cannot take it.
+    fx.git(dir, ['reflog', 'expire', '--expire=now', '--all']);
+    fx.git(dir, ['gc', '--prune=now', '--quiet']);
+    assert.equal(resolveCommit(dir, 'refs/router/salvage/t1/1'), salvage.sha);
+    assert.equal(fx.git(dir, ['show', `${salvage.sha}:user-file.txt`]), 'work the human did mid-run\n');
   } finally {
     fx.cleanup(dir);
   }

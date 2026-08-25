@@ -13,7 +13,7 @@ import { readJsonl } from '../src/io/jsonl.ts';
 import { routerPaths } from '../src/io/paths.ts';
 import { fixedClock } from '../src/io/clock.ts';
 import { CheckoutBusyError, dispatchTask, dispatchTasks, orderByQuota, prepareRun, runPrepared } from '../src/app/dispatch.ts';
-import { acquireLock } from '../src/io/lock.ts';
+import { acquireLock, readLock } from '../src/io/lock.ts';
 import { currentBranch, uncommittedSourceFiles } from '../src/io/git.ts';
 
 const NODE = process.execPath;
@@ -460,6 +460,155 @@ test('an executor that forgets a file fails the run instead of passing the gate 
     assert.equal(result.verifier, undefined);
     // And the work is still there to be finished.
     assert.match(readFileSync(join(paths.repoRoot, 'src', 'forgotten.ts'), 'utf8'), /oops/);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+// Review finding 3. `recordExecPgid` existed and only the io-lock test ever called it, so in
+// production the lock never carried an execPgid -- and a process reclaiming a dead holder's lock
+// therefore could not clean up the orphan it was supposed to. Must NOT 6 and fault-injection 8c
+// were both satisfied only by a test that called the primitive by hand, which is precisely how a
+// missing wire survives a green suite.
+test('dispatch publishes the executor process group into the lock (finding 3)', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+
+  // Observe the lock file from OUTSIDE while the run holds it: the run releases the lock in its
+  // own finally, so by the time dispatchTask returns there is nothing left to inspect.
+  const seen: (number | undefined)[] = [];
+  const poller = setInterval(() => {
+    const info = readLock(paths.gateLock());
+    if (info !== null) seen.push(info.execPgid);
+  }, 15);
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+    assert.equal(result.exit_class, 'ok');
+  } finally {
+    clearInterval(poller);
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+
+  assert.ok(seen.length > 0, 'never observed the lock while the run held it');
+  const withPgid = seen.filter((p): p is number => typeof p === 'number' && p > 1);
+  assert.ok(
+    withPgid.length > 0,
+    `the lock never carried an execPgid; observed ${seen.length} samples, all undefined`,
+  );
+});
+
+// Review finding 9a, reproducing what the reviewer demonstrated: ROUTER_EXECUTOR_SANDBOX only
+// refuses a nested `router` CLI, so an executor can write real orchestration state with a plain
+// file API. The reviewer's fake created `.router/tasks/forged/result.json`, the dispatch still
+// reported PASSED, the file stayed, and the committed diff showed only `src/a.ts` -- because
+// `.router/` is gitignored and therefore invisible to every gate.
+//
+// Prevention would need the sandbox to exclude a subdirectory of its own writable root, which
+// codex's workspace-write does not offer. So this is enforcement by detection.
+test('an executor forging router state fails the run (finding 9)', async () => {
+  const { repo, paths, deps } = setup();
+  const forger = join(repo, 'fake-forger.mjs');
+  writeFileSync(
+    forger,
+    '#!/usr/bin/env node\n' +
+      "import {writeFileSync, mkdirSync} from 'node:fs';import {execFileSync} from 'node:child_process';\n" +
+      'writeFileSync("src/a.ts","export const x = 2;\\n");\n' +
+      'execFileSync("git",["add","--","src/a.ts"]);\n' +
+      'execFileSync("git",["-c","user.name=f","-c","user.email=f@l","commit","-q","-m","fake: unit a"]);\n' +
+      // The forgery: a plain file write into real orchestration state, no router CLI involved.
+      'mkdirSync(".router/tasks/forged", {recursive: true});\n' +
+      'writeFileSync(".router/tasks/forged/result.json", JSON.stringify({task_id:"forged",exit_class:"ok",verifier:{result:"PASSED",checks:[]}}));\n' +
+      'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+  );
+  chmodSync(forger, 0o755);
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = forger;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+
+    assert.equal(result.exit_class, 'task_failed', 'a forged state file did not fail the run');
+    assert.ok(result.state_tampering !== undefined, 'the forgery was not detected');
+    assert.ok(
+      result.state_tampering.some((line) => line.includes('tasks/forged/result.json')),
+      result.state_tampering.join(' | '),
+    );
+    // Never verified: this is a contract violation, not a code defect to weigh against the diff.
+    assert.equal(result.verifier, undefined);
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+// The other side of the same coin: the run's OWN artifacts change constantly while it runs
+// (status.json, the heartbeat, the worker log), so a detector that flagged those would fail every
+// run. A clean executor must come out clean.
+test('an ordinary run reports no state tampering (finding 9)', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    stageTask(paths);
+    const result = await dispatchTask(deps, 't1');
+    assert.equal(result.exit_class, 'ok');
+    assert.equal(result.state_tampering, undefined, JSON.stringify(result.state_tampering));
+  } finally {
+    if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
+    else process.env.ROUTER_CODEX_BIN = prev;
+    delete process.env.ROUTER_CODEX_SESSIONS_DIR;
+    fx.cleanup(repo);
+  }
+});
+
+// The state guard's window used to close BEFORE verification, and the verify/gate commands are
+// the executor's own committed code -- so running them is its last and widest write channel. The
+// reviewer committed a "test" that forged router state and the run was still recorded PASSED:
+// `{"dispatchStatus":0,"verifier":"PASSED","stateTampering":[],"forgedResultExists":true}`.
+test('a verify command that forges router state fails the run instead of passing it', async () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const { repo, paths, deps } = setup();
+  const prev = process.env.ROUTER_CODEX_BIN;
+  process.env.ROUTER_CODEX_BIN = FAKE_CODEX;
+  process.env.ROUTER_CODEX_SESSIONS_DIR = join(repo, 'no-sessions');
+  try {
+    // The forgery runs as the project's own verification command -- i.e. as code the executor
+    // committed and router then executes on its behalf.
+    const forge =
+      "require('node:fs').mkdirSync('.router/tasks/forged',{recursive:true});" +
+      "require('node:fs').writeFileSync('.router/tasks/forged/result.json'," +
+      'JSON.stringify({task_id:"forged",exit_class:"ok",verifier:{result:"PASSED",checks:[]}}));';
+    stageTask(
+      paths,
+      `schema_version: 1\nid: t1\ntitle: demo\nbase_sha: null\nmax_wall_minutes: 1\n` +
+        `allowed_globs: ["src/**"]\nverify:\n  - [${JSON.stringify(process.execPath)}, "-e", ${JSON.stringify(forge)}]\n`,
+    );
+    const result = await dispatchTask(deps, 't1');
+
+    assert.equal(result.exit_class, 'task_failed', `a forging verify command passed: ${JSON.stringify(result)}`);
+    assert.ok(result.state_tampering !== undefined, 'the forgery during verification went unseen');
+    assert.ok(
+      result.state_tampering.some((line) => line.includes('tasks/forged/result.json')),
+      result.state_tampering.join(' | '),
+    );
+    // And no verdict survives: the evidence came from a checkout something else was writing.
+    assert.equal(result.verifier, undefined, 'a PASSED verdict survived a state violation');
+    assert.equal(result.verified_head, undefined);
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;

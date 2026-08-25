@@ -22,3 +22,25 @@ export function killProcessGroup(pgid: number, signal: KillSignal): boolean {
     throw err;
   }
 }
+
+/**
+ * Whether a process group has no members left.
+ *
+ * `EPERM` deliberately reads as "still there": the group exists but is not ours to signal, and
+ * treating that as gone is exactly the "two writers, one checkout" mistake this guards against.
+ *
+ * One nuance, in case this ever looks like a bug: a SIGKILLed process still answers signal 0
+ * while it is a zombie, i.e. until its parent reaps it. That does not affect the processes this
+ * is aimed at -- an orphaned executor's parent is the router that died, so it has already been
+ * reparented to init, which reaps immediately; and a supervised worker fires its `exit` event
+ * only after Node itself has reaped it. A caller that is *itself* the survivor's parent and
+ * never returns to its event loop would see a zombie answer here forever.
+ */
+export function processGroupIsGone(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}

@@ -92,8 +92,18 @@ test('batch dispatch runs one task at a time, in input order', () => {
     const branches = fx.git(dir, ['branch', '--format=%(refname:short)']);
     assert.match(branches, /^router\/p1$/m);
     assert.match(branches, /^router\/p2$/m);
-    // Serial dispatch stacks: p2 was cut from p1, and we are left standing on p2.
+    // Review finding 7: each task is cut from where the BATCH started, not from the previous
+    // task's tip. Stacking was the earlier behaviour and the scope gate hid it -- p2's recorded
+    // diff correctly held only its own files (computed from its own base_sha) while its BRANCH
+    // held p1's commits, so `land p2` alone merged p1 too, past p1's review and past the
+    // explicit land decision that belongs to the user.
     assert.equal(fx.git(dir, ['branch', '--show-current']).trim(), 'router/p2');
+    const p1Tip = fx.git(dir, ['rev-parse', 'router/p1']).trim();
+    assert.doesNotMatch(
+      fx.git(dir, ['log', '--format=%H', 'router/p2']),
+      new RegExp(p1Tip),
+      'router/p2 contains p1 commits: landing p2 would silently land p1',
+    );
     const metrics = readFileSync(join(dir, '.router', 'metrics.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.equal(metrics.length, 2);
     assert.deepEqual(new Set(metrics.map((row: { task_id: string }) => row.task_id)), new Set(['p1', 'p2']));
@@ -148,12 +158,146 @@ test('batch land --json stays one document listing every merge', () => {
     assert.equal(router(dir, ['dispatch', 'p1', 'p2', '--json'], env).code, 0);
     // Off the task branch first: choosing what to merge into is the user's decision.
     fx.git(dir, ['checkout', '-q', 'main']);
-    const l = router(dir, ['land', 'p1', 'p2', '--json'], env);
+    // Landing ONLY p2 must bring only p2 (finding 7).
+    const onlyP2 = router(dir, ['land', 'p2', '--json'], env);
+    assert.equal(onlyP2.code, 0, onlyP2.out);
+    assert.ok(existsSync(join(dir, 'src', 'p2.ts')));
+    assert.ok(!existsSync(join(dir, 'src', 'p1.ts')), 'landing p2 also landed p1');
+
+    const l = router(dir, ['land', 'p1', '--json'], env);
     assert.equal(l.code, 0, l.out);
-    const out = JSON.parse(l.out) as { ok: boolean; landed: { id: string; merge_commit: string }[] };
+    assert.equal(l.code, 0, l.out);
+    const out = JSON.parse(l.out) as { ok: boolean; id: string; merge_commit: string };
     assert.equal(out.ok, true);
-    assert.deepEqual(out.landed.map((entry) => entry.id), ['p1', 'p2']);
-    for (const entry of out.landed) assert.match(entry.merge_commit, /^[0-9a-f]{40}$/);
+    assert.equal(out.id, 'p1');
+    assert.match(out.merge_commit, /^[0-9a-f]{40}$/);
+    assert.ok(existsSync(join(dir, 'src', 'p1.ts')));
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Follow-up review, `batch-branch-contamination` still partial: the baseline was recorded as a
+// branch NAME, so a batch started from a detached HEAD had `null` to restore and stacked exactly
+// as before -- `router/p2` contained `router/p1`, and landing p2 alone landed p1 too. A detached
+// HEAD is not exotic here: it is where `git checkout <sha>`, a bisect, and a rebase all leave you.
+test('a batch started from a detached HEAD still cuts every task from the same base', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    fx.git(dir, ['checkout', '-q', '--detach', 'HEAD']);
+    const detachedAt = fx.git(dir, ['rev-parse', 'HEAD']).trim();
+
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
+      ROUTER_CODEX_BIN: FAKE_SCOPED,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.equal(d.code, 0, d.out);
+
+    const p1Tip = fx.git(dir, ['rev-parse', 'router/p1']).trim();
+    assert.doesNotMatch(
+      fx.git(dir, ['log', '--format=%H', 'router/p2']),
+      new RegExp(p1Tip),
+      'router/p2 contains p1 commits: landing p2 would silently land p1',
+    );
+    // Both branches hang off the commit the batch started at, not off each other.
+    for (const id of ['p1', 'p2']) {
+      const base = JSON.parse(
+        readFileSync(join(dir, '.router', 'tasks', id, 'result.json'), 'utf8'),
+      ) as { base_sha: string };
+      assert.equal(base.base_sha, detachedAt, `${id} was not cut from the batch's starting commit`);
+    }
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The other half of the same finding: restoring the baseline sat OUTSIDE the loop's try, so a
+// starting branch deleted between tasks threw straight past the fault list -- no message naming
+// which task stopped and why, and the user left standing on the previous task's branch.
+test('a batch whose starting branch disappears fails by name, not by stack trace', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    fx.git(dir, ['checkout', '-q', '-b', 'scratch']);
+    // An executor that deletes the starting branch after committing its unit -- i.e. exactly
+    // between the two tasks, which is the window the finding is about.
+    const saboteur = join(dir, 'saboteur.mjs');
+    writeFileSync(
+      saboteur,
+      '#!/usr/bin/env node\n' +
+        "import { execFileSync } from 'node:child_process';\n" +
+        "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+        "const prompt = process.argv.slice(2).find((a) => /^task: \\S+$/m.test(a)) ?? '';\n" +
+        "const id = /^task: (\\S+)$/m.exec(prompt)?.[1] ?? 'p1';\n" +
+        "mkdirSync('src', { recursive: true });\n" +
+        'writeFileSync(`src/${id}.ts`, `export const ${id} = true;\\n`);\n' +
+        'execFileSync("git", ["add", "--", `src/${id}.ts`]);\n' +
+        'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", `fake: ${id}`]);\n' +
+        'try { execFileSync("git", ["branch", "-D", "scratch"], { stdio: "ignore" }); } catch {}\n' +
+        'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:`fake-session-${id}`})+"\\n");\n' +
+        'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+    );
+    chmodSync(saboteur, 0o755);
+
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
+      ROUTER_CODEX_BIN: saboteur,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.notEqual(d.code, 0, d.out);
+    // Names the task that could not start and why. The old path produced neither.
+    assert.match(d.out, /p2/, d.out);
+    assert.match(d.out, /scratch|checkout|pathspec|did not match/i, d.out);
+    // And p2 never got a branch cut from the wrong base.
+    assert.doesNotMatch(fx.git(dir, ['branch', '--format=%(refname:short)']), /^router\/p2$/m);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// `batch-branch-contamination`, third time. Recording the baseline as a branch NAME fixed the
+// detached-HEAD case and left the branch case open: a branch is mutable, so an executor (or a
+// person in another terminal) that moves it hands the next task a base containing the previous
+// task's commits -- the original stacking bug, wearing a fix. The reviewer's evidence was
+// `{"dispatchCode":0,"p2ContainsP1":true}` with p2's base equal to p1's tip.
+test('a batch refuses to continue when its starting branch has been moved', () => {
+  chmodSync(FAKE_SCOPED, 0o755);
+  const dir = setup();
+  try {
+    stageTask(dir, 'p1');
+    stageTask(dir, 'p2');
+    fx.git(dir, ['checkout', '-q', '-b', 'scratch']);
+    // Commits its unit, then drags the starting branch up to its own tip.
+    const mover = join(dir, 'mover.mjs');
+    writeFileSync(
+      mover,
+      '#!/usr/bin/env node\n' +
+        "import { execFileSync } from 'node:child_process';\n" +
+        "import { mkdirSync, writeFileSync } from 'node:fs';\n" +
+        "const prompt = process.argv.slice(2).find((a) => /^task: \\S+$/m.test(a)) ?? '';\n" +
+        "const id = /^task: (\\S+)$/m.exec(prompt)?.[1] ?? 'p1';\n" +
+        "mkdirSync('src', { recursive: true });\n" +
+        'writeFileSync(`src/${id}.ts`, `export const ${id} = true;\\n`);\n' +
+        'execFileSync("git", ["add", "--", `src/${id}.ts`]);\n' +
+        'execFileSync("git", ["-c", "user.name=f", "-c", "user.email=f@l", "commit", "-q", "-m", `fake: ${id}`]);\n' +
+        'try { execFileSync("git", ["update-ref", "refs/heads/scratch", "HEAD"]); } catch {}\n' +
+        'process.stdout.write(JSON.stringify({type:"thread.started",model:"fake-model-1",thread_id:`fake-session-${id}`})+"\\n");\n' +
+        'process.stdout.write(JSON.stringify({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}})+"\\n");\n',
+    );
+    chmodSync(mover, 0o755);
+
+    const d = router(dir, ['dispatch', 'p1', 'p2', '--json'], {
+      ROUTER_CODEX_BIN: mover,
+      ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions'),
+    });
+    assert.notEqual(d.code, 0, `the batch continued onto a moved base: ${d.out}`);
+    assert.match(d.out, /base moved|started from/i, d.out);
+    // p2 never got a branch, so it certainly never got p1's commits.
+    assert.doesNotMatch(fx.git(dir, ['branch', '--format=%(refname:short)']), /^router\/p2$/m);
   } finally {
     fx.cleanup(dir);
   }
