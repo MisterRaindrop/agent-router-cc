@@ -8,6 +8,52 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-25
+
+You can see what is running in the background, and see that it is *moving*. Designed
+through the project's own flow (brainstorm -> design -> workplan), built as five work
+packages, each independently reviewed and mutation-tested by the main session.
+
+> **Changelog gap.** 0.10.0, 0.10.1, 0.10.2 and 0.11.0 shipped without entries here.
+> They are in the git history; this file simply stopped being updated. Recorded rather
+> than back-filled from memory.
+
+### Added
+
+- **`router supervise --label L --log F -- <argv...>`** — run any command with visible
+  liveness. It publishes an activity record with an out-of-process heartbeat, writes the
+  child's stdout **and** stderr to `--log` byte-for-byte as `> file 2>&1` would, and passes
+  the child's exit code through unchanged. It deliberately does **not** take `gate.lock`,
+  so a supervised review and a dispatch never queue behind each other.
+- **A three-state statusline segment, always rendered**: `router ▶ idle` when nothing is
+  running, a **spinning** frame plus the label (and phase / budget / `·log` age) while a run
+  is alive, and `已失联 <age>` when its owner has gone. Liveness is `pid` alive **and**
+  heartbeat fresh — never "does a `terminal_state` field exist", which is what used to leave
+  a phantom run on screen forever.
+- `.router/activity/<key>.json`: display-only activity records with an ownership token, an
+  atomic claim, and one shared liveness rule. `router result`, `router land` and the queue
+  gate do not read them.
+- `dist/statusline-activity.mjs`: the activity observation API as its own import-safe bundle,
+  so the standalone statusline reuses the one liveness rule instead of re-implementing it.
+
+### Changed
+
+- `router setup-statusline` now also writes `statusLine.refreshInterval: 2` — without a fast
+  refresh the segment is technically correct and visibly frozen. It **repairs** an existing
+  config that lacks the field (reporting `updated`, not `already-configured`, which is the trap
+  0.10.1 shipped), names the previous value it overwrote, **preserves unknown keys under
+  `statusLine`** instead of replacing the whole object, and tells you to restart Claude Code.
+- `commands/review.md` launches both review lenses through `router supervise`, always with
+  `< /dev/null` — a lens that inherits an open stdin can sit for 20 minutes printing 39 bytes.
+
+### Notes
+
+- **Restart Claude Code** after upgrading for `refreshInterval` to take effect. A running
+  session keeps its old refresh rate, so the statusline stays frozen while everything
+  underneath is already correct.
+- The activity file is display-only by design: it is never consulted to decide whether a
+  merge, a gate verdict or a result is valid.
+
 ## [0.9.0] - 2026-08-12
 
 The go-execution v2 groundwork: single-executor mode plus the shared observability
