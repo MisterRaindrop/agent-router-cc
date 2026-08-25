@@ -7,6 +7,7 @@
 // queue, reports the holder, and moves the integration branch only on a pass.
 
 import { test } from 'node:test';
+import { childEnv } from './childEnv.ts';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -26,7 +27,7 @@ function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): 
       out: execFileSync(NODE, [ENTRY, ...argv], {
         cwd: dir,
         encoding: 'utf8',
-        env: { ...process.env, ...envExtra },
+        env: childEnv(envExtra),
         timeout: 60_000,
       }),
     };

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test } from 'node:test';
+import { childEnv } from './childEnv.ts';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
@@ -30,7 +31,7 @@ const NODE = process.execPath;
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'router-cli-supervise-'));
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-function router(dir: string, argv: string[], env: NodeJS.ProcessEnv = process.env) {
+function router(dir: string, argv: string[], env: NodeJS.ProcessEnv = childEnv()) {
   return spawnSync(NODE, [ENTRY, ...argv], { cwd: dir, encoding: 'utf8', timeout: 30_000, env });
 }
 
@@ -60,7 +61,7 @@ interface RunningRouter {
 }
 
 function startRouter(dir: string, argv: string[]): RunningRouter {
-  const child = spawn(NODE, [ENTRY, ...argv], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(NODE, [ENTRY, ...argv], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() });
   let stdout = '';
   let stderr = '';
   child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
@@ -228,7 +229,7 @@ test('a heartbeat spawn failure is diagnosed before the worker starts and uses a
         'syncBuiltinESMExports();\n',
     );
     const inherited = process.env.NODE_OPTIONS ?? '';
-    const env = { ...process.env, NODE_OPTIONS: `${inherited} --require=${preload}`.trim() };
+    const env = childEnv({ NODE_OPTIONS: `${inherited} --require=${preload}`.trim() });
     const run = router(
       dir,
       [
@@ -269,7 +270,7 @@ test('SIGTERM to the supervise process drains its worker, cleans activity, and f
     owner = spawn(
       NODE,
       [ENTRY, 'supervise', '--label', label, '--log', 'signal-owner.log', '--', NODE, '-e', childScript],
-      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] },
+      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() },
     );
     await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
     const workerPid = Number(readFileSync(workerPidPath, 'utf8'));
@@ -528,7 +529,7 @@ test('SIGKILL of the supervise owner leaves a disconnected activity instead of d
     owner = spawn(
       NODE,
       [ENTRY, 'supervise', '--label', label, '--log', 'killed.log', '--', NODE, '-e', childScript],
-      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] },
+      { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() },
     );
     await waitUntil(() => readActivity(activityPath) !== null && existsSync(workerPidPath));
     owner.kill('SIGKILL');

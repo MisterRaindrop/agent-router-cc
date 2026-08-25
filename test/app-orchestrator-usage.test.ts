@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
+import { childEnv } from './childEnv.ts';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -107,6 +108,7 @@ test('orchestrator-usage command records JSON output and degrades with exit code
     const output = execFileSync(process.execPath, [...baseArgs, '--json'], {
       cwd: dir,
       encoding: 'utf8',
+      env: childEnv(),
     });
     assert.deepEqual(JSON.parse(output), {
       ok: true,
@@ -131,7 +133,7 @@ test('orchestrator-usage command records JSON output and degrades with exit code
         '--router-dir',
         routerDir,
       ],
-      { cwd: dir, encoding: 'utf8' },
+      { cwd: dir, encoding: 'utf8', env: childEnv() },
     );
     assert.match(
       degraded,
@@ -167,7 +169,7 @@ test('orchestrator-usage refuses while a run holds the checkout, instead of fail
       let code = 0;
       let out = '';
       try {
-        out = execFileSync(process.execPath, args, { cwd: dir, encoding: 'utf8', stdio: 'pipe' });
+        out = execFileSync(process.execPath, args, { cwd: dir, encoding: 'utf8', stdio: 'pipe', env: childEnv() });
       } catch (e) {
         const err = e as { status?: number; stdout?: string; stderr?: string };
         code = err.status ?? 1;

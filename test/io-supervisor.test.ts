@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test } from 'node:test';
+import { childEnv } from './childEnv.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -126,7 +127,7 @@ test('killing the group reaps a grandchild process', async () => {
       baseSpec(dir, script, {
         maxWallMs: 400,
         sigkillGraceMs: 150,
-        env: { ...process.env, GC_PID_FILE: gcFile },
+        env: childEnv({ GC_PID_FILE: gcFile }),
       }),
     );
     assert.equal(o.exitClass, 'timeout');

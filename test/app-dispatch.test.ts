@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test } from 'node:test';
+import { childEnv } from './childEnv.ts';
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -157,11 +158,10 @@ function startTaskProcess(
     `}catch(error){console.error(error?.stack??String(error));process.exitCode=1;}`;
   const child = spawn(NODE, ['--input-type=module', '-e', source], {
     cwd: repo,
-    env: {
-      ...process.env,
+    env: childEnv({
       ROUTER_CODEX_BIN: executor,
       ROUTER_CODEX_SESSIONS_DIR: join(repo, 'no-sessions'),
-    },
+    }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
