@@ -23,7 +23,12 @@ meaningful.
 **Navigate with the symbol index, not by reading whole files** (see `/router:symbol`).
 Run `router symbol index <dirs>` at the START of the review: it is incremental and cheap,
 and rebuilding here is what pulls in the files the change just **added or modified** (a
-plain query only re-parses files already in the index, so new files need this step). Then
+plain query only re-parses files already in the index, so new files need this step).
+**Read what it says it indexed.** On a repository whose languages it cannot parse it reports
+`0 files` and exits 0, so an index that found nothing is indistinguishable from one that worked
+unless you look -- and every later `find`/`enclosing` query then quietly returns nothing, which
+reads as "no such caller" rather than "no index". If the count is 0, fall back to `rg` and say so.
+Then
 `symbol find` / `enclosing` / `methods` locate definitions, a line's enclosing scope, and
 class members a few lines at a time; each query also auto-refreshes any file you edit
 mid-review, so results stay current. Open only bounded slices to confirm exact code.
@@ -48,12 +53,42 @@ when it lands") -- reviews take minutes and running detached avoids the interact
 timeout. `max` effort is opt-in, used only when the user explicitly asks for the deepest
 pass (still backgrounded).
 
-**Guard against truncation.** A long findings list can be cut off at the reviewer's output
-cap or the shell/tool buffer. Mitigate: (1) read from the file above (complete regardless
-of tool buffers), in chunks if large; (2) if the output is truncated (codex finish signal,
-or text ending mid-finding), re-invoke to continue from where it stopped and **never
-present a truncated critique as complete**. The two-lens split already helps -- each pass
-is a separate, shorter call, so it is less likely to hit the cap than one giant review.
+**Give each reviewer its OWN background call.** Never `( reviewer_a & reviewer_b ) &` or any
+other shape that puts both in one process group: killing or timing out that group kills both,
+and what you get back is two large files that end mid-sentence with zero findings in them.
+Measured: 117KB and 656KB of transcript, no verdicts, and the run looked like it had simply
+found nothing. Two separate tracked calls cost nothing and cannot take each other down.
+
+**Guard against truncation, and know what truncation looks like.** A findings list can be cut
+off at the reviewer's output cap, at the shell/tool buffer, or by the provider. Mitigate:
+(1) read from the file above (complete regardless of tool buffers), in chunks if large;
+(2) re-invoke to continue from where it stopped, and **never present a truncated critique as
+complete**. The two-lens split already helps -- each pass is a separate, shorter call.
+
+Check for all three of these before believing a review is done, because a truncated file and a
+finished one look identical from a distance:
+
+- **the structured verdicts are missing.** You asked for `{level, dimension, severity, ...}`
+  blocks; a file with none is not a clean review. Grep for the shape, do not eyeball the tail.
+- **the text ends mid-finding**, or ends in tool output (a test run, a file listing) rather than
+  in a report. Investigation is not a verdict.
+- **the provider refused the answer.** `codex` returns
+  `ERROR: This content was flagged for possible cybersecurity risk` and exits 0 -- so the exit
+  code says success and the file says nothing. Grep the file for `flagged for possible` before
+  reporting anything from it.
+
+**On that filter specifically.** It fires on what the reviewer *writes*, not only on your brief.
+Rewording the brief away from offensive-security vocabulary ("process group", "sandbox escape",
+"forge", "tamper") gets it through the investigation -- and it can still be blocked at the moment
+it emits a reproduction script that spawns a detached child, kills a group, or writes state it
+does not own. Two independent lenses hit this at the same point, on the same fixture, and neither
+report survived. If it happens: **say the review produced no verdicts** rather than presenting
+the passing tests it happened to run as confirmation, and either ask the reviewer for reproduction
+STEPS that you execute yourself, or switch to a reviewer not behind that filter.
+
+**`codex exec resume` is not `codex exec`.** It rejects `-C` outright and has no `-s`; pass the
+sandbox as `-c sandbox_mode=read-only` instead. `src/app/codexLauncher.ts` documents this; check
+it before assuming a flag carries over.
 
 ## Phase 1 -- Preflight
 
@@ -192,6 +227,19 @@ task via `/router:go`), then re-run the relevant tests, then a **fresh run of th
 Verification Matrix against the final code** (prior evidence is now stale), then **resume
 the same reviewer session** to confirm each blocking finding is genuinely resolved --
 verify against the new code, never on a "fixed it" claim. Repeat until the user is satisfied.
+
+**Expect your own fixes to be the next round's findings.** Measured over three rounds on one
+change: round 1's fixes contained a regression that let unverified code reach `main`, and round
+2's fixes introduced six new blocking defects. The full suite was green at every one of those
+moments, and not one of the twenty-one findings was in the test matrix. So a re-review is not
+ceremony, and "the tests still pass" is not a reason to skip it.
+
+One shape accounted for most of them, and it is worth grepping for by name before you re-submit:
+**a fix applied to one call path and not to its sibling.** A head-pin check that went into `land`
+and not into the queue gate; a `groupSurvived` flag handled in `dispatch` and ignored in
+`gateQueue`; a guard whose window closed before the verification commands -- which are the
+executor's own committed code -- ran. After each fix, `rg` the new symbol across `src/` and ask
+of every hit whether it needed the same change.
 
 ## Close the plan
 
