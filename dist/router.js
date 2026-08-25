@@ -10103,7 +10103,7 @@ function appendMetric(p, record) {
 import { createHash as createHash4 } from "node:crypto";
 import { readFileSync as readFileSync11, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir } from "node:os";
-import { join as join9, sep as sep3 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/core/pickExecutor.ts
 function pickExecutor(quotas) {
@@ -11075,6 +11075,7 @@ function isOwnRunArtifact(rel, ownTaskId) {
   const top = parts[0] ?? "";
   if (top === "gate.lock" || top.startsWith("gate.lock.")) return true;
   if (top === "usage.json") return true;
+  if (top === "activity") return true;
   if (top === "symbols") return true;
   if (top !== "tasks" || parts[1] !== ownTaskId) return false;
   const leaf = parts[2] ?? "";
@@ -12760,7 +12761,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   const refPath = branchRefPath(workDir, branch);
   if (task.mode === "probe") rmSync2(paths.diffPatch(id), { force: true });
   const verifyEnv = buildWorkerEnv(process.env);
-  const stateBefore = fingerprintDecisionState(paths, id);
+  const stateBefore = fingerprintState(paths, id);
   const { order } = orderByQuota(paths, workers);
   let used = order[0];
   let exitClass = "task_failed";
@@ -12837,7 +12838,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
   const parsed = (launcher.parseLog ?? parseCodexLog)(finalLog);
   const conflict = detectContractConflict(parsed.finalMessage);
   if (conflict) exitClass = "contract_conflict";
-  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
   if (envelope !== void 0 && !envelope.stillOwned()) {
     tampering.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
   }
@@ -12907,7 +12908,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
     if (patch !== null) result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
     result2.verified_head = resolveCommit(workDir, "HEAD");
     prep.status.transition("verify");
-    const stateBeforeVerify = fingerprintDecisionState(paths, id);
+    const stateBeforeVerify = fingerprintState(paths, id);
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -12926,7 +12927,7 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
       ...gateConfig !== void 0 ? { gate: gateConfig } : {},
       ...gateConfig !== void 0 ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
+    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
     }
@@ -13134,7 +13135,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   writeFileSync3(logPath, "");
   const verifyEnv = buildWorkerEnv(process.env);
   const executorEnv = buildExecutorEnv(process.env, used.api_key_env ? [used.api_key_env] : []);
-  const stateBefore = fingerprintDecisionState(paths, id);
+  const stateBefore = fingerprintState(paths, id);
   const o = await superviseWorker({
     argv: launcher.buildResumeArgv(workDir, priorSession, feedback, task),
     cwd: workDir,
@@ -13152,7 +13153,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
   const conflict = detectContractConflict(parsed.finalMessage);
   const newSession = parsed.sessionId ?? null;
   const mismatch = newSession !== priorSession;
-  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
   if (!envelope.stillOwned()) {
     tampering.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
   }
@@ -13210,7 +13211,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
         writeFileSync3(paths.diffPatch(id), patch);
         result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
         result2.verified_head = resolveCommit(workDir, "HEAD");
-        const stateBeforeVerify = fingerprintDecisionState(paths, id);
+        const stateBeforeVerify = fingerprintState(paths, id);
         result2.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -13227,7 +13228,7 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? [])
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
+        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
         if (!envelope.stillOwned()) {
           duringVerify.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
         }
@@ -13259,14 +13260,6 @@ function safeRead(path) {
   } catch {
     return "";
   }
-}
-function fingerprintDecisionState(paths, id) {
-  const snapshot = fingerprintState(paths, id);
-  const activityPrefix = `activity${sep3}`;
-  for (const path of snapshot.keys()) {
-    if (path.startsWith(activityPrefix)) snapshot.delete(path);
-  }
-  return snapshot;
 }
 function persistDelivery(paths, id, task, finalMessage) {
   if (finalMessage == null || finalMessage.length === 0) return void 0;

@@ -45,6 +45,11 @@ function isOwnRunArtifact(rel: string, ownTaskId: string): boolean {
   if (top === 'gate.lock' || top.startsWith('gate.lock.')) return true;
   // Snapshotted by the statusline on every render, which is continuously, for the whole run.
   if (top === 'usage.json') return true;
+  // Display-only liveness records, whose cross-process heartbeat rewrites `beat_at` every few
+  // seconds -- OURS, for this very run. Watching them would fail every dispatch that publishes
+  // one. Nothing that decides a merge reads them (Must NOT 5 of the observability design), so
+  // excluding them costs no authority.
+  if (top === 'activity') return true;
   // A regenerable cache rather than orchestration state, and `router symbol index` takes no
   // checkout lock -- so a user rebuilding it in another terminal would otherwise fail the run.
   if (top === 'symbols') return true;

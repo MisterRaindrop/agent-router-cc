@@ -68,6 +68,7 @@ test('the state guard watches what nobody else writes, and only skips what someb
   try {
     fx.write('metrics.jsonl', '{"task_id":"real"}\n');
     fx.write('usage.json', '{"a":1}');
+    fx.write('activity/abc.json', '{"label":"task:x","beat_at":"1"}');
     fx.write('gate.lock', '{"pid":1}');
     fx.write('symbols/abc.json', '{}');
     fx.write('tasks/mine/status.json', '{"phase":"executor_working"}');
@@ -77,6 +78,7 @@ test('the state guard watches what nobody else writes, and only skips what someb
     const before = fingerprintState(fx.paths, 'mine');
     fx.write('metrics.jsonl', '{"task_id":"real"}\n{"task_id":"forged"}\n');
     fx.write('usage.json', '{"a":2}');
+    fx.write('activity/abc.json', '{"label":"task:x","beat_at":"2"}');
     fx.write('gate.lock', '{"pid":2}');
     fx.write('symbols/abc.json', '{"poisoned":true}');
     fx.write('tasks/mine/status.json', '{"phase":"verify"}');

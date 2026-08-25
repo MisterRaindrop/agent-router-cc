@@ -260,7 +260,7 @@ async function runPreparedObserved(
   // Executor chain, quota-ordered: try the executor with the most headroom first;
   // quota/auth/setup failures reset the worktree and fall through to the next.
   // Must NOT 11 detection: what the orchestration state looked like before any executor ran.
-  const stateBefore = fingerprintDecisionState(paths, id);
+  const stateBefore = fingerprintState(paths, id);
   const { order } = orderByQuota(paths, workers);
   let used = order[0]!;
   let exitClass: ExitClass = 'task_failed';
@@ -376,7 +376,7 @@ async function runPreparedObserved(
   // Compare before anything else is decided: state tampering is not a code defect to be weighed
   // against the diff, it is a contract violation, and it is invisible to every gate because
   // `.router/` is gitignored.
-  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
   // The one file the fingerprint cannot watch, checked the only way it can be: by identity
   // rather than by content. Our heartbeat rewrites gate.lock constantly, so it is excluded from
   // the diff -- and this is what stops that exclusion from being a free channel for an executor
@@ -473,7 +473,7 @@ async function runPreparedObserved(
     // commands are the executor's own committed code: running them is the executor's last and
     // widest write channel, and a run that forged `.router` state from inside its test script was
     // still recorded PASSED. So the window stays open across verification too.
-    const stateBeforeVerify = fingerprintDecisionState(paths, id);
+    const stateBeforeVerify = fingerprintState(paths, id);
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -492,7 +492,7 @@ async function runPreparedObserved(
       ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
       ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
+    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
     }
@@ -852,7 +852,7 @@ async function resumeInLock(
   // Must NOT 11 detection, which resume did not have at all. A fresh dispatch caught a forged
   // `.router/tasks/<other>/result.json` and failed; the identical write through a resume was
   // reported PASSED, because nothing on this path ever looked.
-  const stateBefore = fingerprintDecisionState(paths, id);
+  const stateBefore = fingerprintState(paths, id);
 
   const o = await superviseWorker({
     argv: launcher.buildResumeArgv(workDir, priorSession, feedback, task),
@@ -877,7 +877,7 @@ async function resumeInLock(
   // something went wrong.
   const mismatch = newSession !== priorSession;
 
-  const tampering = stateDiff(stateBefore, fingerprintDecisionState(paths, id));
+  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
   if (!envelope.stillOwned()) {
     tampering.push('modified gate.lock (it no longer carries this run’s owner token)');
   }
@@ -960,7 +960,7 @@ async function resumeInLock(
         result.verified_head = resolveCommit(workDir, 'HEAD');
         // Same reason as the fresh path: the verify and gate commands are the executor's own
         // committed code, so the state window has to stay open across them.
-        const stateBeforeVerify = fingerprintDecisionState(paths, id);
+        const stateBeforeVerify = fingerprintState(paths, id);
         result.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -977,7 +977,7 @@ async function resumeInLock(
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintDecisionState(paths, id));
+        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
         if (!envelope.stillOwned()) {
           duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
         }
@@ -1020,14 +1020,6 @@ function safeRead(path: string): string {
  * Remove that namespace from the generic orchestration-state snapshot before it can influence a
  * dispatch decision; task/result/lock state remains covered exactly as before.
  */
-function fingerprintDecisionState(paths: RouterPaths, id: string): Map<string, string> {
-  const snapshot = fingerprintState(paths, id);
-  const activityPrefix = `activity${sep}`;
-  for (const path of snapshot.keys()) {
-    if (path.startsWith(activityPrefix)) snapshot.delete(path);
-  }
-  return snapshot;
-}
 
 function persistDelivery(
   paths: RouterPaths,
