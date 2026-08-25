@@ -10,6 +10,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,11 +20,14 @@ import type { ActivityRecord } from '../src/domain/types.ts';
 import {
   activityKey,
   activityState,
+  claimActivity,
+  finishActivity,
   observeActivities,
   readActivities,
   readActivity,
   startActivityHeartbeat,
   writeActivity,
+  type ActivityTestPoint,
 } from '../src/io/activity.ts';
 import { DEFAULT_STALE_MS } from '../src/io/lock.ts';
 import { routerPaths } from '../src/io/paths.ts';
@@ -57,6 +61,13 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<bo
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   return predicate();
+}
+
+async function waitForExit(child: ChildProcess, timeoutMs = 5000): Promise<void> {
+  assert.ok(
+    await waitUntil(() => child.exitCode !== null || child.signalCode !== null, timeoutMs),
+    'child did not exit in time',
+  );
 }
 
 test('the paths getter uses a fixed lowercase digest under .router/activity', () => {
@@ -124,6 +135,283 @@ test('the three-state rule requires both a live pid and a fresh heartbeat', () =
   );
   assert.equal(activityState({ ...fresh, pid: 2_147_483_647 }, now), 'disconnected');
   assert.equal(activityState({ ...fresh, pid: 2_147_483_648 }, now), 'disconnected');
+});
+
+test('a dead or expired reclaim lease earns one recovery retry and cannot wedge a label', () => {
+  const fx = fixture();
+  const paths = routerPaths(join(fx.root, '.router'));
+  const label = 'review:expired-reclaimer';
+  const path = paths.activity(activityKey(label));
+  const reclaimPath = `${path}.reclaim`;
+  try {
+    const at = new Date().toISOString();
+    writeActivity(path, {
+      label,
+      pid: 2_147_483_647,
+      started_at: at,
+      beat_at: at,
+    });
+    writeFileSync(
+      reclaimPath,
+      `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now() - 30_001, token: 'expired' })}\n`,
+    );
+
+    const claimed = claimActivity(paths, label);
+    assert.equal(claimed.record.pid, process.pid);
+    assert.equal(activityState(readActivity(path)), 'running');
+    assert.equal(existsSync(reclaimPath), false);
+    const diagnostics: string[] = [];
+    finishActivity(claimed, 'ok', diagnostics);
+    assert.deepEqual(diagnostics, []);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('every reclaim crash boundary leaves at most one owner and remains recoverable', async (t) => {
+  const reclaimPoints: ActivityTestPoint[] = [
+    'reclaim-guard-established',
+    'reclaim-liveness-confirmed',
+    'reclaim-before-unlink',
+    'reclaim-before-install',
+    'finish-snapshot',
+  ];
+  const activityModuleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  const pathsModuleUrl = new URL('../src/io/paths.ts', import.meta.url).href;
+
+  for (const point of reclaimPoints) {
+    await t.test(point, async () => {
+      const fx = fixture();
+      const paths = routerPaths(join(fx.root, '.router'));
+      const label = `review:crash:${point}`;
+      const path = paths.activity(activityKey(label));
+      const reclaimPath = `${path}.reclaim`;
+      const marker = join(fx.root, 'barrier-reached');
+      const release = join(fx.root, 'barrier-release');
+      let child: ChildProcess | undefined;
+      let stderr = '';
+      try {
+        if (point !== 'finish-snapshot') {
+          const at = new Date().toISOString();
+          writeActivity(path, {
+            label,
+            pid: 2_147_483_647,
+            started_at: at,
+            beat_at: at,
+          });
+        }
+
+        child = spawn(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `const { existsSync, writeFileSync } = await import('node:fs');\n` +
+              `const { claimActivity, finishActivity, setActivityTestHookForTesting } = await import(${JSON.stringify(activityModuleUrl)});\n` +
+              `const { routerPaths } = await import(${JSON.stringify(pathsModuleUrl)});\n` +
+              `const paths = routerPaths(${JSON.stringify(join(fx.root, '.router'))});\n` +
+              `setActivityTestHookForTesting((seen) => {\n` +
+              `  if (seen !== ${JSON.stringify(point)}) return;\n` +
+              `  writeFileSync(${JSON.stringify(marker)}, seen);\n` +
+              `  while (!existsSync(${JSON.stringify(release)})) {\n` +
+              `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);\n` +
+              `  }\n` +
+              `});\n` +
+              `const claimed = claimActivity(paths, ${JSON.stringify(label)});\n` +
+              (point === 'finish-snapshot'
+                ? `finishActivity(claimed, 'ok', []);\n`
+                : '') +
+              `process.exit(90);\n`,
+          ],
+          { stdio: ['ignore', 'ignore', 'pipe'] },
+        );
+        child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+        assert.ok(
+          await waitUntil(() => existsSync(marker)),
+          `child never reached ${point}: ${stderr}`,
+        );
+
+        const guardExpected = point !== 'finish-snapshot';
+        assert.equal(existsSync(reclaimPath), guardExpected);
+        if (point === 'reclaim-before-install') assert.equal(existsSync(path), false);
+
+        child.kill('SIGKILL');
+        await waitForExit(child);
+        assert.equal(child.signalCode, 'SIGKILL');
+
+        const beforeRecovery = readActivity(path);
+        assert.notEqual(activityState(beforeRecovery), 'running', 'a killed owner still looked live');
+
+        const recovered = claimActivity(paths, label);
+        assert.equal(recovered.record.pid, process.pid);
+        assert.equal(activityState(readActivity(path)), 'running');
+        assert.equal(existsSync(reclaimPath), false, 'the dead reclaim guard survived recovery');
+        assert.equal(
+          readdirSync(fx.activityDir).filter((name) => name.endsWith('.json')).length,
+          1,
+          'more than one public activity owner was installed',
+        );
+        const diagnostics: string[] = [];
+        finishActivity(recovered, 'ok', diagnostics);
+        assert.deepEqual(diagnostics, []);
+      } finally {
+        if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL');
+          await waitForExit(child).catch(() => undefined);
+        }
+        fx.cleanup();
+      }
+    });
+  }
+});
+
+test('an in-place heartbeat after stale detection makes reclaim stand down before unlink', async () => {
+  const fx = fixture();
+  const paths = routerPaths(join(fx.root, '.router'));
+  const label = 'review:heartbeat-resumed';
+  const path = paths.activity(activityKey(label));
+  const marker = join(fx.root, 'before-unlink');
+  const release = join(fx.root, 'release-unlink');
+  const activityModuleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  const pathsModuleUrl = new URL('../src/io/paths.ts', import.meta.url).href;
+  const staleBeat = new Date(Date.now() - DEFAULT_STALE_MS - 1_000).toISOString();
+  const stale = writeActivity(path, {
+    label,
+    pid: process.pid,
+    started_at: staleBeat,
+    beat_at: staleBeat,
+  });
+  const originalStat = statSync(path, { bigint: true });
+  let contender: ChildProcess | undefined;
+  let heartbeat: ReturnType<typeof startActivityHeartbeat> | undefined;
+  let stderr = '';
+  try {
+    contender = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const { existsSync, writeFileSync } = await import('node:fs');\n` +
+          `const { ActivityAlreadyExistsError, claimActivity, setActivityTestHookForTesting } = await import(${JSON.stringify(activityModuleUrl)});\n` +
+          `const { routerPaths } = await import(${JSON.stringify(pathsModuleUrl)});\n` +
+          `setActivityTestHookForTesting((seen) => {\n` +
+          `  if (seen !== 'reclaim-before-unlink') return;\n` +
+          `  writeFileSync(${JSON.stringify(marker)}, seen);\n` +
+          `  while (!existsSync(${JSON.stringify(release)})) {\n` +
+          `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);\n` +
+          `  }\n` +
+          `});\n` +
+          `try {\n` +
+          `  claimActivity(routerPaths(${JSON.stringify(join(fx.root, '.router'))}), ${JSON.stringify(label)});\n` +
+          `  process.exit(91);\n` +
+          `} catch (error) {\n` +
+          `  if (error instanceof ActivityAlreadyExistsError) process.exit(23);\n` +
+          `  console.error(error); process.exit(92);\n` +
+          `}\n`,
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    contender.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    assert.ok(await waitUntil(() => existsSync(marker)), `reclaimer never paused: ${stderr}`);
+
+    heartbeat = startActivityHeartbeat(path, stale, 20);
+    const started = await heartbeat.started;
+    if (!started.ok) assert.fail(started.error.message);
+    assert.ok(
+      await waitUntil(() => readActivity(path)?.beat_at !== staleBeat),
+      'old owner did not resume its heartbeat',
+    );
+    const resumed = readActivity(path);
+    assert.ok(resumed);
+    assert.equal(activityState(resumed), 'running');
+    const resumedStat = statSync(path, { bigint: true });
+    assert.equal(resumedStat.dev, originalStat.dev);
+    assert.equal(resumedStat.ino, originalStat.ino, 'heartbeat replaced rather than updated the inode');
+
+    writeFileSync(release, 'continue');
+    await waitForExit(contender);
+    assert.equal(contender.exitCode, 23, stderr);
+    const retained = readActivity(path);
+    assert.ok(retained);
+    assert.equal(retained.owner_token, stale.owner_token);
+    assert.equal(activityState(retained), 'running');
+    assert.equal(existsSync(`${path}.reclaim`), false);
+  } finally {
+    heartbeat?.stop();
+    if (contender !== undefined && contender.exitCode === null && contender.signalCode === null) {
+      contender.kill('SIGKILL');
+      await waitForExit(contender).catch(() => undefined);
+    }
+    fx.cleanup();
+  }
+});
+
+test('finish re-confirms ownership and inode after its snapshot before unlinking', async () => {
+  const fx = fixture();
+  const paths = routerPaths(join(fx.root, '.router'));
+  const label = 'review:finish-race';
+  const path = paths.activity(activityKey(label));
+  const marker = join(fx.root, 'finish-snapshot');
+  const release = join(fx.root, 'finish-release');
+  const result = join(fx.root, 'finish-result.json');
+  const activityModuleUrl = new URL('../src/io/activity.ts', import.meta.url).href;
+  const pathsModuleUrl = new URL('../src/io/paths.ts', import.meta.url).href;
+  let finisher: ChildProcess | undefined;
+  let stderr = '';
+  try {
+    finisher = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `const { existsSync, writeFileSync } = await import('node:fs');\n` +
+          `const { claimActivity, finishActivity, setActivityTestHookForTesting } = await import(${JSON.stringify(activityModuleUrl)});\n` +
+          `const { routerPaths } = await import(${JSON.stringify(pathsModuleUrl)});\n` +
+          `setActivityTestHookForTesting((seen) => {\n` +
+          `  if (seen !== 'finish-snapshot') return;\n` +
+          `  writeFileSync(${JSON.stringify(marker)}, seen);\n` +
+          `  while (!existsSync(${JSON.stringify(release)})) {\n` +
+          `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);\n` +
+          `  }\n` +
+          `});\n` +
+          `const claimed = claimActivity(routerPaths(${JSON.stringify(join(fx.root, '.router'))}), ${JSON.stringify(label)});\n` +
+          `const diagnostics = [];\n` +
+          `finishActivity(claimed, 'ok', diagnostics);\n` +
+          `writeFileSync(${JSON.stringify(result)}, JSON.stringify(diagnostics));\n`,
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    finisher.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    assert.ok(await waitUntil(() => existsSync(marker)), `finisher never paused: ${stderr}`);
+    const oldOwner = readActivity(path);
+    assert.ok(oldOwner);
+
+    const now = new Date().toISOString();
+    const replacement = writeActivity(path, {
+      label,
+      pid: process.pid,
+      started_at: now,
+      beat_at: now,
+    });
+    assert.notEqual(replacement.owner_token, oldOwner.owner_token);
+    writeFileSync(release, 'continue');
+    await waitForExit(finisher);
+    assert.equal(finisher.exitCode, 0, stderr);
+
+    assert.deepEqual(JSON.parse(readFileSync(result, 'utf8')), [
+      `could not remove activity ${path}: ownership or file identity changed`,
+    ]);
+    const retained = readActivity(path);
+    assert.ok(retained);
+    assert.equal(retained.owner_token, replacement.owner_token);
+    assert.equal(activityState(retained), 'running');
+  } finally {
+    if (finisher !== undefined && finisher.exitCode === null && finisher.signalCode === null) {
+      finisher.kill('SIGKILL');
+      await waitForExit(finisher).catch(() => undefined);
+    }
+    fx.cleanup();
+  }
 });
 
 test('a replacement with the same label, pid, and millisecond gets a new heartbeat authority', async () => {

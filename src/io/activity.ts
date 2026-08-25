@@ -2,7 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, linkSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  fsyncSync,
+  linkSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { ActivityOutcome, ActivityRecord } from '../domain/types.ts';
 import { writeJsonAtomic } from './atomicWrite.ts';
@@ -20,6 +30,9 @@ const MAX_PID = 0x7fff_ffff;
 // is not evidence of a fresh heartbeat. Keep the allowance deliberately much smaller than the
 // shared 90-second stale window.
 const MAX_FUTURE_BEAT_SKEW_MS = 5_000;
+// A reclaim is a short synchronous critical section. The lease exists so SIGKILL cannot leave
+// its mutex behind forever; unlike lock reclaim, activity reclaim has no slow reap loop to renew.
+const RECLAIM_LEASE_MS = 30_000;
 
 export type ActivityState = 'idle' | 'running' | 'disconnected';
 
@@ -36,6 +49,39 @@ export interface ObservedActivity extends ActivityFile {
 interface FileIdentity {
   dev: bigint;
   ino: bigint;
+}
+
+interface FileSnapshot {
+  text: string;
+  identity: FileIdentity;
+  mtimeMs: number;
+}
+
+interface ActivitySnapshot extends FileSnapshot {
+  record: ActivityRecord;
+}
+
+export type ActivityTestPoint =
+  | 'reclaim-guard-established'
+  | 'reclaim-liveness-confirmed'
+  | 'reclaim-before-unlink'
+  | 'reclaim-before-install'
+  | 'finish-snapshot';
+
+let activityTestHook: ((point: ActivityTestPoint) => void) | undefined;
+
+/**
+ * Internal deterministic barrier for crash/race tests. Production never installs this hook, so
+ * the default path is one undefined check at each otherwise unobservable filesystem boundary.
+ */
+export function setActivityTestHookForTesting(
+  hook: ((point: ActivityTestPoint) => void) | undefined,
+): void {
+  activityTestHook = hook;
+}
+
+function reachActivityTestPoint(point: ActivityTestPoint): void {
+  activityTestHook?.(point);
 }
 
 export interface ClaimedActivity {
@@ -150,61 +196,200 @@ function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-/** Read one stable path binding: the record and inode must agree across the read. */
-function activitySnapshot(path: string): { record: ActivityRecord; identity: FileIdentity } | null {
+/** Read bytes and inode identity through one descriptor, never through two path resolutions. */
+function fileSnapshot(path: string): FileSnapshot | null {
+  let fd: number;
   try {
-    const before = statSync(path, { bigint: true });
-    const record = readActivity(path);
-    const after = statSync(path, { bigint: true });
-    if (record === null || before.dev !== after.dev || before.ino !== after.ino) return null;
-    return { record, identity: { dev: after.dev, ino: after.ino } };
+    fd = openSync(path, 'r');
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    const stat = fstatSync(fd, { bigint: true });
+    return {
+      text: readFileSync(fd, 'utf8'),
+      identity: { dev: stat.dev, ino: stat.ino },
+      mtimeMs: Number(stat.mtimeNs / 1_000_000n),
+    };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Read one activity record and its path binding from the same descriptor. */
+function activitySnapshot(path: string): ActivitySnapshot | null {
+  try {
+    const snapshot = fileSnapshot(path);
+    if (snapshot === null) return null;
+    const record = parseActivity(JSON.parse(snapshot.text));
+    return record === null ? null : { ...snapshot, record };
   } catch {
     return null;
   }
 }
 
-/**
- * Remove exactly the disconnected inode we inspected, never a same-label replacement.
- *
- * The hard-link guard is an atomic reference to that inode. A competing claimant sees the
- * guard and fails closed; immediately before unlinking the public name we confirm both the
- * frozen owner token and the inode identity. No liveness rule is duplicated here.
- */
-function reclaimDisconnectedActivity(path: string, expected: ActivityRecord): boolean {
-  const reclaimPath = `${path}.reclaim`;
+function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
+  return left.text === right.text && sameIdentity(left.identity, right.identity);
+}
+
+/** Whether a path still names the exact bytes and inode that were inspected. */
+function stillTheSameFile(path: string, expected: FileSnapshot): boolean {
+  const current = fileSnapshot(path);
+  return current !== null && sameSnapshot(current, expected);
+}
+
+interface ReclaimerRecord {
+  pid: number;
+  beatAtMs: number;
+  token: string;
+}
+
+function parseReclaimer(text: string): ReclaimerRecord | null {
   try {
-    linkSync(path, reclaimPath);
+    const value = JSON.parse(text) as Record<string, unknown>;
+    if (!validPid(value.pid)) return null;
+    if (typeof value.beatAtMs !== 'number' || !Number.isFinite(value.beatAtMs)) return null;
+    if (typeof value.token !== 'string' || value.token.length === 0) return null;
+    return { pid: value.pid as number, beatAtMs: value.beatAtMs, token: value.token };
+  } catch {
+    return null;
+  }
+}
+
+function reclaimerText(token: string): string {
+  return `${JSON.stringify({ pid: process.pid, beatAtMs: Date.now(), token })}\n`;
+}
+
+function pidIsGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
   } catch (error) {
-    if (errorCode(error) === 'ENOENT' || errorCode(error) === 'EEXIST') return false;
-    throw error;
+    return errorCode(error) === 'ESRCH';
+  }
+}
+
+/** Publish a complete reclaim mutex atomically, with no live-but-empty create window. */
+function installReclaimer(path: string, token: string): boolean {
+  const staging = `${path}.${process.pid}.${token}.tmp`;
+  try {
+    writeFileSync(staging, reclaimerText(token), { flag: 'w' });
+    const fd = openSync(staging, 'r+');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    linkSync(staging, path);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === 'EEXIST') return false;
+    throw new Error(`cannot install activity reclaimer for ${path}: ${(error as Error).message}`);
+  } finally {
+    try {
+      unlinkSync(staging);
+    } catch {
+      /* the published hard link, if any, keeps the complete inode alive */
+    }
+  }
+}
+
+/** Clear only a mutex whose pid is gone or whose lease was not renewed for 30 seconds. */
+function clearDeadReclaimer(path: string): boolean {
+  const snapshot = fileSnapshot(path);
+  if (snapshot === null) return true;
+  const held = parseReclaimer(snapshot.text);
+  const dead =
+    held === null
+      ? Date.now() - snapshot.mtimeMs > RECLAIM_LEASE_MS
+      : pidIsGone(held.pid) || Date.now() - held.beatAtMs > RECLAIM_LEASE_MS;
+  // A live reclaimer may have renewed or replaced the mutex since our read. Removing that new
+  // file would admit two reclaimers, so bytes and inode are both re-confirmed immediately first.
+  if (!dead || !stillTheSameFile(path, snapshot)) return false;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* another contender clearing it first is the same successful outcome */
+  }
+  return true;
+}
+
+function stillReclaiming(path: string, token: string): boolean {
+  try {
+    const snapshot = fileSnapshot(path);
+    return snapshot !== null && parseReclaimer(snapshot.text)?.token === token;
+  } catch {
+    return false;
+  }
+}
+
+function releaseReclaimer(path: string, token: string): void {
+  if (!stillReclaiming(path, token)) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    /* gone already */
+  }
+}
+
+type ReclaimOutcome = 'installed' | 'retry' | 'busy' | 'recovered';
+
+/**
+ * Replace exactly one confirmed-disconnected activity under a leased, token-owned mutex.
+ *
+ * What the caller observed before the mutex is only a reason to inspect. Under the mutex we
+ * re-read liveness, then immediately before unlink re-confirm the exact bytes and inode. This is
+ * what prevents an in-place heartbeat between those steps from being deleted as stale.
+ */
+function reclaimDisconnectedActivity(
+  path: string,
+  expected: ActivitySnapshot,
+  candidate: string,
+): ReclaimOutcome {
+  const reclaimPath = `${path}.reclaim`;
+  const token = randomUUID();
+  if (!installReclaimer(reclaimPath, token)) {
+    return clearDeadReclaimer(reclaimPath) ? 'recovered' : 'busy';
   }
 
   try {
-    const guarded = activitySnapshot(reclaimPath);
-    const current = activitySnapshot(path);
+    reachActivityTestPoint('reclaim-guard-established');
+    const held = activitySnapshot(path);
+    if (held === null || !sameSnapshot(held, expected)) return 'retry';
+    if (activityState(held.record) !== 'disconnected') return 'retry';
+    reachActivityTestPoint('reclaim-liveness-confirmed');
+
+    // The test point is intentionally before the final confirmation: a heartbeat resumed at the
+    // last observable boundary must change the bytes and make this reclaim stand down.
+    reachActivityTestPoint('reclaim-before-unlink');
+    if (!stillReclaiming(reclaimPath, token)) return 'retry';
+    const confirmed = activitySnapshot(path);
     if (
-      guarded === null ||
-      current === null ||
-      guarded.record.owner_token !== expected.owner_token ||
-      current.record.owner_token !== expected.owner_token ||
-      !sameIdentity(guarded.identity, current.identity) ||
-      activityState(current.record) !== 'disconnected'
+      confirmed === null ||
+      !sameSnapshot(confirmed, held) ||
+      activityState(confirmed.record) !== 'disconnected'
     ) {
-      return false;
+      return 'retry';
     }
     try {
       unlinkSync(path);
-      return true;
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return true;
+      if (errorCode(error) === 'ENOENT') return 'retry';
+      throw error;
+    }
+
+    reachActivityTestPoint('reclaim-before-install');
+    if (!stillReclaiming(reclaimPath, token)) return 'retry';
+    try {
+      linkSync(candidate, path);
+      return 'installed';
+    } catch (error) {
+      if (errorCode(error) === 'EEXIST') return 'retry';
       throw error;
     }
   } finally {
-    try {
-      unlinkSync(reclaimPath);
-    } catch {
-      /* a leftover guard only makes a later claim fail closed */
-    }
+    releaseReclaimer(reclaimPath, token);
   }
 }
 
@@ -233,26 +418,44 @@ export function claimActivity(
   });
 
   try {
-    // A stale-record reclaimer holds this hard-link guard across its identity check and unlink.
-    // Do not fill the public name during that narrow window.
-    if (existsSync(`${path}.reclaim`)) {
-      throw new ActivityAlreadyExistsError(label, path, readActivity(path));
-    }
+    let recoveries = 0;
     for (;;) {
+      const reclaimPath = `${path}.reclaim`;
+      try {
+        if (fileSnapshot(reclaimPath) !== null) {
+          // Breaking one dead lease earns a free retry. A second recovery request is treated as
+          // contention so a caller without a wait contract cannot spin forever.
+          if (recoveries === 0 && clearDeadReclaimer(reclaimPath)) {
+            recoveries += 1;
+            continue;
+          }
+          throw new ActivityAlreadyExistsError(label, path, readActivity(path));
+        }
+      } catch (error) {
+        if (error instanceof ActivityAlreadyExistsError) throw error;
+        throw new Error(`cannot inspect activity reclaimer for ${path}: ${(error as Error).message}`);
+      }
+
       try {
         linkSync(candidate, path);
         break;
       } catch (error) {
         if (errorCode(error) !== 'EEXIST') throw error;
-        const existing = readActivity(path);
-        if (
-          existing === null ||
-          activityState(existing) !== 'disconnected' ||
-          !reclaimDisconnectedActivity(path, existing)
-        ) {
-          throw new ActivityAlreadyExistsError(label, path, existing);
+        const existing = activitySnapshot(path);
+        if (existing === null || activityState(existing.record) !== 'disconnected') {
+          throw new ActivityAlreadyExistsError(label, path, existing?.record ?? null);
         }
-        // The stale inode is gone. The same exclusive link decides which waiting caller wins.
+        const outcome = reclaimDisconnectedActivity(path, existing, candidate);
+        if (outcome === 'installed') break;
+        if (outcome === 'recovered' && recoveries === 0) {
+          recoveries += 1;
+          continue;
+        }
+        if (outcome === 'busy' || outcome === 'recovered') {
+          throw new ActivityAlreadyExistsError(label, path, readActivity(path));
+        }
+        // A changed or vanished predecessor is re-read from the top. The exclusive link remains
+        // the only operation that can install an owner.
       }
     }
   } finally {
@@ -295,8 +498,25 @@ export function finishActivity(
       diagnostics.push(`could not remove activity ${claimed.path}: ownership or file identity changed`);
       return;
     }
+    reachActivityTestPoint('finish-snapshot');
     try {
-      writeActivity(claimed.path, { ...claimed.record, ended_at: endedAt, outcome });
+      const finished = parseActivity({ ...claimed.record, ended_at: endedAt, outcome });
+      if (finished === null) throw new Error(`cannot write invalid activity to ${claimed.path}`);
+      // Re-resolve immediately before unlink. A replacement installed after the first snapshot
+      // is not ours even if the old owner_token were somehow reused; inode identity closes that
+      // window. A same-owner heartbeat may change bytes in place and is safe to finish.
+      const confirmed = activitySnapshot(claimed.path);
+      if (
+        confirmed === null ||
+        confirmed.record.owner_token !== claimed.record.owner_token ||
+        !sameIdentity(confirmed.identity, claimed.identity)
+      ) {
+        diagnostics.push(
+          `could not remove activity ${claimed.path}: ownership or file identity changed`,
+        );
+        return;
+      }
+      unlinkSync(claimed.path);
       return;
     } catch (error) {
       if (attempt === attempts) {
