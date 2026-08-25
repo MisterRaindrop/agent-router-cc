@@ -41,7 +41,10 @@ function setup(): Fixture {
   };
 }
 
-function passedResult(id: string): RunResult {
+// A record shaped like one dispatch actually writes. It used to carry neither `base_sha` nor
+// `verified_head`, which no real run has ever produced -- and that omission is what let the
+// queue gate merge a branch's current tip for so long without a single test noticing.
+function passedResult(id: string, base: string, head: string): RunResult {
   return {
     task_id: id,
     attempt_number: 1,
@@ -54,6 +57,9 @@ function passedResult(id: string): RunResult {
     ended_at: '2026-07-31T00:00:01.000Z',
     wall_seconds: 1,
     worker: { kind: 'codex' },
+    base_sha: base,
+    branch: taskBranch(id),
+    verified_head: head,
     verifier: { result: 'PASSED', checks: [] },
   };
 }
@@ -69,7 +75,7 @@ function stageTask(
   mutate(fixture.repo);
   const sha = fx.addCommit(fixture.repo, `task ${id}`);
   fx.git(fixture.repo, ['checkout', '-q', 'main']);
-  store.writeResult(fixture.paths, id, passedResult(id));
+  store.writeResult(fixture.paths, id, passedResult(id, base, sha));
   return sha;
 }
 
@@ -354,6 +360,38 @@ test('a tracked modification still refuses, and names what is uncommitted', asyn
     assert.equal(gate.ok, false);
     assert.equal(gate.reason, 'checkout_dirty');
     assert.ok(gate.dirty?.some((entry) => entry.includes('tracked.txt')), JSON.stringify(gate.dirty));
+  } finally {
+    fx.cleanup(fixture.repo);
+  }
+});
+
+// The head pin went into `router land` first and nowhere else, which left the identical hole open
+// one command away: THIS is the other path that merges a run branch on the strength of a stored
+// PASSED, and it does not re-run scope or secret-scan either. The reviewer's evidence was
+// `{"gateStatus":0,"integrationContainsUnverified":true}`.
+test('the queue gate refuses a branch that has moved past its verified commit', async () => {
+  const fixture = setup();
+  try {
+    stageTask(fixture, 't1', (repo) => fx.write(repo, 'src/t1.ts', 'export const t1 = 1;\n'));
+    writeGate(fixture, [[NODE, '-e', 'process.exit(0)']]);
+
+    // A commit appended after the verdict -- exactly what a failed `resume`, or a person, leaves.
+    fx.git(fixture.repo, ['checkout', '-q', taskBranch('t1')]);
+    fx.write(fixture.repo, 'src/t1.ts', 'export const t1 = 999; // never verified\n');
+    fx.addCommit(fixture.repo, 'unreviewed');
+    fx.git(fixture.repo, ['checkout', '-q', 'main']);
+
+    const gate = await runQueueGate(fixture.deps, 't1');
+    assert.equal(gate.ok, false, `the gate merged an unverified commit: ${JSON.stringify(gate)}`);
+    assert.equal(gate.reason, 'head_not_verified', JSON.stringify(gate));
+    assert.match(String(gate.detail), /was verified/, JSON.stringify(gate));
+    // And nothing reached the integration branch -- here, it was never even created, because the
+    // refusal happens before any ref is touched.
+    assert.doesNotMatch(
+      fx.git(fixture.repo, ['branch', '--format=%(refname:short)']),
+      new RegExp(`^${INTEGRATION}$`, 'm'),
+      'the gate created the integration branch before refusing',
+    );
   } finally {
     fx.cleanup(fixture.repo);
   }

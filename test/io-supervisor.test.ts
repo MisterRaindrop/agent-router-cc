@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -246,6 +247,70 @@ test('a SIGTERM-ignoring child is escalated and waited out before supervision re
       'a SIGTERM-ignoring child of the executor outlived supervision',
     );
     assert.equal(outcome.groupSurvived, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The finding this test exists for is one `node --test` structurally cannot see: the drain's
+// poll timer was `unref()`'d, so it did not hold the event loop open -- but the test runner's
+// own handles did, on its behalf. The test passed while the real CLI, whose only driver is a
+// top-level await, exited 13 with the drain half-done and the child still running.
+//
+// So this one runs supervision in a SEPARATE node process with nothing else pending, which is
+// the shape the CLI actually has. It is the only honest way to assert "the process stays alive
+// until the group is gone".
+test('supervision keeps a standalone process alive until the group is drained', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'router-supervise-standalone-'));
+  const ready = join(dir, 'ready');
+  const survivorPidFile = join(dir, 'survivor.pid');
+  writeFileSync(
+    join(dir, 'stubborn.mjs'),
+    "import { writeFileSync } from 'node:fs';\n" +
+      "process.on('SIGTERM', () => {});\n" +
+      `writeFileSync(${JSON.stringify(ready)}, '1');\n` +
+      'setInterval(() => {}, 1000);\n',
+  );
+  writeFileSync(
+    join(dir, 'leader.mjs'),
+    "import { spawn } from 'node:child_process';\n" +
+      "import { existsSync, writeFileSync } from 'node:fs';\n" +
+      `const c = spawn(process.execPath, [${JSON.stringify(join(dir, 'stubborn.mjs'))}], { stdio: 'ignore' });\n` +
+      `writeFileSync(${JSON.stringify(survivorPidFile)}, String(c.pid));\n` +
+      'c.unref();\n' +
+      `const deadline = Date.now() + 5000;\n` +
+      `while (!existsSync(${JSON.stringify(ready)}) && Date.now() < deadline) {}\n` +
+      'process.exit(0);\n',
+  );
+  // A top-level await and nothing else -- exactly src/index.ts.
+  const driver = join(dir, 'driver.mjs');
+  writeFileSync(
+    driver,
+    `const { superviseWorker } = await import(${JSON.stringify(join(process.cwd(), 'src/io/supervisor.ts'))});\n` +
+      'const outcome = await superviseWorker({\n' +
+      `  argv: [process.execPath, ${JSON.stringify(join(dir, 'leader.mjs'))}],\n` +
+      `  cwd: ${JSON.stringify(dir)},\n` +
+      '  env: process.env,\n' +
+      `  logPath: ${JSON.stringify(join(dir, 'worker.log'))},\n` +
+      `  heartbeatPath: ${JSON.stringify(join(dir, 'heartbeat'))},\n` +
+      `  watchPaths: [${JSON.stringify(dir)}],\n` +
+      '  maxWallMs: 20000, stallMs: 20000, pollIntervalMs: 50, sigkillGraceMs: 300,\n' +
+      '});\n' +
+      'console.log(JSON.stringify({ exitClass: outcome.exitClass, groupSurvived: outcome.groupSurvived }));\n',
+  );
+  try {
+    const run = spawnSync(process.execPath, [driver], { encoding: 'utf8', timeout: 30_000 });
+    // Exit 13 is node's "unsettled top-level await" -- the exact symptom of the unref'd timer.
+    assert.equal(run.status, 0, `driver exited ${run.status}: ${run.stdout}${run.stderr}`);
+    assert.deepEqual(JSON.parse(run.stdout.trim()), { exitClass: 'ok', groupSurvived: false });
+
+    const survivor = Number(readFileSync(survivorPidFile, 'utf8').trim());
+    assert.ok(Number.isInteger(survivor) && survivor > 1, 'the leader never reported its child');
+    assert.throws(
+      () => process.kill(survivor, 0),
+      /ESRCH|no such process/i,
+      'the standalone process exited while its executor child was still running',
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

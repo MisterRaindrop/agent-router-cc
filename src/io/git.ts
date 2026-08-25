@@ -320,8 +320,17 @@ export function resetHardTracked(cwd: string, sha: string): void {
 }
 
 /** Merge a branch into the current HEAD (no fast-forward). Throws on conflict. */
-export function mergeNoFF(cwd: string, branch: string): void {
-  git(cwd, ['merge', '--no-ff', '--no-edit', branch]);
+/**
+ * Merge with a merge commit. `committish` should be a SHA, not a branch name, wherever the caller
+ * has already decided WHICH commit it is merging: resolving the name a second time inside git is
+ * a second chance for the ref to have moved, and the reviewer used exactly that gap to land an
+ * unverified commit between the check and the merge. `message` keeps the human-readable subject
+ * a branch name would have produced.
+ */
+export function mergeNoFF(cwd: string, committish: string, message?: string): void {
+  const args = ['merge', '--no-ff', '--no-edit', committish];
+  if (message !== undefined) args.push('-m', message);
+  git(cwd, args);
 }
 
 /** Abort an in-progress merge, restoring the working tree. Best effort. */
@@ -344,6 +353,17 @@ export function updateRef(cwd: string, ref: string, sha: string): void {
 
 export function deleteBranch(cwd: string, branch: string): void {
   tryGit(cwd, ['branch', '-D', branch]);
+}
+
+/**
+ * Delete a branch only while it still points at `expectedSha`; returns false if it has moved.
+ *
+ * `git branch -D` deletes whatever the name currently means, so a branch that gained a commit
+ * between the merge and the cleanup was deleted along with the only reference to that commit.
+ * update-ref's expected-old-value is git's own compare-and-swap for exactly this.
+ */
+export function deleteBranchAt(cwd: string, branch: string, expectedSha: string): boolean {
+  return tryGit(cwd, ['update-ref', '-d', `refs/heads/${branch}`, expectedSha]).ok;
 }
 
 // ---------------------------------------------------------------------------

@@ -534,3 +534,58 @@ test('landing an already-landed task says so instead of failing in git', () => {
     fx.cleanup(dir);
   }
 });
+
+// The first head-pin fix checked the tip and then merged the branch NAME, letting git resolve it
+// a second time. The reviewer moved the ref in between and landed an unverified commit:
+// `{"landStatus":0,"unverifiedFileLanded":true}`. Reproduced here with a git wrapper that moves
+// the branch on the merge call itself, which is the same window a concurrent `update-ref` gets.
+test('land merges the commit it verified, not whatever the branch means by then', () => {
+  chmodSync(FAKE_CODEX, 0o755);
+  const dir = fx.initRepo();
+  fx.write(dir, 'src/a.ts', 'export const x = 1;\n');
+  fx.addCommit(dir, 'base');
+  const env = { ROUTER_CODEX_BIN: FAKE_CODEX, ROUTER_CODEX_SESSIONS_DIR: join(dir, 'no-sessions') };
+  try {
+    router(dir, ['new', 'demo', '--title', 'Demo'], env);
+    assert.equal(JSON.parse(router(dir, ['dispatch', 'demo', '--json'], env).out).verifier, 'PASSED');
+    const verified = fx.git(dir, ['rev-parse', 'router/demo']).trim();
+
+    // An unverified commit parked off to the side, ready to be swapped in.
+    fx.git(dir, ['checkout', '-q', '-b', 'evil', 'router/demo']);
+    fx.write(dir, 'src/a.ts', 'export const x = 666; // not verified\n');
+    fx.addCommit(dir, 'evil');
+    const evil = fx.git(dir, ['rev-parse', 'evil']).trim();
+    fx.git(dir, ['checkout', '-q', 'main']);
+
+    // A `git` on PATH that moves router/demo to the evil commit the moment land runs `merge`.
+    const shim = join(dir, 'shimbin');
+    execFileSync('mkdir', ['-p', shim]);
+    writeFileSync(
+      join(shim, 'git'),
+      '#!/bin/sh\n' +
+        'real=/usr/bin/git\n' +
+        'for a in "$@"; do\n' +
+        '  if [ "$a" = "merge" ]; then\n' +
+        `    "$real" update-ref refs/heads/router/demo ${evil} >/dev/null 2>&1\n` +
+        '    break\n' +
+        '  fi\n' +
+        'done\n' +
+        'exec "$real" "$@"\n',
+    );
+    chmodSync(join(shim, 'git'), 0o755);
+
+    const l = router(dir, ['land', 'demo'], { ...env, PATH: `${shim}:${process.env.PATH}` });
+    // Either outcome is acceptable; landing the evil commit is not.
+    assert.doesNotMatch(
+      readFileSync(join(dir, 'src', 'a.ts'), 'utf8'),
+      /not verified/,
+      `land merged a commit that was swapped in after the check: ${l.out}`,
+    );
+    // If it merged at all, it merged the SHA it verified.
+    if (l.code === 0) {
+      assert.match(fx.git(dir, ['log', '--format=%H', 'main']), new RegExp(verified));
+    }
+  } finally {
+    fx.cleanup(dir);
+  }
+});

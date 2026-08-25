@@ -24,6 +24,7 @@ import { taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker, type SupervisionOutcome } from '../io/supervisor.ts';
+import { pinnedHead } from './verifiedHead.ts';
 import { loadGateConfig, selectGate } from './gateConfig.ts';
 
 export interface GateQueueDeps {
@@ -77,6 +78,13 @@ export async function runQueueGate(
   if (!branchExists(paths.repoRoot, branch)) {
     return { ok: false, reason: 'run_branch_missing' };
   }
+  // The same head pin `router land` applies, because this is the OTHER path that merges a run
+  // branch on the strength of a stored PASSED. The first version of that fix went into `land`
+  // alone, which left the identical hole open one command away: this gate merged the branch's
+  // CURRENT tip into the integration branch, and it does not re-run scope or secret-scan, so a
+  // commit appended after the verdict reached the integration branch unexamined.
+  const pin = pinnedHead(paths.repoRoot, branch, result);
+  if (!pin.ok) return { ok: false, reason: 'head_not_verified', detail: pin.reason };
 
   const acquired = acquireLock(paths.gateLock(), {
     waitMs: (config.lock_wait_minutes ?? LOCK_WAIT_MINUTES_DEFAULT) * 60_000,
@@ -151,6 +159,15 @@ export async function runQueueGate(
     currentPgid = undefined;
     assertStillOurs();
     if (heartbeatError !== undefined) throw heartbeatError;
+    // A gate command whose process group outlived SIGKILL is still able to write this checkout,
+    // so the next command's result would not be about the tree we think it is. `groupSurvived`
+    // was wired into dispatch and nowhere else; this is the other caller.
+    if (outcome.groupSurvived) {
+      throw new Error(
+        `a gate command left a process group that survived SIGKILL; refusing to continue in a ` +
+          `checkout something else is still writing`,
+      );
+    }
     return outcome;
   };
 
@@ -167,7 +184,7 @@ export async function runQueueGate(
     baseSha = resolveCommit(paths.repoRoot, 'HEAD');
 
     try {
-      mergeNoFF(paths.repoRoot, branch);
+      mergeNoFF(paths.repoRoot, pin.sha, `Merge branch '${branch}'`);
     } catch {
       mergeAbort(paths.repoRoot);
       resetHardTracked(paths.repoRoot, baseSha);

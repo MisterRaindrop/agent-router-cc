@@ -75,7 +75,12 @@ function waitForGroupGone(pgid: number, budgetMs: number, stepMs: number): Promi
         resolve(false);
         return;
       }
-      setTimeout(tick, stepMs).unref();
+      // NOT unref'd, and that is the whole point. The real CLI is driven by a top-level await
+      // (src/index.ts); an unref'd timer does not hold the event loop open, so node exited 13
+      // with the drain half-done -- no outcome, no result written, no SIGKILL sent, and the
+      // child still running in the user's checkout. It only looked fine under `node --test`,
+      // whose own handles kept the loop alive for us.
+      setTimeout(tick, stepMs);
     };
     tick();
   });

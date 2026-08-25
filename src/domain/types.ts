@@ -179,6 +179,8 @@ export interface GateResult {
   } | null;
   /** The tracked modifications that made the checkout unborrowable (capped for display). */
   dirty?: string[];
+  /** Why a coded `reason` happened, when the code alone does not say enough to act on. */
+  detail?: string;
   /** Output of the failing `reset` command, when a reset is what stopped the gate. */
   reset_log?: string;
   rc?: number | null;
