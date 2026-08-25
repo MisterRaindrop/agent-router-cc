@@ -4,3 +4,9 @@ node_modules/
 .DS_Store
 .claude/
 docs/design/
+
+# Scratch files a background reviewer leaves behind. It runs with `--sandbox workspace-write`
+# in this very checkout, so its reproduction scripts land in the repo root -- and one of them
+# reached main, swept up by a `git add -A`. Ignored rather than remembered.
+.review-repro*
+.router-probe*
