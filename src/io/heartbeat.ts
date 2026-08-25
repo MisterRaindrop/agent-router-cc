@@ -22,11 +22,17 @@ import { spawn } from 'node:child_process';
 /** Beat well inside DEFAULT_STALE_MS (90s): six missed beats before anyone may take over. */
 export const DEFAULT_BEAT_MS = 15_000;
 
+export type HeartbeatStartResult =
+  | { ok: true; pid: number }
+  | { ok: false; error: Error };
+
 export interface HeartbeatHandle {
   /** Stop beating. Idempotent; safe to call after the child already exited. */
   stop(): void;
   /** The beating child's pid, or null when it could not be started. */
   readonly pid: number | null;
+  /** Resolves after the OS either starts the child or reports why it could not. Never rejects. */
+  readonly started: Promise<HeartbeatStartResult>;
 }
 
 // Runs in the child. Deliberately tiny and dependency-free -- it is a string, so the
@@ -142,11 +148,35 @@ export function startJsonHeartbeat(
     ],
     { detached: true, stdio: 'ignore' },
   );
+  let stopped = false;
+  let pid = child.pid ?? null;
+  const started = new Promise<HeartbeatStartResult>((resolve) => {
+    child.once('spawn', () => {
+      pid = child.pid ?? null;
+      if (pid === null) {
+        resolve({ ok: false, error: new Error('heartbeat child started without a pid') });
+        return;
+      }
+      if (stopped) {
+        try {
+          process.kill(pid, 'SIGTERM');
+        } catch {
+          /* already gone */
+        }
+      }
+      resolve({ ok: true, pid });
+    });
+    // A listener is required even for callers that do not inspect `started`: an unhandled
+    // ChildProcess error terminates the router, which is strictly worse than a heartbeat that
+    // reports it could not start and lets the owning workflow fail closed.
+    child.once('error', (error) => {
+      pid = null;
+      resolve({ ok: false, error });
+    });
+  });
   // Detached and unref'd so the parent neither waits on it nor drags it down mid-write when a
   // terminal signal hits the parent's process group. The child owns its parent-pid check.
   child.unref();
-  let stopped = false;
-  const pid = child.pid ?? null;
   const stop = (): void => {
     if (stopped) return;
     stopped = true;
@@ -162,6 +192,7 @@ export function startJsonHeartbeat(
     get pid() {
       return pid;
     },
+    started,
   };
 }
 
