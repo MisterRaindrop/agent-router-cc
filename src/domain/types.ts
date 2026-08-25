@@ -251,6 +251,11 @@ export interface RunResult {
    */
   state_tampering?: string[];
   /**
+   * Concurrent orchestration-state changes that were observed but cannot alter this run's
+   * frozen contract or verdict. Unlike state_tampering, these do not fail the run.
+   */
+  state_changes?: string[];
+  /**
    * Something in the executor's process group outlived SIGKILL and can still write the checkout.
    * The run is failed rather than verified: every later step would be racing that writer.
    */
