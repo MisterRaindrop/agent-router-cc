@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { closeSync, openSync, readSync, readdirSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { activityKey } from '../io/activity.ts';
 import type { RouterPaths } from '../io/paths.ts';
 
 // Detection for Must NOT 11: "the executor must not write real .router/ orchestration state".
@@ -45,11 +46,12 @@ function isOwnRunArtifact(rel: string, ownTaskId: string): boolean {
   if (top === 'gate.lock' || top.startsWith('gate.lock.')) return true;
   // Snapshotted by the statusline on every render, which is continuously, for the whole run.
   if (top === 'usage.json') return true;
-  // Display-only liveness records, whose cross-process heartbeat rewrites `beat_at` every few
-  // seconds -- OURS, for this very run. Watching them would fail every dispatch that publishes
-  // one. Nothing that decides a merge reads them (Must NOT 5 of the observability design), so
-  // excluding them costs no authority.
-  if (top === 'activity') return true;
+  // Our OWN liveness record: we create it, beat it every few seconds, and delete it at closeout,
+  // so watching it would fail every dispatch that publishes one. Only ours -- skipping the whole
+  // directory was a hole, and the reviewer walked through it: an executor could forge someone
+  // else's record with a live pid and a future `beat_at`, have it read `running` forever, and
+  // block a later `router supervise --label` on that name. Measured: `diff: []`, state `running`.
+  if (top === 'activity' && parts[1] === `${activityKey(`task:${ownTaskId}`)}.json`) return true;
   // A regenerable cache rather than orchestration state, and `router symbol index` takes no
   // checkout lock -- so a user rebuilding it in another terminal would otherwise fail the run.
   if (top === 'symbols') return true;
@@ -85,6 +87,28 @@ function hashFile(abs: string): string | null {
   }
 }
 
+/**
+ * Hash of an activity record with the heartbeat field normalised away.
+ *
+ * Anything that does not parse as an activity-shaped object is hashed raw: a non-JSON file under
+ * `activity/` is itself suspicious, and quietly ignoring it would be another hole.
+ */
+function hashActivity(abs: string): string | null {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(readFileSync(abs, 'utf8')) as Record<string, unknown>;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return hashFile(abs);
+  } catch {
+    return hashFile(abs);
+  }
+  const normalised: Record<string, unknown> = { ...parsed, beat_at: '<beat>' };
+  const canonical = Object.keys(normalised)
+    .sort()
+    .map((key) => `${key}=${JSON.stringify(normalised[key])}`)
+    .join('\n');
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
 /** `relative path -> content hash` for every orchestration-state file that is not ours to write. */
 export function fingerprintState(paths: RouterPaths, ownTaskId: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -104,7 +128,11 @@ export function fingerprintState(paths: RouterPaths, ownTaskId: string): Map<str
         continue;
       }
       if (!entry.isFile()) continue;
-      const hash = hashFile(abs);
+      // Somebody else's activity record: a concurrent, legitimate heartbeat rewrites `beat_at`
+      // every few seconds, and failing a run over that would be a false alarm. Everything else
+      // about the record is watched -- it appearing, vanishing, or changing identity is exactly
+      // the forgery this guard exists to catch.
+      const hash = rel.split(sep)[0] === 'activity' ? hashActivity(abs) : hashFile(abs);
       if (hash !== null) out.set(rel, hash);
     }
   };
