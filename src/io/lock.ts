@@ -85,7 +85,7 @@ type LockRead =
   | { kind: 'corrupt' }
   | { kind: 'valid'; info: LockInfo; stored: StoredLock };
 
-const DEFAULT_STALE_MS = 90_000;
+export const DEFAULT_STALE_MS = 90_000;
 const DEFAULT_POLL_MS = 100;
 const DEFAULT_REAP_GRACE_MS = 3_000;
 /**

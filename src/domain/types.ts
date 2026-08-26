@@ -251,6 +251,11 @@ export interface RunResult {
    */
   state_tampering?: string[];
   /**
+   * Concurrent orchestration-state changes that were observed but cannot alter this run's
+   * frozen contract or verdict. Unlike state_tampering, these do not fail the run.
+   */
+  state_changes?: string[];
+  /**
    * Something in the executor's process group outlived SIGKILL and can still write the checkout.
    * The run is failed rather than verified: every later step would be racing that writer.
    */
@@ -285,6 +290,26 @@ export interface RunStatus {
   last_output_at: string | null;
   stall_deadline: string | null;
   recent_action?: string;
+}
+
+// -- Router-managed activity -------------------------------------------------
+// A display-only liveness record. It must never authorize a state transition: task/result files
+// remain the source of truth for dispatch, land, queue admission, and every other decision path.
+export type ActivityOutcome = 'ok' | 'failed' | 'timed_out' | 'stalled';
+
+export interface ActivityRecord {
+  label: string;
+  /** Unique authority for the heartbeat; labels, pids, and timestamps are not ownership. */
+  owner_token: string;
+  /** The router process that owns the whole activity, not a worker it may have launched. */
+  pid: number;
+  started_at: string;
+  /** Refreshed by an out-of-process heartbeat so spawnSync cannot freeze it. */
+  beat_at: string;
+  ended_at?: string;
+  outcome?: ActivityOutcome;
+  /** Optional richer status document, e.g. tasks/<id>/status.json for a dispatch. */
+  status_path?: string;
 }
 
 export interface RunPhaseTimings {

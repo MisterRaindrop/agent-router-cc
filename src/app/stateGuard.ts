@@ -2,8 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from 'node:crypto';
-import { closeSync, openSync, readSync, readdirSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readlinkSync,
+  readSync,
+  readdirSync,
+} from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { activityKey } from '../io/activity.ts';
 import type { RouterPaths } from '../io/paths.ts';
 
 // Detection for Must NOT 11: "the executor must not write real .router/ orchestration state".
@@ -56,14 +66,30 @@ function isOwnRunArtifact(rel: string, ownTaskId: string): boolean {
   return leaf === 'status.json' || leaf === 'heartbeat' || leaf === 'logs';
 }
 
-/** sha256 of a file's bytes, read in chunks so a large log cannot be held in memory whole. */
-function hashFile(abs: string): string | null {
+/** Open a path only if that exact directory entry is still a regular file. */
+function openRegularFile(abs: string): number | null {
   let fd: number;
   try {
-    fd = openSync(abs, 'r');
+    fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     return null; // vanished or unreadable between readdir and here
   }
+  try {
+    if (!fstatSync(fd).isFile()) {
+      closeSync(fd);
+      return null;
+    }
+    return fd;
+  } catch {
+    closeSync(fd);
+    return null;
+  }
+}
+
+/** sha256 of a file's bytes, read in chunks so a large log cannot be held in memory whole. */
+function hashFile(abs: string): string | null {
+  const fd = openRegularFile(abs);
+  if (fd === null) return null;
   try {
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -77,6 +103,85 @@ function hashFile(abs: string): string | null {
     return null;
   } finally {
     closeSync(fd);
+  }
+}
+
+/** Read a regular file without following a link or blocking on a special file after a race. */
+function readRegularFile(abs: string): Buffer | null {
+  const fd = openRegularFile(abs);
+  if (fd === null) return null;
+  try {
+    const chunks: Buffer[] = [];
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    for (;;) {
+      const read = readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, read)));
+    }
+    return Buffer.concat(chunks);
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Hash of an activity record with the heartbeat field normalised away.
+ *
+ * Anything that does not parse as an activity-shaped object is hashed raw: a non-JSON file under
+ * `activity/` is itself suspicious, and quietly ignoring it would be another hole.
+ */
+function hashActivity(abs: string): string | null {
+  const bytes = readRegularFile(abs);
+  if (bytes === null) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8')) as Record<string, unknown>;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return createHash('sha256').update(bytes).digest('hex');
+    }
+  } catch {
+    return createHash('sha256').update(bytes).digest('hex');
+  }
+  const ownerToken = parsed.owner_token;
+  const normalised: Record<string, unknown> = { ...parsed, beat_at: '<beat>' };
+  delete normalised.owner_token;
+  const canonical = Object.keys(normalised)
+    .sort()
+    .map((key) => `${key}=${JSON.stringify(normalised[key])}`)
+    .join('\n');
+  const contentHash = createHash('sha256').update(canonical).digest('hex');
+  if (typeof ownerToken !== 'string') return `activity:${contentHash}`;
+  const tokenHash = createHash('sha256').update(ownerToken).digest('hex');
+  return `token:${tokenHash}|${contentHash}`;
+}
+
+/** The stable owner portion of a valid activity fingerprint, without exposing the token. */
+function activityOwnerFingerprint(fingerprint: string | undefined): string | null {
+  if (fingerprint === undefined || !fingerprint.startsWith('token:')) return null;
+  const boundary = fingerprint.indexOf('|');
+  return boundary === -1 ? null : fingerprint.slice(0, boundary);
+}
+
+/** Stable signature for a non-directory, non-regular entry without opening its contents. */
+function specialEntryFingerprint(abs: string): string | null {
+  try {
+    const stat = lstatSync(abs);
+    if (stat.isFile() || stat.isDirectory()) return null;
+    if (stat.isSymbolicLink()) return `symlink:${readlinkSync(abs)}`;
+    const type = stat.isFIFO()
+      ? 'fifo'
+      : stat.isSocket()
+        ? 'socket'
+        : stat.isBlockDevice()
+          ? 'block-device'
+          : stat.isCharacterDevice()
+            ? 'character-device'
+            : 'unknown';
+    return `special:${type}`;
+  } catch {
+    return null;
   }
 }
 
@@ -95,11 +200,18 @@ export function fingerprintState(paths: RouterPaths, ownTaskId: string): Map<str
       const rel = relative(paths.root, abs);
       if (isOwnRunArtifact(rel, ownTaskId)) continue;
       if (entry.isDirectory()) {
+        out.set(rel, 'dir');
         walk(abs);
         continue;
       }
-      if (!entry.isFile()) continue;
-      const hash = hashFile(abs);
+      // Somebody else's regular activity record: a concurrent, legitimate heartbeat rewrites
+      // `beat_at` every few seconds, and failing a run over that would be a false alarm. A
+      // symlink, FIFO, device, or socket is never opened; its type (and a link's target) is the
+      // fingerprint, so replacing a watched file cannot make that path disappear from the guard.
+      const hash = entry.isFile()
+        ? (rel.split(sep)[0] === 'activity' ? hashActivity(abs) : hashFile(abs)) ??
+          specialEntryFingerprint(abs)
+        : specialEntryFingerprint(abs);
       if (hash !== null) out.set(rel, hash);
     }
   };
@@ -117,4 +229,61 @@ export function stateDiff(before: Map<string, string>, after: Map<string, string
   }
   for (const rel of before.keys()) if (!after.has(rel)) changes.push(`deleted ${rel}`);
   return changes.sort();
+}
+
+export interface StateChangeTiers {
+  /** Expected concurrent churn worth recording, but not evidence that invalidates the run. */
+  reported: string[];
+  /** Changes that can alter router decisions or forge an activity identity. */
+  fatal: string[];
+}
+
+/**
+ * Split observed state changes into reporting and failure tiers.
+ *
+ * Plans cannot change the frozen contract already handed to this run. Other activities may
+ * legitimately appear and disappear while dispatch is in flight. By contrast, a modified
+ * activity with the same owner has changed identity (its heartbeat was normalised before
+ * hashing), and this task's own activity cannot legitimately appear or disappear inside the
+ * fingerprint window: it is claimed before the first snapshot and finished after the last one.
+ * A different owner token at the same foreign path is a completed run followed by a new run,
+ * equivalent to the already-reported delete/create churn.
+ */
+export function classifyStateChanges(
+  before: Map<string, string>,
+  after: Map<string, string>,
+  ownTaskId: string,
+): StateChangeTiers {
+  const reported: string[] = [];
+  const fatal: string[] = [];
+  const ownActivity = join('activity', `${activityKey(`task:${ownTaskId}`)}.json`);
+
+  for (const change of stateDiff(before, after)) {
+    const splitAt = change.indexOf(' ');
+    const kind = splitAt === -1 ? '' : change.slice(0, splitAt);
+    const rel = splitAt === -1 ? change : change.slice(splitAt + 1);
+    const top = rel.split(sep)[0] ?? '';
+    const beforeFingerprint = before.get(rel);
+    const afterFingerprint = after.get(rel);
+    const beforeOwner = activityOwnerFingerprint(before.get(rel));
+    const afterOwner = activityOwnerFingerprint(after.get(rel));
+    const ownerChanged =
+      kind === 'modified' &&
+      beforeOwner !== null &&
+      afterOwner !== null &&
+      beforeOwner !== afterOwner;
+    const directoryInvolved = beforeFingerprint === 'dir' || afterFingerprint === 'dir';
+    const reportedActivityChurn =
+      top === 'activity' &&
+      rel !== ownActivity &&
+      (rel === 'activity'
+        ? kind !== 'modified'
+        : !directoryInvolved && (kind !== 'modified' || ownerChanged));
+    const nonFatal =
+      top === 'plans' ||
+      reportedActivityChurn;
+    (nonFatal ? reported : fatal).push(change);
+  }
+
+  return { reported, fatal };
 }

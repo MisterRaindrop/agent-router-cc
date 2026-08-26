@@ -27,7 +27,13 @@ import { parseSymbols } from '../io/treeSitter.ts';
 import { buildRoutingReport, buildUsageReport, explainSavingsText, renderRouting, renderUsage } from '../app/usageReport.ts';
 import { STRONG_BASELINE_MODEL } from '../core/pricing.ts';
 import { planStatusLine } from '../core/statuslineSetup.ts';
-import { CliError, emit } from './output.ts';
+import {
+  ActivityAlreadyExistsError,
+  HeartbeatStartupError,
+  SUPERVISE_INTERNAL_ERROR_CODE,
+  superviseCommand,
+} from '../app/supervise.ts';
+import { CliError, emit, err } from './output.ts';
 import { flagBool, flagStr, type ParsedArgs } from './args.ts';
 
 // The lean CLI: a synchronous task dispatcher. No state machine, no policy, no init
@@ -825,13 +831,17 @@ const setupStatusline: Handler = (ctx) => {
       throw new CliError(`cannot parse ${settingsPath}: ${(e as Error).message}`, 1);
     }
   }
-  const current = settings.statusLine as { command?: unknown } | undefined;
+  const rawCurrent = settings.statusLine;
+  const current =
+    rawCurrent !== null && typeof rawCurrent === 'object' && !Array.isArray(rawCurrent)
+      ? (rawCurrent as Record<string, unknown>)
+      : undefined;
   const existingCmd = typeof current?.command === 'string' ? current.command : undefined;
-  const plan = planStatusLine(existingCmd, statuslinePath);
+  const plan = planStatusLine(existingCmd, statuslinePath, current);
 
   const changed = plan.action !== 'already-configured';
   if (changed && !dryRun) {
-    settings.statusLine = { type: 'command', command: plan.command };
+    settings.statusLine = { ...(current ?? {}), ...plan.statusLine };
     writeJsonAtomic(settingsPath, settings);
   }
   const missing = !existsSync(statuslinePath);
@@ -850,7 +860,12 @@ const setupStatusline: Handler = (ctx) => {
     () => {
       // The actions are past participles ("chained"), so a bare `would ${action}` reads as
       // "would chained". Map to the infinitive for the dry-run voice.
-      const verb: Record<string, string> = { created: 'create', chained: 'chain', repointed: 'repoint' };
+      const verb: Record<string, string> = {
+        created: 'create',
+        chained: 'chain',
+        repointed: 'repoint',
+        updated: 'update',
+      };
       const head =
         plan.action === 'already-configured'
           ? `already configured (${settingsPath})`
@@ -860,11 +875,20 @@ const setupStatusline: Handler = (ctx) => {
       const chain = plan.inner ? `\n  chained your existing statusline: ${plan.inner}` : '';
       // "repointed" means nothing on its own; say what was wrong, or the user cannot tell
       // whether their setup was broken or is merely being tidied.
+      // Same argument for `updated`: the word alone does not say WHAT changed, and the one
+      // field it overwrites may be a value the user chose on purpose. Name it and name the
+      // old value, so a deliberate 10 is not silently replaced by a 2 the user never sees.
+      const previousInterval =
+        typeof current?.refreshInterval === 'number' ? current.refreshInterval : null;
       const why =
         plan.action === 'repointed'
           ? '\n  the previous command pointed at one specific plugin version, which would keep' +
             '\n  running that version after an upgrade; it now resolves the newest at startup'
-          : '';
+          : plan.action === 'updated'
+            ? `\n  refreshInterval: ${previousInterval === null ? 'was not set' : `was ${previousInterval}`} -> ${plan.statusLine.refreshInterval}` +
+              '\n  the liveness segment only reads as moving at this rate; lower it back by hand' +
+              '\n  if you would rather trade the motion for the CPU'
+            : '';
       const warn = missing ? `\n  WARNING: ${statuslinePath} not found (pass --statusline <path>)` : '';
       const note = changed && !dryRun ? '\n  restart Claude Code (or reload) for it to take effect' : '';
       return `${head}\n  command: ${plan.command}${why}${chain}${warn}${note}`;
@@ -972,6 +996,37 @@ const doctor: Handler = async (ctx) => {
   return wasmOk ? 0 : 1;
 };
 
+const superviseHandler: Handler = async (ctx) => {
+  const label = flagStr(ctx.args.flags, 'label');
+  if (label === undefined || label === '') throw new CliError('supervise requires --label <label>', 2);
+  const log = flagStr(ctx.args.flags, 'log');
+  if (log === undefined || log === '') throw new CliError('supervise requires --log <file>', 2);
+  const argv = ctx.args.passthrough;
+  if (argv === undefined) throw new CliError("supervise requires '--' before the command", 2);
+  if (argv.length === 0 || argv[0] === '') throw new CliError('supervise requires a command after --', 2);
+
+  const { paths } = depsFor(ctx);
+  try {
+    const result = await superviseCommand({
+      paths,
+      label,
+      logPath: resolve(ctx.cwd, log),
+      argv,
+      cwd: ctx.cwd,
+      // Match direct foreground execution: the caller chooses the command and its environment.
+      env: process.env,
+    });
+    for (const diagnostic of result.diagnostics) err(`router: supervise cleanup: ${diagnostic}`);
+    return result.exitCode;
+  } catch (error) {
+    if (error instanceof ActivityAlreadyExistsError) throw new CliError(error.message, 2);
+    if (error instanceof HeartbeatStartupError) {
+      throw new CliError(error.message, SUPERVISE_INTERNAL_ERROR_CODE);
+    }
+    throw error;
+  }
+};
+
 export const HANDLERS: Record<string, Handler> = {
   init,
   new: newTask,
@@ -987,6 +1042,7 @@ export const HANDLERS: Record<string, Handler> = {
   models,
   symbol,
   doctor,
+  supervise: superviseHandler,
   'setup-statusline': setupStatusline,
 };
 
@@ -1011,6 +1067,7 @@ export function helpText(): string {
     `  models                 print the resolved model-tier config (default + .router/models.yaml)\n` +
     `  symbol <sub> [args]    out-of-context symbol index: index [dirs] | find <name> | enclosing <file> <line> | methods <Class> | callers <name> | callees <fn>\n` +
     `  doctor                 self-check the code-intelligence layer (config, wasm, cache)\n` +
+    `  supervise --label L --log F -- <argv...>  run a foreground command with visible liveness\n` +
     `  setup-statusline       wire claude-quota reads into Claude Code's statusLine\n` +
     `  init                   optional; router auto-creates .router/ on first use\n\n` +
     `Flags: --json, --all, --routing, --limit, --id, --title, --run, --router-dir, --settings, --statusline, --dry-run\n`

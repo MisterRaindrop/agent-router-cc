@@ -8,6 +8,106 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-25
+
+You can see what is running in the background, and see that it is *moving*. Designed
+through the project's own flow (brainstorm -> design -> workplan), built as five work
+packages, each independently reviewed and mutation-tested by the main session.
+
+
+### Added
+
+- **`router supervise --label L --log F -- <argv...>`** — run any command with visible
+  liveness. It publishes an activity record with an out-of-process heartbeat, writes the
+  child's stdout **and** stderr to `--log` byte-for-byte as `> file 2>&1` would, and passes
+  the child's exit code through unchanged. It deliberately does **not** take `gate.lock`,
+  so a supervised review and a dispatch never queue behind each other.
+- **A three-state statusline segment, always rendered**: `router ▶ idle` when nothing is
+  running, a **spinning** frame plus the label (and phase / budget / `·log` age) while a run
+  is alive, and `已失联 <age>` when its owner has gone. Liveness is `pid` alive **and**
+  heartbeat fresh — never "does a `terminal_state` field exist", which is what used to leave
+  a phantom run on screen forever.
+- `.router/activity/<key>.json`: display-only activity records with an ownership token, an
+  atomic claim, and one shared liveness rule. `router result`, `router land` and the queue
+  gate do not read them.
+- `dist/statusline-activity.mjs`: the activity observation API as its own import-safe bundle,
+  so the standalone statusline reuses the one liveness rule instead of re-implementing it.
+
+### Changed
+
+- `router setup-statusline` now also writes `statusLine.refreshInterval: 2` — without a fast
+  refresh the segment is technically correct and visibly frozen. It **repairs** an existing
+  config that lacks the field (reporting `updated`, not `already-configured`, which is the trap
+  0.10.1 shipped), names the previous value it overwrote, **preserves unknown keys under
+  `statusLine`** instead of replacing the whole object, and tells you to restart Claude Code.
+- `commands/review.md` launches both review lenses through `router supervise`, always with
+  `< /dev/null` — a lens that inherits an open stdin can sit for 20 minutes printing 39 bytes.
+
+### Notes
+
+- **Restart Claude Code** after upgrading for `refreshInterval` to take effect. A running
+  session keeps its old refresh rate, so the statusline stays frozen while everything
+  underneath is already correct.
+- The activity file is display-only by design: it is never consulted to decide whether a
+  merge, a gate verdict or a result is valid.
+
+## [0.11.0] - 2026-08-25
+
+Executor ownership and verification hardening, from three review rounds (21 findings,
+15 commits). Back-filled from the git history on 2026-08-25; this file had stopped being
+updated after 0.9.0, so these four entries are reconstructed from commits and PRs, not
+written at release time. Where a detail was not recoverable from the history it is left out
+rather than guessed.
+
+### Added
+
+- **`verified_head`**: a PASSED verdict authorizes a *commit*, not a branch. `router land`
+  and the queue gate both merge the SHA that was actually verified, and `land` deletes the
+  branch with an `update-ref` compare-and-swap.
+- A content-hash fingerprint of `.router/` taken before and after the executor **and across
+  verification** -- the verify commands are the executor's own committed code, so that is its
+  last and widest write channel.
+- A reclaimer mutex (`gate.lock.reclaim`) installed by write-to-staging -> fsync -> `link`,
+  so there is no live-but-empty window, with a lease renewed on every reap poll.
+
+### Fixed
+
+- An unref'd drain timer let the CLI exit mid-drain with code 13, leaving an orphan executor.
+- `router orchestrator-usage` now takes the checkout lock instead of racing a live run.
+
+## [0.10.2] - 2026-08-24
+
+### Fixed
+
+- The statusline command pinned one plugin version, so an upgrade stranded it on the old
+  release forever, silently. It now resolves the newest installed version at startup.
+- An inner statusline that ignores stdin lost its whole line to a caught EPIPE.
+
+## [0.10.1] - 2026-08-24
+
+### Fixed
+
+- The statusline fix had to reach an installed plugin, which keys on version -- so shipping it
+  required a release, not just a commit.
+
+## [0.10.0] - 2026-08-23
+
+The router v2 command surface.
+
+### Added
+
+- **`/router:brainstorm`** -- the stage before design, for when the goal itself is not settled.
+- **`/router:workplan`** -- `PLAN.md` renamed, with the design-revision binding that drops a
+  plan back to draft when the design moves past it.
+
+### Changed
+
+- **Parallel dispatch removed.** Measured, the orchestration overhead was 0.26s against 393s
+  of executor time -- effectively free to run, and expensive for the human: review was the
+  bottleneck the parallelism kept feeding.
+- Worktree mode replaced by branch mode: a fresh worktree has no dependencies, no build
+  objects and no configure output, so a real project cannot compile in one.
+
 ## [0.9.0] - 2026-08-12
 
 The go-execution v2 groundwork: single-executor mode plus the shared observability

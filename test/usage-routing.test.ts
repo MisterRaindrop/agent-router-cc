@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from 'node:assert/strict';
+import { childEnv } from './childEnv.ts';
 import { execFileSync } from 'node:child_process';
 import { afterEach, test } from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -84,11 +85,11 @@ test('usage --routing is separate from the unchanged default usage view', () => 
       cost_usd: null, wall_seconds: 10, escalated: false, env_error: false,
     })).join('\n') + '\n',
   );
-  const output = execFileSync(process.execPath, [ENTRY, 'usage', '--router-dir', routerDir], { cwd: dir, encoding: 'utf8' });
+  const output = execFileSync(process.execPath, [ENTRY, 'usage', '--router-dir', routerDir], { cwd: dir, encoding: 'utf8', env: childEnv() });
   assert.match(output, /Router usage/);
   assert.doesNotMatch(output, /Router routing evidence/);
   const routing = JSON.parse(
-    execFileSync(process.execPath, [ENTRY, 'usage', '--routing', '--json', '--router-dir', routerDir], { cwd: dir, encoding: 'utf8' }),
+    execFileSync(process.execPath, [ENTRY, 'usage', '--routing', '--json', '--router-dir', routerDir], { cwd: dir, encoding: 'utf8', env: childEnv() }),
   ) as { routing: { groups: unknown[] } };
   assert.equal(routing.routing.groups.length, 1);
 });

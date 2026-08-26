@@ -8,6 +8,8 @@
 const BOOLEAN_FLAGS = new Set(['json', 'force', 'keep', 'help', 'approve', 'dry-run', 'all', 'explain-savings', 'status']);
 const VALUE_FLAGS = new Set([
   'id',
+  'label',
+  'log',
   'title',
   'run',
   'feedback',
@@ -35,6 +37,8 @@ export interface ParsedArgs {
   verb: string | undefined;
   positionals: string[];
   flags: Record<string, string | boolean>;
+  /** Arguments after the first `--`, preserved byte-for-byte for command wrappers. */
+  passthrough: string[] | undefined;
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -42,9 +46,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const rest = argv.slice(1);
   const positionals: string[] = [];
   const flags: Record<string, string | boolean> = {};
+  let passthrough: string[] | undefined;
 
   for (let i = 0; i < rest.length; i++) {
     const tok = rest[i]!;
+    if (tok === '--') {
+      passthrough = rest.slice(i + 1);
+      // Existing verbs still see post-separator positional arguments. The separate copy lets
+      // command wrappers distinguish their argv from router's own positionals and flags.
+      positionals.push(...passthrough);
+      break;
+    }
     if (tok.startsWith('--')) {
       const body = tok.slice(2);
       const eq = body.indexOf('=');
@@ -70,7 +82,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
       positionals.push(tok);
     }
   }
-  return { verb, positionals, flags };
+  return { verb, positionals, flags, passthrough };
 }
 
 export function flagStr(flags: Record<string, string | boolean>, key: string): string | undefined {

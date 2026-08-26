@@ -4,9 +4,9 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { Clock } from '../io/clock.ts';
-import type { DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
+import type { ActivityOutcome, DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
 import {
   detectContractConflict,
@@ -32,12 +32,13 @@ import {
   uncommittedSourceFilesOrUnknown,
 } from '../io/git.ts';
 import { buildExecutorEnv, buildWorkerEnv } from '../io/env.ts';
+import { claimActivity, finishActivity, startActivityHeartbeat } from '../io/activity.ts';
 import { startHeartbeat } from '../io/heartbeat.ts';
 import { acquireLock, ownsLock, type LockHandle } from '../io/lock.ts';
 import { branchRefPath, runId as fmtRunId, taskBranch, type RouterPaths } from '../io/paths.ts';
 import { killProcessGroup } from '../io/signals.ts';
 import { loadGateConfig } from './gateConfig.ts';
-import { fingerprintState, stateDiff } from './stateGuard.ts';
+import { classifyStateChanges, fingerprintState } from './stateGuard.ts';
 import { readCodexQuota, readClaudeQuota } from '../io/quota.ts';
 import * as store from '../io/store.ts';
 import { superviseWorker } from '../io/supervisor.ts';
@@ -75,6 +76,10 @@ import { verifyTask } from './verifier.ts';
 export interface DispatchDeps {
   paths: RouterPaths;
   clock: Clock;
+  /** Internal test seam; production uses the shared 15-second activity heartbeat. */
+  activityHeartbeatIntervalMs?: number;
+  /** Internal test seam for observing non-fatal activity cleanup diagnostics. */
+  activityDiagnostic?: (message: string) => void;
 }
 
 /**
@@ -124,6 +129,35 @@ const RUN_LABEL = fmtRunId(1);
 // already passed, discarding verified work, so the bound has to sit above real thinking time
 // and let `max_wall_minutes` be the hard stop.
 const STALL_MINUTES_DEFAULT = 20;
+
+/** Preserve first-observed order while combining overlapping state-guard windows. */
+function uniqueStateChanges(...groups: ReadonlyArray<readonly string[] | undefined>): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const change of group ?? []) {
+      if (seen.has(change)) continue;
+      seen.add(change);
+      merged.push(change);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Use one verification baseline while keeping the first owner seen at every existing activity
+ * path. Current entries still guard records created during the run; retained entries turn a
+ * cross-window delete/rebuild into one owner-aware modification.
+ */
+function retainInitialActivityFingerprints(
+  initial: Map<string, string>,
+  current: Map<string, string>,
+): Map<string, string> {
+  for (const [rel, fingerprint] of initial) {
+    if (rel === 'activity' || rel.startsWith(`activity${sep}`)) current.set(rel, fingerprint);
+  }
+  return current;
+}
 
 /**
  * Kept out of every rescue commit and every cleanliness check.
@@ -373,7 +407,8 @@ async function runPreparedObserved(
   // Compare before anything else is decided: state tampering is not a code defect to be weighed
   // against the diff, it is a contract violation, and it is invisible to every gate because
   // `.router/` is gitignored.
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const stateChanges = classifyStateChanges(stateBefore, fingerprintState(paths, id), id);
+  const tampering = stateChanges.fatal;
   // The one file the fingerprint cannot watch, checked the only way it can be: by identity
   // rather than by content. Our heartbeat rewrites gate.lock constantly, so it is excluded from
   // the diff -- and this is what stops that exclusion from being a free channel for an executor
@@ -432,6 +467,7 @@ async function runPreparedObserved(
     ...(closeout !== undefined ? { closeout } : {}),
     ...(groupSurvived ? { executor_group_survived: true } : {}),
     ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
+    ...(stateChanges.reported.length > 0 ? { state_changes: stateChanges.reported } : {}),
     ...(prep.dirtySubmodules.length > 0 ? { dirty_submodules: prep.dirtySubmodules } : {}),
     ...(context !== null && context.chars > TASK_CONTEXT_SOFT_LIMIT ? { context_oversize: true } : {}),
     ...(switches > 0 ? { executor_switches: switches } : {}),
@@ -470,7 +506,10 @@ async function runPreparedObserved(
     // commands are the executor's own committed code: running them is the executor's last and
     // widest write channel, and a run that forged `.router` state from inside its test script was
     // still recorded PASSED. So the window stays open across verification too.
-    const stateBeforeVerify = fingerprintState(paths, id);
+    const stateBeforeVerify = retainInitialActivityFingerprints(
+      stateBefore,
+      fingerprintState(paths, id),
+    );
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -489,14 +528,17 @@ async function runPreparedObserved(
       ...(gateConfig !== undefined ? { gate: gateConfig } : {}),
       ...(gateConfig !== undefined ? { gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []) } : {}),
     });
-    const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+    const stateAfterVerify = fingerprintState(paths, id);
+    const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
+    const reported = uniqueStateChanges(result.state_changes, duringVerify.reported);
+    if (reported.length > 0) result.state_changes = reported;
     if (!(envelope?.stillOwned() ?? true)) {
-      duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
+      duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
     }
-    if (duringVerify.length > 0) {
+    if (duringVerify.fatal.length > 0) {
       // Not a verdict to weigh against the diff: the evidence was produced in a checkout somebody
       // else was writing, so there is no verdict left to report.
-      result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify];
+      result.state_tampering = uniqueStateChanges(result.state_tampering, duringVerify.fatal);
       result.exit_class = 'task_failed';
       delete result.verifier;
       delete result.verified_head;
@@ -564,9 +606,55 @@ export async function dispatchTask(deps: DispatchDeps, id: string): Promise<RunR
   // will not hand back a handle while one is still writing to this checkout.
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
   return withCheckoutLock(lock, async (envelope) => {
-    const prep = prepareRun(deps, id);
-    return runPrepared(deps, prep, gateConfig, envelope);
+    return withTaskActivity(deps, id, async () => {
+      const prep = prepareRun(deps, id);
+      return runPrepared(deps, prep, gateConfig, envelope);
+    });
   });
+}
+
+function taskActivityOutcome(result: RunResult): ActivityOutcome {
+  if (result.timed_out || result.exit_class === 'timeout') return 'timed_out';
+  if (result.stalled || result.exit_class === 'stalled') return 'stalled';
+  return result.exit_class === 'ok' && result.verifier?.result === 'PASSED' ? 'ok' : 'failed';
+}
+
+/** Publish one task's display-only liveness for every phase inside the checkout transaction. */
+async function withTaskActivity(
+  deps: DispatchDeps,
+  id: string,
+  body: () => Promise<RunResult>,
+): Promise<RunResult> {
+  const label = `task:${id}`;
+  const claimed = claimActivity(deps.paths, label, {
+    statusPath: deps.paths.runStatus(id),
+  });
+  const heartbeat = startActivityHeartbeat(
+    claimed.path,
+    claimed.record,
+    deps.activityHeartbeatIntervalMs,
+  );
+  let outcome: ActivityOutcome = 'failed';
+  try {
+    const started = await heartbeat.started;
+    if (!started.ok) {
+      throw new Error(`task activity heartbeat failed to start for '${label}': ${started.error.message}`);
+    }
+    const result = await body();
+    outcome = taskActivityOutcome(result);
+    return result;
+  } finally {
+    heartbeat.stop();
+    const diagnostics: string[] = [];
+    finishActivity(claimed, outcome, diagnostics, undefined, {
+      attempts: 3,
+      retryDelayMs: 25,
+    });
+    for (const diagnostic of diagnostics) {
+      if (deps.activityDiagnostic !== undefined) deps.activityDiagnostic(diagnostic);
+      else process.stderr.write(`router: dispatch cleanup: ${diagnostic}\n`);
+    }
+  }
 }
 
 /**
@@ -755,7 +843,9 @@ export async function resumeTask(deps: DispatchDeps, id: string, feedback: strin
   // dispatch, both writing the same files.
   const gateConfig = loadGateConfig(paths);
   const lock = takeCheckoutLock(paths, gateConfig.lock_wait_minutes ?? 0);
-  return withCheckoutLock(lock, (envelope) => resumeInLock(deps, id, feedback, gateConfig, envelope));
+  return withCheckoutLock(lock, (envelope) =>
+    withTaskActivity(deps, id, () => resumeInLock(deps, id, feedback, gateConfig, envelope)),
+  );
 }
 
 async function resumeInLock(
@@ -823,7 +913,8 @@ async function resumeInLock(
   // something went wrong.
   const mismatch = newSession !== priorSession;
 
-  const tampering = stateDiff(stateBefore, fingerprintState(paths, id));
+  const stateChanges = classifyStateChanges(stateBefore, fingerprintState(paths, id), id);
+  const tampering = stateChanges.fatal;
   if (!envelope.stillOwned()) {
     tampering.push('modified gate.lock (it no longer carries this run’s owner token)');
   }
@@ -856,6 +947,7 @@ async function resumeInLock(
     ...(mismatch ? { resume_session_mismatch: true, resume_reported_session: newSession } : {}),
     ...(o.groupSurvived ? { executor_group_survived: true } : {}),
     ...(tampering.length > 0 ? { state_tampering: tampering } : {}),
+    ...(stateChanges.reported.length > 0 ? { state_changes: stateChanges.reported } : {}),
     ...(modelMismatch ? { model_mismatch: true } : {}),
     ...(conflict ? { conflict: true } : {}),
     ...(parsed.commandsRun !== undefined ? { commands_run: parsed.commandsRun } : {}),
@@ -906,7 +998,10 @@ async function resumeInLock(
         result.verified_head = resolveCommit(workDir, 'HEAD');
         // Same reason as the fresh path: the verify and gate commands are the executor's own
         // committed code, so the state window has to stay open across them.
-        const stateBeforeVerify = fingerprintState(paths, id);
+        const stateBeforeVerify = retainInitialActivityFingerprints(
+          stateBefore,
+          fingerprintState(paths, id),
+        );
         result.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -923,12 +1018,15 @@ async function resumeInLock(
           gate: gateConfig,
           gateEnv: buildWorkerEnv(process.env, gateConfig.env ?? []),
         });
-        const duringVerify = stateDiff(stateBeforeVerify, fingerprintState(paths, id));
+        const stateAfterVerify = fingerprintState(paths, id);
+        const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
+        const reported = uniqueStateChanges(result.state_changes, duringVerify.reported);
+        if (reported.length > 0) result.state_changes = reported;
         if (!envelope.stillOwned()) {
-          duringVerify.push('modified gate.lock (it no longer carries this run’s owner token)');
+          duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
         }
-        if (duringVerify.length > 0) {
-          result.state_tampering = [...(result.state_tampering ?? []), ...duringVerify];
+        if (duringVerify.fatal.length > 0) {
+          result.state_tampering = uniqueStateChanges(result.state_tampering, duringVerify.fatal);
           result.exit_class = 'task_failed';
           delete result.verifier;
           delete result.verified_head;

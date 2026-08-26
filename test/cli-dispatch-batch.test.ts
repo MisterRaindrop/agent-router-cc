@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { test } from 'node:test';
+import { childEnv } from './childEnv.ts';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -18,7 +19,7 @@ function router(dir: string, argv: string[], envExtra: NodeJS.ProcessEnv = {}): 
     const out = execFileSync(NODE, [ENTRY, ...argv], {
       cwd: dir,
       encoding: 'utf8',
-      env: { ...process.env, ...envExtra },
+      env: childEnv(envExtra),
       timeout: 30_000,
     });
     return { code: 0, out };

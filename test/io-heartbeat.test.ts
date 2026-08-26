@@ -4,11 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { writeJsonAtomic } from '../src/io/atomicWrite.ts';
 import { acquireLock, readLock } from '../src/io/lock.ts';
-import { startHeartbeat } from '../src/io/heartbeat.ts';
+import { startHeartbeat, startJsonHeartbeat } from '../src/io/heartbeat.ts';
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'router-heartbeat-'));
@@ -47,6 +48,133 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<bo
   return predicate();
 }
 
+test('a generic heartbeat refreshes the selected JSON field and stops at a changed guard', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'activity.json');
+  const startedAt = '2026-08-25T00:00:00.000Z';
+  try {
+    writeFileSync(
+      path,
+      `${JSON.stringify({ pid: process.pid, started_at: startedAt, beat_at: startedAt, label: 'test' })}\n`,
+    );
+    const beater = startJsonHeartbeat(path, {
+      field: 'beat_at',
+      valueFormat: 'iso',
+      guard: { pid: process.pid, started_at: startedAt },
+      intervalMs: 40,
+    });
+    try {
+      assert.ok(
+        await waitUntil(() => {
+          const value = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+          return value.beat_at !== startedAt;
+        }),
+        'the selected field was never refreshed',
+      );
+      const refreshed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      assert.equal(refreshed.label, 'test', 'unrelated fields must survive an in-place beat');
+      assert.equal(refreshed.started_at, startedAt);
+
+      writeFileSync(
+        path,
+        `${JSON.stringify({ pid: process.pid, started_at: 'replacement', beat_at: 'replacement' })}\n`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const replacement = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      assert.equal(replacement.beat_at, 'replacement', 'an old heartbeat refreshed a replacement file');
+      assert.ok(
+        await waitUntil(() => {
+          try {
+            process.kill(beater.pid!, 0);
+            return false;
+          } catch {
+            return true;
+          }
+        }),
+        'the heartbeat child survived a guard mismatch',
+      );
+    } finally {
+      beater.stop();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an in-place heartbeat cannot truncate or overwrite an atomically replaced path', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'activity.json');
+  const pauseReady = join(dir, 'pause-ready');
+  const pauseResume = join(dir, 'pause-resume');
+  const pauseDone = join(dir, 'pause-done');
+  const samplerReady = join(dir, 'sampler-ready');
+  const samplerStop = join(dir, 'sampler-stop');
+  const sizesPath = join(dir, 'sizes.jsonl');
+  const original = { owner_token: 'old-owner', beat_at: '2000-01-01T00:00:00.000Z' };
+  const replacement = { owner_token: 'new-owner', beat_at: '2001-01-01T00:00:00.000Z' };
+  let sampler: ReturnType<typeof spawn> | undefined;
+  let beater: ReturnType<typeof startJsonHeartbeat> | undefined;
+  try {
+    writeJsonAtomic(path, original);
+    beater = startJsonHeartbeat(path, {
+      field: 'beat_at',
+      valueFormat: 'iso',
+      guard: { owner_token: original.owner_token },
+      intervalMs: 60_000,
+      testPauseAfterRead: { readyPath: pauseReady, resumePath: pauseResume, donePath: pauseDone },
+    });
+    assert.ok(await waitUntil(() => existsSync(pauseReady)), 'heartbeat never paused after reading');
+
+    sampler = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const fs=require('node:fs');` +
+          `fs.writeFileSync(${JSON.stringify(samplerReady)},'ready');` +
+          `const t=setInterval(()=>{` +
+          `try{fs.appendFileSync(${JSON.stringify(sizesPath)},String(fs.statSync(${JSON.stringify(path)}).size)+'\\n');}catch{}` +
+          `if(fs.existsSync(${JSON.stringify(samplerStop)})){clearInterval(t);process.exit(0);}` +
+          `},1);` +
+          `setTimeout(()=>{clearInterval(t);process.exit(1)},5000);`,
+      ],
+      { stdio: 'ignore' },
+    );
+    assert.ok(await waitUntil(() => existsSync(samplerReady)), 'size sampler never started');
+
+    writeJsonAtomic(path, replacement);
+    const replacementRaw = readFileSync(path, 'utf8');
+    const replacementInode = statSync(path, { bigint: true }).ino;
+    writeFileSync(pauseResume, 'resume');
+    assert.ok(await waitUntil(() => existsSync(pauseDone)), 'heartbeat never resumed its old-fd write');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    writeFileSync(samplerStop, 'stop');
+    assert.ok(
+      await waitUntil(() => sampler!.exitCode !== null || sampler!.signalCode !== null),
+      'size sampler did not stop',
+    );
+    assert.equal(sampler.exitCode, 0);
+    assert.equal(readFileSync(path, 'utf8'), replacementRaw, 'old heartbeat overwrote replacement content');
+    assert.equal(
+      statSync(path, { bigint: true }).ino,
+      replacementInode,
+      'old heartbeat replaced the new inode',
+    );
+    const sizes = readFileSync(sizesPath, 'utf8')
+      .split('\n')
+      .filter((line) => line !== '')
+      .map(Number);
+    assert.ok(sizes.length > 5, `size sampler barely overlapped the write (${sizes.length})`);
+    assert.equal(sizes.includes(0), false, 'sampler observed a truncate-on-open zero-byte window');
+  } finally {
+    beater?.stop();
+    if (sampler !== undefined && sampler.exitCode === null && sampler.signalCode === null) {
+      sampler.kill('SIGKILL');
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Fault-injection case 8b, rewritten after review finding 10 showed the original could not catch
 // its own regression.
 //
@@ -82,30 +210,61 @@ test('beats land WHILE the owner is blocked, not just after (8b)', async () => {
         ],
         { stdio: 'ignore' },
       );
+      const readSamples = (): [number, number][] => {
+        try {
+          return readFileSync(samples, 'utf8')
+            .split('\n')
+            .filter((l) => l !== '')
+            .map((l) => JSON.parse(l) as [number, number]);
+        } catch {
+          return [];
+        }
+      };
       try {
-        await new Promise((resolve) => setTimeout(resolve, 150)); // let it start sampling
+        // Wait for the CONDITION, not for a duration: a fixed sleep is a bet that the watcher
+        // started within it, and a loaded machine loses that bet by sampling nothing.
+        assert.ok(await waitUntil(() => readSamples().length > 0), 'watcher never sampled');
 
         const blockedFrom = Date.now();
         blockEventLoop(1200); // our loop is gone; no timer of ours can run
         const blockedUntil = Date.now();
 
-        await new Promise((resolve) => setTimeout(resolve, 150)); // let the last samples land
-        const rows = readFileSync(samples, 'utf8')
-          .split('\n')
-          .filter((l) => l !== '')
-          .map((l) => JSON.parse(l) as [number, number]);
+        assert.ok(
+          await waitUntil(() => readSamples().some(([at]) => at >= blockedUntil)),
+          'no sample landed after the block ended',
+        );
+        const rows = readSamples();
 
         const inWindow = rows.filter(([at]) => at >= blockedFrom && at <= blockedUntil);
         assert.ok(inWindow.length > 5, `watcher barely sampled during the block (${inWindow.length})`);
+        // The whole finding, but measured as SUSTAINED beating rather than "at least two values".
+        //
+        // `distinct.size >= 2` was not enough: waiting on the watcher's first sample instead of a
+        // fixed 150ms starts the block sooner, so a heartbeat that beat exactly twice and stopped
+        // could land its second beat inside the window and satisfy it. Measured -- mutating the
+        // child's `setInterval` to a single `setTimeout` kept all seven tests green.
+        //
+        // Splitting the window and requiring a fresh value in each half asks the question the
+        // test exists to ask: was it still beating LATE in the block, with our loop still gone?
+        const midpoint = blockedFrom + (blockedUntil - blockedFrom) / 2;
+        const distinctIn = (from: number, to: number): number =>
+          new Set(inWindow.filter(([at]) => at >= from && at <= to).map(([, beat]) => beat)).size;
+        const firstHalf = distinctIn(blockedFrom, midpoint);
+        const secondHalf = distinctIn(midpoint, blockedUntil);
         const distinct = new Set(inWindow.map(([, beat]) => beat));
-        // The whole finding in one number. An in-process beat would show ONE value here -- the
-        // one written before the block -- because nothing of ours ran until the block ended.
         assert.ok(
           distinct.size >= 2,
           `only ${distinct.size} distinct beatAtMs during a 1.2s block: the beat did not run while blocked`,
         );
+        assert.ok(
+          firstHalf >= 2 && secondHalf >= 2,
+          `the beat did not keep running through the block (first half ${firstHalf}, second half ${secondHalf} distinct values)`,
+        );
       } finally {
+        // Await the exit before the fixture is removed: killing and immediately unlinking races
+        // the watcher's own last write against rmSync.
         watcher.kill('SIGKILL');
+        await waitUntil(() => watcher.exitCode !== null || watcher.signalCode !== null);
       }
     } finally {
       beater.stop();
@@ -249,6 +408,29 @@ test('the heartbeat child exits when its parent dies, so the lock can go stale',
       'the heartbeat outlived its parent and would keep a dead holder’s lock fresh forever',
     );
     handle.release();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a lock heartbeat keeps beating while gate.lock.reclaim exists', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'gate.lock');
+  try {
+    const handle = acquireLock(path, { waitMs: 0 });
+    assert.ok(!('blocked' in handle));
+    writeFileSync(`${path}.reclaim`, 'another lock protocol file');
+    const before = beatAt(path);
+    const beater = startHeartbeat(path, handle.ownerToken, 40);
+    try {
+      assert.ok(
+        await waitUntil(() => beatAt(path) > before),
+        'the lock heartbeat inherited the activity-only reclaim fence',
+      );
+    } finally {
+      beater.stop();
+      handle.release();
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
