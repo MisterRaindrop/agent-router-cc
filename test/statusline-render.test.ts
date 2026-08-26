@@ -18,8 +18,10 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -521,6 +523,49 @@ test('an oversized stdin payload is not buffered whole and the inner HUD still r
     });
     assert.equal(result.error, undefined, `oversized stdin wedged the statusline: ${result.error}`);
     assert.match(result.stdout, /^my-hud/, `inner HUD was lost: ${result.stdout}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// The 190-orphan bug. spawnSync's timeout kills the shell it started; anything that shell
+// spawned keeps running, and a statusline runs again every refresh interval -- so a HUD whose git
+// status cannot finish in time leaks a process tree per render until the machine is unusable.
+test('a hung inner HUD leaves no descendants behind', async () => {
+  const fx = repo();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    const pidFile = join(fx.dir, 'grandchild.pid');
+    // The shell prints, then starts a child that outlives it, then hangs itself.
+    const inner =
+      `printf 'partial-hud'; ` +
+      `node -e "require('node:fs').writeFileSync('${pidFile}', String(process.pid)); setInterval(()=>{}, 1000)" & ` +
+      `sleep 60`;
+    const result = renderRaw(fx.dir, JSON.stringify({ cwd: fx.dir }), { ...pinned(), ROUTER_INNER_STATUSLINE: inner }, 30_000);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /^partial-hud/);
+
+    assert.ok(existsSync(pidFile), 'the inner HUD never started its descendant: nothing was tested');
+    const pid = Number(readFileSync(pidFile, 'utf8').trim());
+    assert.ok(Number.isInteger(pid) && pid > 1);
+    const alive = (): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const deadline = Date.now() + 20_000;
+    while (alive() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    if (alive()) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* cleanup only */
+      }
+      assert.fail('the inner HUD\'s descendant survived the timeout');
+    }
   } finally {
     fx.cleanup();
   }

@@ -313,13 +313,34 @@ function innerOutput(raw) {
     // HUD line was replaced by the word "router" because their HUD exited before draining a
     // pipe it never wanted. dash does this where bash does not, which is why it only showed up
     // on Linux. spawnSync reports the error instead of raising it and preserves stdout.
+    // `detached` so the inner HUD leads its OWN process group, and the kill below can reach the
+    // whole tree. spawnSync's own timeout kills only the direct child -- the shell -- and anything
+    // that shell started keeps running.
+    //
+    // Measured, and it is not theoretical: with a HUD that runs `git status` on a repository large
+    // enough to exceed the timeout, every refresh left the git processes behind. 190 of them were
+    // found alive on one machine, spaced exactly one refresh interval apart, with the oldest 14
+    // minutes old -- load average 86 on 18 cores, under 1% idle.
+    //
+    // Router already knows this: reapExecutorGroup and drainGroup kill executors by process group
+    // for exactly this reason (io/signals.ts). The statusline never applied its own lesson.
     const result = spawnSync(inner, {
       shell: true,
       input: raw,
       encoding: 'utf8',
       timeout: INNER_STATUSLINE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
+      detached: true,
     });
+    if (typeof result.pid === 'number' && result.pid > 0) {
+      try {
+        // The leader is already gone; this reaches whatever it left behind. ESRCH means the group
+        // is empty, which is the outcome we wanted anyway.
+        process.kill(-result.pid, 'SIGKILL');
+      } catch {
+        /* empty group, or a pgid we no longer own: nothing left to reap either way */
+      }
+    }
     const text = typeof result.stdout === 'string' ? result.stdout : '';
     return text.trim() === '' ? 'router' : text.replace(/\n+$/, '');
   } catch {
