@@ -24,6 +24,7 @@ function freshState() {
   const paths = routerPaths(join(repo, '.router'));
   mkdirSync(join(paths.root, 'tasks', 'victim'), { recursive: true });
   mkdirSync(join(paths.root, 'tasks', 'mine'), { recursive: true });
+  mkdirSync(paths.activityDir, { recursive: true });
   return {
     paths,
     write(rel: string, text: string): void {
@@ -107,6 +108,7 @@ test('creations and deletions are reported alongside modifications', () => {
   const fx = freshState();
   try {
     fx.write('tasks/victim/result.json', '{"verifier":{"result":"FAILED"}}');
+    mkdirSync(join(fx.paths.root, 'tasks', 'forged'));
     const before = fingerprintState(fx.paths, 'mine');
     fx.write('tasks/forged/result.json', '{"verifier":{"result":"PASSED"}}');
     rmSync(join(fx.paths.root, 'tasks', 'victim', 'result.json'));
@@ -114,6 +116,62 @@ test('creations and deletions are reported alongside modifications', () => {
       'created tasks/forged/result.json',
       'deleted tasks/victim/result.json',
     ]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('activity record directories and file-directory replacements are fatal without directory noise', () => {
+  const fx = freshState();
+  const activityRel = 'activity/reviewer.json';
+  const activityPath = join(fx.paths.root, activityRel);
+  const record = JSON.stringify({
+    label: 'review:architect',
+    owner_token: 'theirs',
+    pid: 4242,
+    started_at: 'A',
+    beat_at: 'B',
+  });
+  try {
+    let before = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(
+      stateDiff(before, fingerprintState(fx.paths, 'mine')),
+      [],
+      'stable router directories produced fingerprint noise',
+    );
+
+    mkdirSync(activityPath);
+    let after = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(classifyStateChanges(before, after, 'mine'), {
+      reported: [],
+      fatal: [`created ${activityRel}`],
+    });
+
+    before = after;
+    rmSync(activityPath, { recursive: true });
+    fx.write(activityRel, record);
+    after = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(classifyStateChanges(before, after, 'mine'), {
+      reported: [],
+      fatal: [`modified ${activityRel}`],
+    });
+
+    before = after;
+    rmSync(activityPath);
+    mkdirSync(activityPath);
+    after = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(classifyStateChanges(before, after, 'mine'), {
+      reported: [],
+      fatal: [`modified ${activityRel}`],
+    });
+
+    rmSync(activityPath, { recursive: true });
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write('activity/ordinary.json', record);
+    assert.deepEqual(classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine'), {
+      reported: ['created activity/ordinary.json'],
+      fatal: [],
+    });
   } finally {
     fx.cleanup();
   }

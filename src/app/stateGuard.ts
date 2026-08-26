@@ -200,6 +200,7 @@ export function fingerprintState(paths: RouterPaths, ownTaskId: string): Map<str
       const rel = relative(paths.root, abs);
       if (isOwnRunArtifact(rel, ownTaskId)) continue;
       if (entry.isDirectory()) {
+        out.set(rel, 'dir');
         walk(abs);
         continue;
       }
@@ -262,6 +263,8 @@ export function classifyStateChanges(
     const kind = splitAt === -1 ? '' : change.slice(0, splitAt);
     const rel = splitAt === -1 ? change : change.slice(splitAt + 1);
     const top = rel.split(sep)[0] ?? '';
+    const beforeFingerprint = before.get(rel);
+    const afterFingerprint = after.get(rel);
     const beforeOwner = activityOwnerFingerprint(before.get(rel));
     const afterOwner = activityOwnerFingerprint(after.get(rel));
     const ownerChanged =
@@ -269,11 +272,16 @@ export function classifyStateChanges(
       beforeOwner !== null &&
       afterOwner !== null &&
       beforeOwner !== afterOwner;
+    const directoryInvolved = beforeFingerprint === 'dir' || afterFingerprint === 'dir';
+    const reportedActivityChurn =
+      top === 'activity' &&
+      rel !== ownActivity &&
+      (rel === 'activity'
+        ? kind !== 'modified'
+        : !directoryInvolved && (kind !== 'modified' || ownerChanged));
     const nonFatal =
       top === 'plans' ||
-      (top === 'activity' &&
-        (kind !== 'modified' || ownerChanged) &&
-        rel !== ownActivity);
+      reportedActivityChurn;
     (nonFatal ? reported : fatal).push(change);
   }
 
