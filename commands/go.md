@@ -103,6 +103,17 @@ its report, so this is what it does:
 12  release      terminate the executor's process group, release the lock
 ```
 
+**Do not commit your own fixes onto `router/<task-id>`.** The scope check at step 10 runs over
+`base_sha..HEAD`, so any commit you add lands in it and gets judged against the executor's
+`allowed_globs` -- which yours were never written for. Measured twice: a one-line fix of a review
+finding, committed onto the task branch, produced `not_allowed:src/app/stateGuard.ts` and `router
+land` then refused the whole package with "last dispatch was not PASSED".
+
+The gate is right to do that: your commits really are on the branch and really will land, so it
+cannot wave them through. **Put your own fixes on the integration branch after landing the
+package.** And do NOT widen `allowed_globs` afterwards to make the gate green -- a gate you helped
+pass has stopped being evidence.
+
 Three of those are worth reading the report for:
 
 - **`rescue_sha`** -- you had uncommitted work and it is now a commit on your branch. Undo with
