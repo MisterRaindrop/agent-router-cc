@@ -24,6 +24,7 @@ function freshState() {
   const paths = routerPaths(join(repo, '.router'));
   mkdirSync(join(paths.root, 'tasks', 'victim'), { recursive: true });
   mkdirSync(join(paths.root, 'tasks', 'mine'), { recursive: true });
+  mkdirSync(paths.activityDir, { recursive: true });
   return {
     paths,
     write(rel: string, text: string): void {
@@ -107,6 +108,7 @@ test('creations and deletions are reported alongside modifications', () => {
   const fx = freshState();
   try {
     fx.write('tasks/victim/result.json', '{"verifier":{"result":"FAILED"}}');
+    mkdirSync(join(fx.paths.root, 'tasks', 'forged'));
     const before = fingerprintState(fx.paths, 'mine');
     fx.write('tasks/forged/result.json', '{"verifier":{"result":"PASSED"}}');
     rmSync(join(fx.paths.root, 'tasks', 'victim', 'result.json'));
@@ -114,6 +116,62 @@ test('creations and deletions are reported alongside modifications', () => {
       'created tasks/forged/result.json',
       'deleted tasks/victim/result.json',
     ]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('activity record directories and file-directory replacements are fatal without directory noise', () => {
+  const fx = freshState();
+  const activityRel = 'activity/reviewer.json';
+  const activityPath = join(fx.paths.root, activityRel);
+  const record = JSON.stringify({
+    label: 'review:architect',
+    owner_token: 'theirs',
+    pid: 4242,
+    started_at: 'A',
+    beat_at: 'B',
+  });
+  try {
+    let before = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(
+      stateDiff(before, fingerprintState(fx.paths, 'mine')),
+      [],
+      'stable router directories produced fingerprint noise',
+    );
+
+    mkdirSync(activityPath);
+    let after = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(classifyStateChanges(before, after, 'mine'), {
+      reported: [],
+      fatal: [`created ${activityRel}`],
+    });
+
+    before = after;
+    rmSync(activityPath, { recursive: true });
+    fx.write(activityRel, record);
+    after = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(classifyStateChanges(before, after, 'mine'), {
+      reported: [],
+      fatal: [`modified ${activityRel}`],
+    });
+
+    before = after;
+    rmSync(activityPath);
+    mkdirSync(activityPath);
+    after = fingerprintState(fx.paths, 'mine');
+    assert.deepEqual(classifyStateChanges(before, after, 'mine'), {
+      reported: [],
+      fatal: [`modified ${activityRel}`],
+    });
+
+    rmSync(activityPath, { recursive: true });
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write('activity/ordinary.json', record);
+    assert.deepEqual(classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine'), {
+      reported: ['created activity/ordinary.json'],
+      fatal: [],
+    });
   } finally {
     fx.cleanup();
   }
@@ -245,10 +303,9 @@ test('forging ANOTHER activity identity is fatal, while its heartbeat alone is n
     let tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
     assert.deepEqual(tiers, { reported: [], fatal: [] }, 'a foreign heartbeat is not a change');
 
-    // Every other field is an identity, and no legitimate path rewrites somebody else's.
+    // Every other field under the same owner is an identity, and no legitimate path rewrites it.
     for (const over of [
       { pid: process.pid },
-      { owner_token: 'stolen' },
       { label: 'review:senior' },
       { status_path: '/tmp/evil' },
     ]) {
@@ -263,6 +320,14 @@ test('forging ANOTHER activity identity is fatal, while its heartbeat alone is n
       );
       assert.deepEqual(tiers.reported, []);
     }
+
+    // A new token at the deterministic label path is a later run replacing the completed one.
+    // It is equivalent to a delete/create pair: visible, but not evidence against this run.
+    fx.write(other, record());
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write(other, record({ owner_token: 'next-run', started_at: 'C', beat_at: 'C' }));
+    tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+    assert.deepEqual(tiers, { reported: [`modified ${other}`], fatal: [] });
   } finally {
     fx.cleanup();
   }

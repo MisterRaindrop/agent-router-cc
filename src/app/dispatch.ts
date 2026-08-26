@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { Clock } from '../io/clock.ts';
 import type { ActivityOutcome, DeliveryHeader, ExecutorQuota, ExitClass, GateConfig, MetricRecord, RunPhaseTimings, RunResult, TaskYaml, WorkerKind, WorkerPolicy } from '../domain/types.ts';
 import { pickExecutor } from '../core/pickExecutor.ts';
@@ -145,24 +145,18 @@ function uniqueStateChanges(...groups: ReadonlyArray<readonly string[] | undefin
 }
 
 /**
- * Rebase entries the router itself writes between the two guard windows.
- *
- * The first window still guards the old entry and the verification window guards the new one;
- * only the end-to-end comparison must not mistake the router's own handoff write for executor
- * tampering.
+ * Use one verification baseline while keeping the first owner seen at every existing activity
+ * path. Current entries still guard records created during the run; retained entries turn a
+ * cross-window delete/rebuild into one owner-aware modification.
  */
-function baselineAfterRouterWrites(
-  original: Map<string, string>,
-  beforeVerify: Map<string, string>,
-  rels: readonly string[],
+function retainInitialActivityFingerprints(
+  initial: Map<string, string>,
+  current: Map<string, string>,
 ): Map<string, string> {
-  const rebased = new Map(original);
-  for (const rel of rels) {
-    const fingerprint = beforeVerify.get(rel);
-    if (fingerprint === undefined) rebased.delete(rel);
-    else rebased.set(rel, fingerprint);
+  for (const [rel, fingerprint] of initial) {
+    if (rel === 'activity' || rel.startsWith(`activity${sep}`)) current.set(rel, fingerprint);
   }
-  return rebased;
+  return current;
 }
 
 /**
@@ -512,7 +506,10 @@ async function runPreparedObserved(
     // commands are the executor's own committed code: running them is the executor's last and
     // widest write channel, and a run that forged `.router` state from inside its test script was
     // still recorded PASSED. So the window stays open across verification too.
-    const stateBeforeVerify = fingerprintState(paths, id);
+    const stateBeforeVerify = retainInitialActivityFingerprints(
+      stateBefore,
+      fingerprintState(paths, id),
+    );
     result.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -533,22 +530,8 @@ async function runPreparedObserved(
     });
     const stateAfterVerify = fingerprintState(paths, id);
     const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-    // The second window used to forget the run's original baseline. If another activity was
-    // deleted in window one (reported) and rebuilt before this window began, comparing only with
-    // `stateBeforeVerify` saw a stable file and let a changed identity pass. Keep the narrow
-    // window as well -- it catches a record created in window one and forged in window two --
-    // but make the original baseline part of the final decision.
-    const originalAfterDelivery = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
-      join('tasks', id, 'DELIVERY.md'),
-    ]);
-    const sinceDispatchStarted = classifyStateChanges(originalAfterDelivery, stateAfterVerify, id);
-    const reported = uniqueStateChanges(
-      result.state_changes,
-      sinceDispatchStarted.reported,
-      duringVerify.reported,
-    );
+    const reported = uniqueStateChanges(result.state_changes, duringVerify.reported);
     if (reported.length > 0) result.state_changes = reported;
-    duringVerify.fatal = uniqueStateChanges(sinceDispatchStarted.fatal, duringVerify.fatal);
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
     }
@@ -1015,7 +998,10 @@ async function resumeInLock(
         result.verified_head = resolveCommit(workDir, 'HEAD');
         // Same reason as the fresh path: the verify and gate commands are the executor's own
         // committed code, so the state window has to stay open across them.
-        const stateBeforeVerify = fingerprintState(paths, id);
+        const stateBeforeVerify = retainInitialActivityFingerprints(
+          stateBefore,
+          fingerprintState(paths, id),
+        );
         result.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -1034,27 +1020,8 @@ async function resumeInLock(
         });
         const stateAfterVerify = fingerprintState(paths, id);
         const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-        // Resume writes its delivery report and diff.patch between the original snapshot and the
-        // verification snapshot. Rebase only those known router writes for the end-to-end
-        // comparison: the first window already guarded their old values, and the narrow
-        // verification window guards the new ones. Every other entry, especially activity
-        // identities, stays anchored to the original baseline.
-        const originalAfterRouterWrites = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
-          join('tasks', id, 'DELIVERY.md'),
-          join('tasks', id, 'diff.patch'),
-        ]);
-        const sinceResumeStarted = classifyStateChanges(
-          originalAfterRouterWrites,
-          stateAfterVerify,
-          id,
-        );
-        const reported = uniqueStateChanges(
-          result.state_changes,
-          sinceResumeStarted.reported,
-          duringVerify.reported,
-        );
+        const reported = uniqueStateChanges(result.state_changes, duringVerify.reported);
         if (reported.length > 0) result.state_changes = reported;
-        duringVerify.fatal = uniqueStateChanges(sinceResumeStarted.fatal, duringVerify.fatal);
         if (!envelope.stillOwned()) {
           duringVerify.fatal.push('modified gate.lock (it no longer carries this run’s owner token)');
         }

@@ -144,12 +144,24 @@ function hashActivity(abs: string): string | null {
   } catch {
     return createHash('sha256').update(bytes).digest('hex');
   }
+  const ownerToken = parsed.owner_token;
   const normalised: Record<string, unknown> = { ...parsed, beat_at: '<beat>' };
+  delete normalised.owner_token;
   const canonical = Object.keys(normalised)
     .sort()
     .map((key) => `${key}=${JSON.stringify(normalised[key])}`)
     .join('\n');
-  return createHash('sha256').update(canonical).digest('hex');
+  const contentHash = createHash('sha256').update(canonical).digest('hex');
+  if (typeof ownerToken !== 'string') return `activity:${contentHash}`;
+  const tokenHash = createHash('sha256').update(ownerToken).digest('hex');
+  return `token:${tokenHash}|${contentHash}`;
+}
+
+/** The stable owner portion of a valid activity fingerprint, without exposing the token. */
+function activityOwnerFingerprint(fingerprint: string | undefined): string | null {
+  if (fingerprint === undefined || !fingerprint.startsWith('token:')) return null;
+  const boundary = fingerprint.indexOf('|');
+  return boundary === -1 ? null : fingerprint.slice(0, boundary);
 }
 
 /** Stable signature for a non-directory, non-regular entry without opening its contents. */
@@ -188,6 +200,7 @@ export function fingerprintState(paths: RouterPaths, ownTaskId: string): Map<str
       const rel = relative(paths.root, abs);
       if (isOwnRunArtifact(rel, ownTaskId)) continue;
       if (entry.isDirectory()) {
+        out.set(rel, 'dir');
         walk(abs);
         continue;
       }
@@ -230,9 +243,11 @@ export interface StateChangeTiers {
  *
  * Plans cannot change the frozen contract already handed to this run. Other activities may
  * legitimately appear and disappear while dispatch is in flight. By contrast, a modified
- * activity has changed identity (its heartbeat was normalised before hashing), and this task's
- * own activity cannot legitimately appear or disappear inside the fingerprint window: it is
- * claimed before the first snapshot and finished after the last one.
+ * activity with the same owner has changed identity (its heartbeat was normalised before
+ * hashing), and this task's own activity cannot legitimately appear or disappear inside the
+ * fingerprint window: it is claimed before the first snapshot and finished after the last one.
+ * A different owner token at the same foreign path is a completed run followed by a new run,
+ * equivalent to the already-reported delete/create churn.
  */
 export function classifyStateChanges(
   before: Map<string, string>,
@@ -248,11 +263,25 @@ export function classifyStateChanges(
     const kind = splitAt === -1 ? '' : change.slice(0, splitAt);
     const rel = splitAt === -1 ? change : change.slice(splitAt + 1);
     const top = rel.split(sep)[0] ?? '';
+    const beforeFingerprint = before.get(rel);
+    const afterFingerprint = after.get(rel);
+    const beforeOwner = activityOwnerFingerprint(before.get(rel));
+    const afterOwner = activityOwnerFingerprint(after.get(rel));
+    const ownerChanged =
+      kind === 'modified' &&
+      beforeOwner !== null &&
+      afterOwner !== null &&
+      beforeOwner !== afterOwner;
+    const directoryInvolved = beforeFingerprint === 'dir' || afterFingerprint === 'dir';
+    const reportedActivityChurn =
+      top === 'activity' &&
+      rel !== ownActivity &&
+      (rel === 'activity'
+        ? kind !== 'modified'
+        : !directoryInvolved && (kind !== 'modified' || ownerChanged));
     const nonFatal =
       top === 'plans' ||
-      (top === 'activity' &&
-        kind !== 'modified' &&
-        rel !== ownActivity);
+      reportedActivityChurn;
     (nonFatal ? reported : fatal).push(change);
   }
 
