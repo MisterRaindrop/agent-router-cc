@@ -950,13 +950,27 @@ test('dispatch passes while a real supervised activity starts and finishes insid
 });
 
 for (const mode of ['dispatch', 'resume'] as const) {
-  test(`${mode} detects an external activity deleted then rebuilt before verification`, async () => {
+  for (const replacementOwner of ['next-owner', 'original-owner'] as const) {
+    const legalRerun = replacementOwner === 'next-owner';
+    test(
+      legalRerun
+        ? `${mode} allows a sequential same-label activity rerun across execution and verify`
+        : `${mode} detects a cross-window activity replacement that reuses its owner token`,
+      async () => {
     const { repo, paths } = setup();
-    const externalLabel = `review:cross-window-${mode}`;
+    const externalLabel = `review:cross-window-${mode}-${replacementOwner}`;
     const externalRel = `activity/${activityKey(externalLabel)}.json`;
     const externalPath = paths.activity(activityKey(externalLabel));
-    const confirmedPath = join(paths.taskDir('t1'), 'logs', `${mode}-rebuilt-before-verify`);
-    const executor = join(paths.taskDir('t1'), 'logs', `${mode}-delete-external.mjs`);
+    const confirmedPath = join(
+      paths.taskDir('t1'),
+      'logs',
+      `${mode}-${replacementOwner}-rebuilt-before-verify`,
+    );
+    const executor = join(
+      paths.taskDir('t1'),
+      'logs',
+      `${mode}-${replacementOwner}-delete-external.mjs`,
+    );
     const original = JSON.stringify({
       label: externalLabel,
       owner_token: 'original-owner',
@@ -966,7 +980,7 @@ for (const mode of ['dispatch', 'resume'] as const) {
     });
     const replacement = JSON.stringify({
       label: externalLabel,
-      owner_token: 'rebuilt-owner',
+      owner_token: replacementOwner,
       pid: process.pid,
       started_at: '2026-08-25T00:00:02.000Z',
       beat_at: '2026-08-25T00:00:03.000Z',
@@ -975,7 +989,7 @@ for (const mode of ['dispatch', 'resume'] as const) {
       `const fs=require('node:fs');` +
       `if(!fs.existsSync(${JSON.stringify(confirmedPath)}))process.exit(91);` +
       `const record=JSON.parse(fs.readFileSync(${JSON.stringify(externalPath)},'utf8'));` +
-      `if(record.owner_token!=='rebuilt-owner')process.exit(92);`;
+      `if(record.owner_token!==${JSON.stringify(replacementOwner)})process.exit(92);`;
     let initial: RunningDispatch | undefined;
     let owner: RunningDispatch | undefined;
     let rebuilder: ReturnType<typeof setInterval> | undefined;
@@ -1041,12 +1055,97 @@ for (const mode of ['dispatch', 'resume'] as const) {
         state_tampering?: string[];
         state_changes?: string[];
       };
+      if (legalRerun) {
+        assert.equal(output.exit_class, 'ok');
+        assert.equal(output.verifier, 'PASSED');
+        assert.equal(output.state_tampering, undefined);
+        assert.deepEqual(output.state_changes, [
+          `deleted ${externalRel}`,
+          `modified ${externalRel}`,
+        ]);
+      } else {
+        assert.equal(output.exit_class, 'task_failed');
+        assert.equal(output.verifier, undefined);
+        assert.deepEqual(output.state_tampering, [`modified ${externalRel}`]);
+        assert.deepEqual(output.state_changes, [`deleted ${externalRel}`]);
+      }
+    } finally {
+      if (rebuilder !== undefined) clearInterval(rebuilder);
+      if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
+        owner.child.kill('SIGKILL');
+      }
+      if (initial !== undefined && initial.child.exitCode === null && initial.child.signalCode === null) {
+        initial.child.kill('SIGKILL');
+      }
+      fx.cleanup(repo);
+    }
+      },
+    );
+  }
+}
+
+for (const mode of ['dispatch', 'resume'] as const) {
+  test(`${mode} rejects an in-place foreign activity identity edit under the same token`, async () => {
+    const { repo, paths } = setup();
+    const externalLabel = `review:in-place-${mode}`;
+    const externalRel = `activity/${activityKey(externalLabel)}.json`;
+    const externalPath = paths.activity(activityKey(externalLabel));
+    const executor = join(paths.taskDir('t1'), 'logs', `${mode}-edit-external.mjs`);
+    let initial: RunningDispatch | undefined;
+    let owner: RunningDispatch | undefined;
+    try {
+      stageTask(paths);
+      if (mode === 'resume') {
+        initial = startTaskProcess(repo, paths, FAKE_CODEX);
+        const initialExit = await initial.done;
+        assert.deepEqual(initialExit, { code: 0, signal: null }, initial.stderr());
+        const initialOutput = JSON.parse(initial.stdout().trim()) as Record<string, unknown>;
+        assert.equal(initialOutput.exit_class, 'ok');
+      }
+
+      mkdirSync(paths.activityDir, { recursive: true });
+      mkdirSync(join(paths.taskDir('t1'), 'logs'), { recursive: true });
+      writeFileSync(
+        externalPath,
+        JSON.stringify({
+          label: externalLabel,
+          owner_token: 'same-owner',
+          pid: process.pid,
+          started_at: '2026-08-25T00:00:00.000Z',
+          beat_at: '2026-08-25T00:00:01.000Z',
+        }),
+      );
+      writeFileSync(
+        executor,
+        '#!/usr/bin/env node\n' +
+          "import {spawnSync} from 'node:child_process';import {readFileSync,writeFileSync} from 'node:fs';\n" +
+          `const run=spawnSync(${JSON.stringify(FAKE_CODEX)},process.argv.slice(2),{stdio:'inherit'});\n` +
+          `const path=${JSON.stringify(externalPath)};\n` +
+          'const record=JSON.parse(readFileSync(path,"utf8"));record.pid+=1;\n' +
+          'writeFileSync(path,JSON.stringify(record));\n' +
+          'process.exit(run.status??1);\n',
+      );
+      chmodSync(executor, 0o755);
+      owner = startTaskProcess(
+        repo,
+        paths,
+        executor,
+        40,
+        mode === 'resume' ? 'continue after the external identity edit' : undefined,
+      );
+      const ended = await owner.done;
+      assert.deepEqual(ended, { code: 0, signal: null }, owner.stderr());
+      const output = JSON.parse(owner.stdout().trim()) as {
+        exit_class?: string;
+        verifier?: string;
+        state_tampering?: string[];
+        state_changes?: string[];
+      };
       assert.equal(output.exit_class, 'task_failed');
       assert.equal(output.verifier, undefined);
       assert.deepEqual(output.state_tampering, [`modified ${externalRel}`]);
-      assert.deepEqual(output.state_changes, [`deleted ${externalRel}`]);
+      assert.equal(output.state_changes, undefined);
     } finally {
-      if (rebuilder !== undefined) clearInterval(rebuilder);
       if (owner !== undefined && owner.child.exitCode === null && owner.child.signalCode === null) {
         owner.child.kill('SIGKILL');
       }

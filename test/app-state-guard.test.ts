@@ -245,10 +245,9 @@ test('forging ANOTHER activity identity is fatal, while its heartbeat alone is n
     let tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
     assert.deepEqual(tiers, { reported: [], fatal: [] }, 'a foreign heartbeat is not a change');
 
-    // Every other field is an identity, and no legitimate path rewrites somebody else's.
+    // Every other field under the same owner is an identity, and no legitimate path rewrites it.
     for (const over of [
       { pid: process.pid },
-      { owner_token: 'stolen' },
       { label: 'review:senior' },
       { status_path: '/tmp/evil' },
     ]) {
@@ -263,6 +262,14 @@ test('forging ANOTHER activity identity is fatal, while its heartbeat alone is n
       );
       assert.deepEqual(tiers.reported, []);
     }
+
+    // A new token at the deterministic label path is a later run replacing the completed one.
+    // It is equivalent to a delete/create pair: visible, but not evidence against this run.
+    fx.write(other, record());
+    before = fingerprintState(fx.paths, 'mine');
+    fx.write(other, record({ owner_token: 'next-run', started_at: 'C', beat_at: 'C' }));
+    tiers = classifyStateChanges(before, fingerprintState(fx.paths, 'mine'), 'mine');
+    assert.deepEqual(tiers, { reported: [`modified ${other}`], fatal: [] });
   } finally {
     fx.cleanup();
   }
