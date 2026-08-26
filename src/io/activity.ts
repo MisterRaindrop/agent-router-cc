@@ -390,8 +390,9 @@ function reclaimDisconnectedActivity(
     renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-liveness-confirmed');
 
-    // The test point is intentionally before the final confirmation: a heartbeat resumed at the
-    // last observable boundary must change the bytes and make this reclaim stand down.
+    // The test point is intentionally before the final confirmation. A live owner may still
+    // heartbeat here; that changes the snapshot and makes reclaim stand down. The narrower
+    // confirmed-to-unlink TOCTOU below has no further observable fence and remains a known limit.
     renewReclaimer(reclaimPath, token);
     reachActivityTestPoint('reclaim-before-unlink');
     if (!stillReclaiming(reclaimPath, token)) return 'retry';
@@ -651,8 +652,5 @@ export function startActivityHeartbeat(
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,
     intervalMs,
-    // An old owner must not revive this inode inside the reclaimer's final-confirm/unlink window.
-    // Skipping, rather than exiting, lets it resume if reclaim ultimately stands down.
-    skipIfExists: `${path}.reclaim`,
   });
 }
