@@ -249,11 +249,14 @@ test('a FIFO status_path is rejected without blocking the statusline', () => {
     execFileSync('mkfifo', [fifo]);
     fx.activity('fifo', activity('task:fifo', { statusPath: fifo }));
 
+    // Same reasoning as the FIFO test in io-activity: the property is that the render RETURNS,
+    // and a blocking open never does. The bound only has to clear node startup, and 1500ms did
+    // not on a loaded machine.
     const result = renderRaw(
       fx.dir,
       JSON.stringify({ cwd: fx.dir }),
       pinned(),
-      1_500,
+      30_000,
     );
     assert.equal(result.status, 0);
     assert.match(result.stdout, /task:fifo/);
