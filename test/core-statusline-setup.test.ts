@@ -15,7 +15,7 @@ test('created: no existing statusline -> bare wrapper command', () => {
   assert.deepEqual(plan.statusLine, {
     type: 'command',
     command: `node '${P}'`,
-    refreshInterval: 2,
+    refreshInterval: 10,
   });
 });
 
@@ -49,15 +49,22 @@ test('updated: a current command missing refreshInterval is repaired', () => {
   assert.deepEqual(plan.statusLine, {
     type: 'command',
     command: current,
-    refreshInterval: 2,
+    refreshInterval: 10,
   });
 });
 
-test('updated: a nonstandard refreshInterval is corrected to 2', () => {
+test('a refreshInterval the user chose is carried through, not replaced', () => {
   const current = `node '${P}'`;
-  const plan = planStatusLine(current, P, { type: 'command', refreshInterval: 10 });
-  assert.equal(plan.action, 'updated');
-  assert.equal(plan.statusLine.refreshInterval, 2);
+  const kept = planStatusLine(current, P, { type: 'command', refreshInterval: 10 });
+  assert.equal(kept.action, 'already-configured');
+  assert.equal(kept.statusLine.refreshInterval, 10);
+
+  // Anything that is not a positive finite number is not a choice, so we supply the default.
+  for (const bad of ['fast', 0, -1, Number.NaN, null, undefined]) {
+    const plan = planStatusLine(current, P, { type: 'command', refreshInterval: bad });
+    assert.equal(plan.action, 'updated', `refreshInterval ${String(bad)} should be replaced`);
+    assert.equal(plan.statusLine.refreshInterval, 10);
+  }
 });
 
 test('updated: all three managed fields must match for an idempotent plan', () => {

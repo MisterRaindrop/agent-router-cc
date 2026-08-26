@@ -44,7 +44,7 @@ test('created: writes a statusLine into a fresh settings.json, preserving other 
     assert.deepEqual(s.statusLine, {
       type: 'command',
       command: configuredCommand,
-      refreshInterval: 2,
+      refreshInterval: 10,
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -61,7 +61,7 @@ test('chained: an existing statusline is preserved, and re-running is idempotent
     assert.equal(first.action, 'chained');
     assert.equal(first.chained, 'my-hud');
     assert.match(readSettings(settings).statusLine!.command!, /ROUTER_INNER_STATUSLINE='my-hud' node/);
-    assert.equal(readSettings(settings).statusLine!.refreshInterval, 2);
+    assert.equal(readSettings(settings).statusLine!.refreshInterval, 10);
 
     const second = JSON.parse(router(['setup-statusline', '--settings', settings, '--statusline', SL, '--json']).out);
     assert.equal(second.action, 'already-configured'); // no double-wrap
@@ -80,13 +80,13 @@ test('updated: repairs a current command missing refreshInterval and tells the u
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /^updated statusLine/m);
     assert.match(r.out, /restart Claude Code/);
-    assert.equal(readSettings(settings).statusLine?.refreshInterval, 2);
+    assert.equal(readSettings(settings).statusLine?.refreshInterval, 10);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('updated: corrects a user-supplied refreshInterval to the required value 2', () => {
+test('a refreshInterval the user chose is left alone, not corrected', () => {
   const dir = tmp();
   try {
     const settings = join(dir, 'settings.json');
@@ -94,31 +94,13 @@ test('updated: corrects a user-supplied refreshInterval to the required value 2'
       settings,
       JSON.stringify({ statusLine: { type: 'command', command: configuredCommand, refreshInterval: 10 } }),
     );
+    const before = readFileSync(settings, 'utf8');
 
     const r = router(['setup-statusline', '--settings', settings, '--statusline', SL, '--json']);
     assert.equal(r.code, 0, r.out);
-    assert.equal(JSON.parse(r.out).action, 'updated');
-    assert.equal(readSettings(settings).statusLine?.refreshInterval, 2);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-// "updated" alone does not say what changed, and the one field it overwrites may be a value the
-// user picked on purpose. The same argument the code already makes for "repointed".
-test('updated: names the refreshInterval it overwrote, so a deliberate value is not lost silently', () => {
-  const dir = tmp();
-  try {
-    const settings = join(dir, 'settings.json');
-    writeFileSync(
-      settings,
-      JSON.stringify({ statusLine: { type: 'command', command: configuredCommand, refreshInterval: 10 } }),
-    );
-
-    const r = router(['setup-statusline', '--settings', settings, '--statusline', SL]);
-    assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /refreshInterval: was 10 -> 2/);
-    assert.match(r.out, /lower it back by hand/);
+    assert.equal(JSON.parse(r.out).action, 'already-configured');
+    assert.equal(readSettings(settings).statusLine?.refreshInterval, 10);
+    assert.equal(readFileSync(settings, 'utf8'), before, 'a chosen interval was rewritten');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -135,7 +117,7 @@ test('updated: says the interval was not set when the field was simply absent', 
 
     const r = router(['setup-statusline', '--settings', settings, '--statusline', SL]);
     assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /refreshInterval: was not set -> 2/);
+    assert.match(r.out, /refreshInterval was not set; wrote 10/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -179,7 +161,7 @@ test('preserves unknown statusLine keys while updating managed fields', () => {
     const statusLine = readSettings(settings).statusLine;
     assert.equal(statusLine?.padding, 'compact');
     assert.equal(statusLine?.type, 'command');
-    assert.equal(statusLine?.refreshInterval, 2);
+    assert.equal(statusLine?.refreshInterval, 10);
     assert.match(statusLine?.command ?? '', /ROUTER_INNER_STATUSLINE='my-hud' node/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -201,9 +183,11 @@ test('dry-run: reports the plan without writing the file', () => {
 });
 
 test('dry-run: missing or nonstandard refreshInterval is reported without touching settings', () => {
+  // Only a MISSING interval is something we would write. A value the user chose is respected, so
+  // it is not a dry-run case any more -- it is the already-configured case above.
   const cases = [
     { name: 'missing', statusLine: { type: 'command', command: configuredCommand } },
-    { name: 'nonstandard', statusLine: { type: 'command', command: configuredCommand, refreshInterval: 10 } },
+    { name: 'invalid', statusLine: { type: 'command', command: configuredCommand, refreshInterval: 'fast' } },
   ];
 
   for (const c of cases) {

@@ -8,6 +8,30 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The statusline replaced the user's whole HUD with a bare `router` on most renders.** The 1s
+  timeout on the chained inner statusline, added in 0.12.0, killed it before it flushed: measured,
+  claude-hud takes a median of 1206ms in this repository because it runs `git status` every render,
+  so 20 of 25 runs were over the limit and 10 of 12 renders lost the line. The timeout now sits far
+  above any healthy HUD.
+- Two FIFO tests were bounded by node startup latency (750ms / 1500ms) rather than by the
+  finite-versus-infinite distinction they existed to make, so they failed on a loaded machine while
+  asserting nothing about FIFOs.
+
+### Changed
+
+- **The spinner is gone, and `refreshInterval` goes back to 10 seconds.** The 2-second interval was
+  chosen from a cost estimate that was wrong by twenty times (~122ms per render; really ~1777ms),
+  and at 2 seconds renders overlapped until five statusline processes were alive and the load
+  average passed 130. At an honest interval a spinner holds one frame for ten seconds, which reads
+  as motion that has *stopped* — worse than no spinner. Liveness is carried by the numbers, which
+  are recomputed every render and so are uniformly stale rather than partly moving.
+- `setup-statusline` writes `refreshInterval` **only when the field is absent**. A value you set is
+  yours: the right interval depends on what you chained and how large your repository is, and
+  router can measure neither.
+
+
 ## [0.12.0] - 2026-08-25
 
 You can see what is running in the background, and see that it is *moving*. Designed

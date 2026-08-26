@@ -170,7 +170,7 @@ test('task status files are enhancements, not an authoritative source of activit
   }
 });
 
-test('a running activity renders its label, spinner, and status enhancements', () => {
+test('a running activity renders its label and status enhancements', () => {
   const fx = repo();
   try {
     const statusPath = fx.status('alpha', {
@@ -184,9 +184,8 @@ test('a running activity renders its label, spinner, and status enhancements', (
     fx.activity('alpha', activity('task:alpha', { statusPath }));
 
     const out = render(fx.dir, { cwd: fx.dir }, pinned());
-    const spinner = spinnerIn(out);
-    assert.ok(spinner, `expected a spinner frame in: ${out}`);
-    assert.ok(out.includes(`router ▶ ${spinner} task:alpha`));
+    assert.ok(out.includes('router ▶ task:alpha'), out);
+    assert.equal(spinnerIn(out), undefined, `a spinner frame came back: ${out}`);
     assert.match(
       out,
       /task:alpha executor_working 18m\/30m ·log 45s ·静默判死 3m · Bash: npm test/,
@@ -249,11 +248,14 @@ test('a FIFO status_path is rejected without blocking the statusline', () => {
     execFileSync('mkfifo', [fifo]);
     fx.activity('fifo', activity('task:fifo', { statusPath: fifo }));
 
+    // Same reasoning as the FIFO test in io-activity: the property is that the render RETURNS,
+    // and a blocking open never does. The bound only has to clear node startup, and 1500ms did
+    // not on a loaded machine.
     const result = renderRaw(
       fx.dir,
       JSON.stringify({ cwd: fx.dir }),
       pinned(),
-      1_500,
+      30_000,
     );
     assert.equal(result.status, 0);
     assert.match(result.stdout, /task:fifo/);
@@ -298,15 +300,28 @@ test('a status file over the read limit is ignored', () => {
   }
 });
 
-test('the running spinner changes across two-second refreshes', () => {
+// The spinner is gone -- see the comment in router-usage.mjs. What replaces it as the liveness
+// signal is that the NUMBERS advance, and they must advance for the same reason the spinner was
+// supposed to: the render recomputes them from the clock every time.
+test('the rendered ages advance between renders, and no spinner frame appears', () => {
   const fx = repo();
   try {
-    fx.activity('review', activity('review:architect'));
-    const first = spinnerIn(render(fx.dir, { cwd: fx.dir }, pinned(NOW)));
-    const second = spinnerIn(render(fx.dir, { cwd: fx.dir }, pinned(NOW + 2_000)));
-    assert.ok(first);
-    assert.ok(second);
-    assert.notEqual(first, second);
+    const statusPath = fx.status('alpha', {
+      phase: 'executor_working',
+      started_at: new Date(NOW - 3 * 60_000).toISOString(),
+      budget_minutes: 30,
+      last_output_at: new Date(NOW - 5_000).toISOString(),
+    });
+    fx.activity('alpha', activity('task:alpha', { statusPath }));
+
+    const first = render(fx.dir, { cwd: fx.dir }, pinned(NOW));
+    const later = render(fx.dir, { cwd: fx.dir }, pinned(NOW + 10_000));
+    assert.match(first, /·log 5s/);
+    assert.match(later, /·log 15s/);
+    assert.notEqual(first, later, 'nothing on the line changed across ten seconds');
+    for (const out of [first, later]) {
+      assert.equal(spinnerIn(out), undefined, `a spinner frame came back: ${out}`);
+    }
   } finally {
     fx.cleanup();
   }
@@ -322,7 +337,7 @@ test('the production entry ignores ROUTER_STATUSLINE_NOW without both test-only 
       ROUTER_STATUSLINE_TEST_CLOCK: '',
       ROUTER_STATUSLINE_NOW: String(actualNow + 24 * 60 * 60 * 1000),
     });
-    assert.ok(spinnerIn(out), `expected a live spinner in: ${out}`);
+    assert.equal(spinnerIn(out), undefined, `a spinner frame came back: ${out}`);
     assert.match(out, /review:clock/);
     assert.doesNotMatch(out, /已失联/);
   } finally {
@@ -330,7 +345,7 @@ test('the production entry ignores ROUTER_STATUSLINE_NOW without both test-only 
   }
 });
 
-test('a disconnected activity renders its heartbeat age without spinner or stale phase', () => {
+test('a disconnected activity renders its heartbeat age without a stale phase', () => {
   const fx = repo();
   try {
     const statusPath = fx.status('dead', {
@@ -359,9 +374,7 @@ test('a malformed activity file does not hide a valid activity', () => {
     writeFileSync(join(fx.dir, '.router', 'activity', 'broken.json'), '{ truncated');
     fx.activity('healthy', activity('review:senior'));
     const out = render(fx.dir, { cwd: fx.dir }, pinned());
-    const spinner = spinnerIn(out);
-    assert.ok(spinner);
-    assert.ok(out.includes(`router ▶ ${spinner} review:senior`));
+    assert.ok(out.includes('router ▶ review:senior'), out);
     assert.doesNotMatch(out, /broken/);
   } finally {
     fx.cleanup();
@@ -412,7 +425,13 @@ test('an inner statusline that prints nothing falls back to the plain marker', (
   }
 });
 
-test('a hung inner statusline returns within the refresh period and keeps prior stdout', () => {
+// The bound is the internal timeout, NOT the refresh period. It used to be 1000ms, chosen from a
+// measurement of the chained HUD that turned out to be wrong by a factor of ten -- the real
+// claude-hud runs a median of 1206ms, so that timeout killed it on 20 of 25 runs and the user lost
+// their whole line to a bare `router` on 10 of 12 renders. The timeout now sits far above any
+// healthy HUD, so what this test pins is the property that survived: a genuinely stuck inner
+// statusline still cannot hang the script forever, and whatever it managed to flush is kept.
+test('a hung inner statusline still terminates and keeps whatever it flushed', () => {
   const fx = repo();
   try {
     mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
@@ -422,14 +441,20 @@ test('a hung inner statusline returns within the refresh period and keeps prior 
       JSON.stringify({ cwd: fx.dir }),
       {
         ...pinned(),
-        ROUTER_INNER_STATUSLINE: "printf 'partial-hud'; sleep 10",
+        ROUTER_INNER_STATUSLINE: "printf 'partial-hud'; sleep 60",
       },
-      2_500,
+      // Above the script's own 10s timeout, so THIS kill never decides the outcome; if the
+      // internal one regresses away entirely, the assertion below fails instead of hanging.
+      20_000,
     );
     assert.equal(result.status, 0);
     assert.equal(result.stderr, '');
     assert.equal(result.stdout, 'partial-hud | router ▶ idle');
-    assert.ok(Date.now() - startedAt < 2_000, 'statusline exceeded its two-second refresh period');
+    const elapsed = Date.now() - startedAt;
+    assert.ok(elapsed < 15_000, `statusline did not honour its own timeout (${elapsed}ms)`);
+    // ...and it really did wait for the hung child rather than skipping it, which is what keeps
+    // a healthy-but-slow HUD's output.
+    assert.ok(elapsed > 5_000, `statusline abandoned the inner HUD far too early (${elapsed}ms)`);
   } finally {
     fx.cleanup();
   }

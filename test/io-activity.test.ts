@@ -163,9 +163,14 @@ test('a FIFO activity file is ignored without blocking or hiding a valid sibling
       ],
       { stdio: 'ignore' },
     );
+    // Not a latency bet. The property is "readActivity RETURNS rather than blocking on the FIFO
+    // open forever", and a blocked open never returns at all -- so the bound only has to sit above
+    // any plausible node startup. 750ms was not: at load average 138 this machine takes longer
+    // than that just to boot node and import a module, and the test then failed every run while
+    // asserting nothing about FIFOs. Same class of defect as review finding F12.
     const returned = await waitUntil(
       () => reader!.exitCode !== null || reader!.signalCode !== null,
-      750,
+      30_000,
     );
     if (!returned) {
       reader.kill('SIGKILL');
