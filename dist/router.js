@@ -9387,8 +9387,8 @@ function writeFlowMapping(state, level, node) {
     if (explicitPair) pairBuffer += "? ";
     else if (state.quoteFlowKeys) pairBuffer += '"';
     const valueText = writeNode(state, level, value, {});
-    const sep3 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
-    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep3}${valueText}`;
+    const sep4 = state.flowSkipColonSpace || valueText === "" ? "" : " ";
+    pairBuffer += `${keyText}${state.quoteFlowKeys && !explicitPair ? '"' : ""}:${sep4}${valueText}`;
     result2 += pairBuffer;
   }
   const pad3 = state.flowBracketPadding && result2 !== "" ? " " : "";
@@ -9485,8 +9485,8 @@ function writeNode(state, level, node, ctx) {
       if (anchor !== null) props.push(anchor);
       if (tag !== null) props.push(tag);
     }
-    const sep3 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
-    body = `${props.join(" ")}${sep3}${body}`;
+    const sep4 = body === "" || body.charCodeAt(0) === CHAR_LINE_FEED ? "" : " ";
+    body = `${props.join(" ")}${sep4}${body}`;
   }
   return body;
 }
@@ -9531,8 +9531,8 @@ function present(documents, options) {
         block: true,
         compact: true
       });
-      const sep3 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
-      result2 += `---${sep3}${body}
+      const sep4 = body === "" ? "" : hasDirectives || rootStartsOwnLine(doc.contents) ? "\n" : " ";
+      result2 += `---${sep4}${body}
 `;
     } else result2 += writeNode(state, 0, doc.contents, {
       block: true,
@@ -10103,7 +10103,7 @@ function appendMetric(p, record) {
 import { createHash as createHash4 } from "node:crypto";
 import { readFileSync as readFileSync10, rmSync as rmSync2, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join9, sep as sep3 } from "node:path";
 
 // src/core/pickExecutor.ts
 function pickExecutor(quotas) {
@@ -11236,10 +11236,7 @@ function startActivityHeartbeat(path, activity, intervalMs = DEFAULT_BEAT_MS) {
     // writeJsonAtomic pretty-prints with two spaces. Matching that shape makes a heartbeat only
     // replace fixed-width ISO timestamp bytes instead of changing the document's length.
     indent: 2,
-    intervalMs,
-    // An old owner must not revive this inode inside the reclaimer's final-confirm/unlink window.
-    // Skipping, rather than exiting, lets it resume if reclaim ultimately stands down.
-    skipIfExists: `${path}.reclaim`
+    intervalMs
   });
 }
 
@@ -11460,9 +11457,19 @@ function hashActivity(abs) {
   } catch {
     return createHash2("sha256").update(bytes).digest("hex");
   }
+  const ownerToken2 = parsed.owner_token;
   const normalised = { ...parsed, beat_at: "<beat>" };
+  delete normalised.owner_token;
   const canonical = Object.keys(normalised).sort().map((key) => `${key}=${JSON.stringify(normalised[key])}`).join("\n");
-  return createHash2("sha256").update(canonical).digest("hex");
+  const contentHash = createHash2("sha256").update(canonical).digest("hex");
+  if (typeof ownerToken2 !== "string") return `activity:${contentHash}`;
+  const tokenHash = createHash2("sha256").update(ownerToken2).digest("hex");
+  return `token:${tokenHash}|${contentHash}`;
+}
+function activityOwnerFingerprint(fingerprint) {
+  if (fingerprint === void 0 || !fingerprint.startsWith("token:")) return null;
+  const boundary = fingerprint.indexOf("|");
+  return boundary === -1 ? null : fingerprint.slice(0, boundary);
 }
 function specialEntryFingerprint(abs) {
   try {
@@ -11489,6 +11496,7 @@ function fingerprintState(paths, ownTaskId) {
       const rel = relative(paths.root, abs);
       if (isOwnRunArtifact(rel, ownTaskId)) continue;
       if (entry.isDirectory()) {
+        out2.set(rel, "dir");
         walk(abs);
         continue;
       }
@@ -11518,7 +11526,14 @@ function classifyStateChanges(before, after, ownTaskId) {
     const kind = splitAt === -1 ? "" : change.slice(0, splitAt);
     const rel = splitAt === -1 ? change : change.slice(splitAt + 1);
     const top = rel.split(sep)[0] ?? "";
-    const nonFatal = top === "plans" || top === "activity" && kind !== "modified" && rel !== ownActivity;
+    const beforeFingerprint = before.get(rel);
+    const afterFingerprint = after.get(rel);
+    const beforeOwner = activityOwnerFingerprint(before.get(rel));
+    const afterOwner = activityOwnerFingerprint(after.get(rel));
+    const ownerChanged = kind === "modified" && beforeOwner !== null && afterOwner !== null && beforeOwner !== afterOwner;
+    const directoryInvolved = beforeFingerprint === "dir" || afterFingerprint === "dir";
+    const reportedActivityChurn = top === "activity" && rel !== ownActivity && (rel === "activity" ? kind !== "modified" : !directoryInvolved && (kind !== "modified" || ownerChanged));
+    const nonFatal = top === "plans" || reportedActivityChurn;
     (nonFatal ? reported : fatal).push(change);
   }
   return { reported, fatal };
@@ -13078,14 +13093,11 @@ function uniqueStateChanges(...groups) {
   }
   return merged;
 }
-function baselineAfterRouterWrites(original, beforeVerify, rels) {
-  const rebased = new Map(original);
-  for (const rel of rels) {
-    const fingerprint = beforeVerify.get(rel);
-    if (fingerprint === void 0) rebased.delete(rel);
-    else rebased.set(rel, fingerprint);
+function retainInitialActivityFingerprints(initial, current) {
+  for (const [rel, fingerprint] of initial) {
+    if (rel === "activity" || rel.startsWith(`activity${sep3}`)) current.set(rel, fingerprint);
   }
-  return rebased;
+  return current;
 }
 var ROUTER_STATE_EXCLUDE = [".router"];
 function quotaFor(paths, kind) {
@@ -13316,7 +13328,10 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
     if (patch !== null) result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
     result2.verified_head = resolveCommit(workDir, "HEAD");
     prep.status.transition("verify");
-    const stateBeforeVerify = fingerprintState(paths, id);
+    const stateBeforeVerify = retainInitialActivityFingerprints(
+      stateBefore,
+      fingerprintState(paths, id)
+    );
     result2.verifier = verifyTask({
       repoRoot: paths.repoRoot,
       workDir,
@@ -13337,17 +13352,8 @@ async function runPreparedObserved(deps, prep, gateConfig, envelope) {
     });
     const stateAfterVerify = fingerprintState(paths, id);
     const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-    const originalAfterDelivery = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
-      join9("tasks", id, "DELIVERY.md")
-    ]);
-    const sinceDispatchStarted = classifyStateChanges(originalAfterDelivery, stateAfterVerify, id);
-    const reported = uniqueStateChanges(
-      result2.state_changes,
-      sinceDispatchStarted.reported,
-      duringVerify.reported
-    );
+    const reported = uniqueStateChanges(result2.state_changes, duringVerify.reported);
     if (reported.length > 0) result2.state_changes = reported;
-    duringVerify.fatal = uniqueStateChanges(sinceDispatchStarted.fatal, duringVerify.fatal);
     if (!(envelope?.stillOwned() ?? true)) {
       duringVerify.fatal.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
     }
@@ -13633,7 +13639,10 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
         writeFileSync4(paths.diffPatch(id), patch);
         result2.diff_sha = createHash4("sha256").update(patch).digest("hex");
         result2.verified_head = resolveCommit(workDir, "HEAD");
-        const stateBeforeVerify = fingerprintState(paths, id);
+        const stateBeforeVerify = retainInitialActivityFingerprints(
+          stateBefore,
+          fingerprintState(paths, id)
+        );
         result2.verifier = verifyTask({
           repoRoot: paths.repoRoot,
           workDir,
@@ -13652,22 +13661,8 @@ async function resumeInLock(deps, id, feedback, gateConfig, envelope) {
         });
         const stateAfterVerify = fingerprintState(paths, id);
         const duringVerify = classifyStateChanges(stateBeforeVerify, stateAfterVerify, id);
-        const originalAfterRouterWrites = baselineAfterRouterWrites(stateBefore, stateBeforeVerify, [
-          join9("tasks", id, "DELIVERY.md"),
-          join9("tasks", id, "diff.patch")
-        ]);
-        const sinceResumeStarted = classifyStateChanges(
-          originalAfterRouterWrites,
-          stateAfterVerify,
-          id
-        );
-        const reported = uniqueStateChanges(
-          result2.state_changes,
-          sinceResumeStarted.reported,
-          duringVerify.reported
-        );
+        const reported = uniqueStateChanges(result2.state_changes, duringVerify.reported);
         if (reported.length > 0) result2.state_changes = reported;
-        duringVerify.fatal = uniqueStateChanges(sinceResumeStarted.fatal, duringVerify.fatal);
         if (!envelope.stillOwned()) {
           duringVerify.fatal.push("modified gate.lock (it no longer carries this run\u2019s owner token)");
         }
