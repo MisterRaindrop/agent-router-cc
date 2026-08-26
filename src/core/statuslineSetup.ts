@@ -7,14 +7,25 @@
 // PURE: string-building only; the cli layer does the settings.json read/write.
 
 const MARKER = 'router-usage.mjs';
-const REFRESH_INTERVAL_SECONDS = 2 as const;
+// What we write when the field is ABSENT. Not what we impose when it is present.
+//
+// 2 was chosen from a measurement of the chained statusline that was wrong by more than a factor
+// of ten. Measured properly on the maintainer's machine: the chained claude-hud runs `git status`
+// on every render and takes a median of 1206ms in this repository, so a 2-second interval never
+// finished before the next render started -- five statusline processes accumulated and the load
+// average went past 130, which then failed four timing-sensitive tests in the suite.
+//
+// The honest conclusion is that the right interval depends on what the user chained and how big
+// their repository is, and router cannot measure either. So: write a conservative default, and
+// leave any value the user already chose alone.
+const REFRESH_INTERVAL_SECONDS = 5 as const;
 
 export type StatusLineAction = 'created' | 'chained' | 'already-configured' | 'repointed' | 'updated';
 
 export interface StatusLineSettings {
   type: 'command';
   command: string;
-  refreshInterval: typeof REFRESH_INTERVAL_SECONDS;
+  refreshInterval: number;
 }
 
 export interface StatusLinePlan {
@@ -22,6 +33,11 @@ export interface StatusLinePlan {
   statusLine: StatusLineSettings; // all fields owned by setup-statusline
   action: StatusLineAction;
   inner: string | null; // the pre-existing command we chained, if any
+}
+
+/** Any positive finite number is a choice we respect; anything else we replace. */
+function validInterval(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 interface ExistingStatusLineSettings {
@@ -89,14 +105,16 @@ export function planStatusLine(
   const wrapped = statusLineInvocation(statuslinePath);
   const current = existingCommand?.trim();
   if (current === undefined || current === '') {
-    return plan(wrapped, 'created', null);
+    return plan(wrapped, 'created', null, existingSettings);
   }
   if (current.includes(MARKER)) {
     if (current === wrapped || current.endsWith(` ${wrapped}`)) {
+      // A refresh interval the user already set is THEIRS -- see the constant above. We only
+      // supply one when the field is missing entirely, so re-running this command can repair a
+      // config that predates the field without overriding a deliberate choice.
       const managedFieldsMatch =
-        existingSettings?.type === 'command' &&
-        existingSettings.refreshInterval === REFRESH_INTERVAL_SECONDS;
-      return plan(current, managedFieldsMatch ? 'already-configured' : 'updated', null);
+        existingSettings?.type === 'command' && validInterval(existingSettings.refreshInterval);
+      return plan(current, managedFieldsMatch ? 'already-configured' : 'updated', null, existingSettings);
     }
     // Ours, but not what we would write now. Keep whatever it chained.
     const inner = extractInner(current);
@@ -104,15 +122,27 @@ export function planStatusLine(
       inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
       'repointed',
       inner,
+      existingSettings,
     );
   }
-  return plan(`ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`, 'chained', current);
+  return plan(`ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`, 'chained', current, existingSettings);
 }
 
-function plan(command: string, action: StatusLineAction, inner: string | null): StatusLinePlan {
+function plan(
+  command: string,
+  action: StatusLineAction,
+  inner: string | null,
+  existing?: ExistingStatusLineSettings,
+): StatusLinePlan {
+  // Carry the user's own interval through, or supply the default when they have none. Writing
+  // REFRESH_INTERVAL_SECONDS unconditionally here is what would silently override their choice,
+  // because the cli layer merges this object over the existing one.
+  const refreshInterval = validInterval(existing?.refreshInterval)
+    ? (existing?.refreshInterval as number)
+    : REFRESH_INTERVAL_SECONDS;
   return {
     command,
-    statusLine: { type: 'command', command, refreshInterval: REFRESH_INTERVAL_SECONDS },
+    statusLine: { type: 'command', command, refreshInterval },
     action,
     inner,
   };

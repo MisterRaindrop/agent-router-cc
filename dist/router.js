@@ -15005,7 +15005,10 @@ function renderRouting(report) {
 
 // src/core/statuslineSetup.ts
 var MARKER = "router-usage.mjs";
-var REFRESH_INTERVAL_SECONDS = 2;
+var REFRESH_INTERVAL_SECONDS = 5;
+function validInterval(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
 var VERSIONED_PLUGIN_SCRIPT = /^(?<cache>.*[/\\]plugins[/\\]cache[/\\][^/\\]+[/\\][^/\\]+)[/\\][^/\\]+[/\\](?<tail>statusline[/\\]router-usage\.mjs)$/;
 function shQuote(s) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
@@ -15021,26 +15024,28 @@ function planStatusLine(existingCommand, statuslinePath, existingSettings) {
   const wrapped = statusLineInvocation(statuslinePath);
   const current = existingCommand?.trim();
   if (current === void 0 || current === "") {
-    return plan(wrapped, "created", null);
+    return plan(wrapped, "created", null, existingSettings);
   }
   if (current.includes(MARKER)) {
     if (current === wrapped || current.endsWith(` ${wrapped}`)) {
-      const managedFieldsMatch = existingSettings?.type === "command" && existingSettings.refreshInterval === REFRESH_INTERVAL_SECONDS;
-      return plan(current, managedFieldsMatch ? "already-configured" : "updated", null);
+      const managedFieldsMatch = existingSettings?.type === "command" && validInterval(existingSettings.refreshInterval);
+      return plan(current, managedFieldsMatch ? "already-configured" : "updated", null, existingSettings);
     }
     const inner = extractInner(current);
     return plan(
       inner === null ? wrapped : `ROUTER_INNER_STATUSLINE=${shQuote(inner)} ${wrapped}`,
       "repointed",
-      inner
+      inner,
+      existingSettings
     );
   }
-  return plan(`ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`, "chained", current);
+  return plan(`ROUTER_INNER_STATUSLINE=${shQuote(current)} ${wrapped}`, "chained", current, existingSettings);
 }
-function plan(command, action, inner) {
+function plan(command, action, inner, existing) {
+  const refreshInterval = validInterval(existing?.refreshInterval) ? existing?.refreshInterval : REFRESH_INTERVAL_SECONDS;
   return {
     command,
-    statusLine: { type: "command", command, refreshInterval: REFRESH_INTERVAL_SECONDS },
+    statusLine: { type: "command", command, refreshInterval },
     action,
     inner
   };
@@ -15824,11 +15829,10 @@ var setupStatusline = (ctx) => {
       const head = plan2.action === "already-configured" ? `already configured (${settingsPath})` : dryRun ? `would ${verb[plan2.action] ?? plan2.action} the statusLine in ${settingsPath}` : `${plan2.action} statusLine in ${settingsPath}`;
       const chain = plan2.inner ? `
   chained your existing statusline: ${plan2.inner}` : "";
-      const previousInterval = typeof current?.refreshInterval === "number" ? current.refreshInterval : null;
       const why = plan2.action === "repointed" ? "\n  the previous command pointed at one specific plugin version, which would keep\n  running that version after an upgrade; it now resolves the newest at startup" : plan2.action === "updated" ? `
-  refreshInterval: ${previousInterval === null ? "was not set" : `was ${previousInterval}`} -> ${plan2.statusLine.refreshInterval}
-  the liveness segment only reads as moving at this rate; lower it back by hand
-  if you would rather trade the motion for the CPU` : "";
+  refreshInterval was not set; wrote ${plan2.statusLine.refreshInterval}
+  a value you set yourself is left alone -- the right one depends on what your
+  statusline chains and how large this repository is, which router cannot measure` : "";
       const warn = missing ? `
   WARNING: ${statuslinePath} not found (pass --statusline <path>)` : "";
       const note = changed && !dryRun ? "\n  restart Claude Code (or reload) for it to take effect" : "";
