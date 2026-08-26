@@ -241,34 +241,28 @@ function routerSegment(routerDir, now, activityApi) {
 // caller writes -- and a payload we would discard anyway (parsePayload rejects over the cap) must
 // not be able to hold the whole statusline hostage while it is read. Reading one byte past the cap
 // is enough to know it is oversized; we stop there and let the payload be discarded as before.
-// Bounded in MEMORY, but stdin is still DRAINED to the end.
+// Deliberately readFileSync, not a hand-rolled bounded loop.
 //
-// A first attempt stopped reading once past the cap. That makes the writer -- Claude Code itself
-// in production -- see EPIPE, and package H's own test caught it: `spawnSync ... EPIPE`. So the
-// pipe is always read to EOF; what is bounded is how much of it we keep. Anything past the cap is
-// read and thrown away, which is what parsePayload would have done with it anyway.
+// A reviewer advisory pointed out -- correctly -- that this buffers whatever the caller writes,
+// before the inner HUD has even started, and a bounded version did measurably survive a 60MB
+// payload under a 40MB heap where this one dies in GC.
+//
+// It was still reverted. The bounded loop WEDGED on a large stdin, roughly one run in four:
+// `spawnSync ... ETIMEDOUT` after 20s, with the statusline child alive and blocked at 0% CPU.
+// Two orphans from that bug were found alive on a developer machine, one of them 11 hours old,
+// and a third hung a package gate for 50 minutes. This script runs on the user's screen every
+// two seconds; a rare permanent wedge there is far worse than buffering a payload that
+// parsePayload would discard anyway. readFileSync handles the EOF and EAGAIN cases that the
+// hand-rolled loop got wrong.
+//
+// The test below pins the property that actually matters (an oversized payload must not cost
+// the inner HUD) and carries a timeout, so a future attempt at this cannot hang the suite.
 function readStdin() {
-  const limit = MAX_STDIN_JSON_BYTES + 1;
-  const kept = Buffer.allocUnsafe(limit);
-  const scratch = Buffer.allocUnsafe(64 * 1024);
-  let length = 0;
-  for (;;) {
-    let read;
-    try {
-      read = readSync(0, scratch, 0, scratch.length, null);
-    } catch (error) {
-      // EAGAIN is not end of input; a pipe with nothing ready yet throws it.
-      if (error?.code === 'EAGAIN') continue;
-      break;
-    }
-    if (read === 0) break;
-    if (length < limit) {
-      const room = Math.min(limit - length, read);
-      scratch.copy(kept, length, 0, room);
-      length += room;
-    }
+  try {
+    return readFileSync(0, 'utf8');
+  } catch {
+    return '';
   }
-  return kept.subarray(0, length).toString('utf8');
 }
 
 function parsePayload(raw) {

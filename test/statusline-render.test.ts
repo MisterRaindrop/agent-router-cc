@@ -482,13 +482,20 @@ test('an oversized stdin payload is not buffered whole and the inner HUD still r
   try {
     mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
     const oversized = JSON.stringify({ cwd: fx.dir, pad: 'x'.repeat(2 * 1024 * 1024) });
-    const out = execFileSync(process.execPath, [SCRIPT], {
+    // spawnSync with a timeout, NOT execFileSync: pushing 2MB through a synchronous child's
+    // stdin can wedge, and when it does there is nothing to time it out -- `node --test` runs
+    // with --test-timeout=0. Measured: this exact case left a statusline child alive for 50
+    // minutes and hung a package gate, and an identical orphan had been sitting for 11 hours.
+    // That is the unlocated intermittent failure this plan had been carrying.
+    const result = spawnSync(process.execPath, [SCRIPT], {
       input: oversized,
       encoding: 'utf8',
-      // The writer may see EPIPE once we stop reading; that is the caller's business, not ours.
       env: { ...process.env, ...pinned(), ROUTER_INNER_STATUSLINE: "cat >/dev/null; printf 'my-hud'" },
+      timeout: 20_000,
+      killSignal: 'SIGKILL',
     });
-    assert.match(out, /^my-hud/, `inner HUD was lost: ${out}`);
+    assert.equal(result.error, undefined, `oversized stdin wedged the statusline: ${result.error}`);
+    assert.match(result.stdout, /^my-hud/, `inner HUD was lost: ${result.stdout}`);
   } finally {
     fx.cleanup();
   }
