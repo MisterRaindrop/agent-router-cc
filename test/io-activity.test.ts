@@ -58,7 +58,12 @@ function record(overrides: Partial<ActivityRecord> = {}): ActivityRecord {
   };
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
+// The ceiling is a LIVENESS bound, not a latency claim: every caller asks "does this eventually
+// happen", and a thing that never happens never happens. 5s sat close enough to real startup and
+// scheduling latency that a loaded machine (load average 136, measured) failed these tests while
+// asserting nothing about the property under test. Set it far above any plausible latency so the
+// only way to hit it is a genuine hang.
+async function waitUntil(predicate: () => boolean, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return true;

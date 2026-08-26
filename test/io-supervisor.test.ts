@@ -125,15 +125,23 @@ test('killing the group reaps a grandchild process', async () => {
       'setInterval(()=>{},1000);';
     const o = await superviseWorker(
       baseSpec(dir, script, {
-        maxWallMs: 400,
+        // The worker has to boot node, spawn a grandchild and record its pid BEFORE the wall clock
+        // fires, or there is nothing to assert about. 400ms did not clear node's own startup on a
+        // loaded machine, and the test then died on ENOENT reading the pid file -- a broken
+        // premise reported as a mysterious file error. This costs a slower test and buys a real one.
+        maxWallMs: 5_000,
         sigkillGraceMs: 150,
         env: childEnv({ GC_PID_FILE: gcFile }),
       }),
     );
     assert.equal(o.exitClass, 'timeout');
+    assert.ok(existsSync(gcFile), 'the worker never recorded a grandchild: nothing was tested');
     const gcPid = Number(readFileSync(gcFile, 'utf8').trim());
     assert.ok(Number.isInteger(gcPid) && gcPid > 1);
-    await sleep(400); // let SIGKILL propagate to the group
+    // Poll, do not bet. The property is that the grandchild is reaped, and 400ms sat close enough
+    // to real signal-delivery-plus-teardown latency that a loaded machine failed this every run.
+    const deadline = Date.now() + 30_000;
+    while (isProcessAlive(gcPid) && Date.now() < deadline) await sleep(50);
     assert.equal(isProcessAlive(gcPid), false, 'grandchild should be reaped with the group');
   } finally {
     rmSync(dir, { recursive: true, force: true });

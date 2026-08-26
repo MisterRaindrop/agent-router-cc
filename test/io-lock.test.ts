@@ -441,17 +441,28 @@ test('a slow reclaim does not delete a lock that appeared while it was reaping (
     // lock -- exactly what the loser of the reviewer's race saw. It runs in its own process
     // because acquireLock blocks this one's event loop for the whole reap.
     const usurper = { pid: process.pid, startedAtMs: 100, beatAtMs: 100, ownerToken: 'usurper' };
+    // The helper announces itself BEFORE its 300ms timer starts, and this side waits for that.
+    // Otherwise node's own startup is inside the race: on a loaded machine it can exceed the
+    // ~900ms reap, the usurper write lands after the window instead of inside it, and the test
+    // stops exercising the interleaving it was written for.
+    const helperReady = join(stubDir, 'helper-ready');
     const helper = spawn(
       process.execPath,
       [
         '-e',
         `const fs=require('node:fs');` +
+          `fs.writeFileSync(${JSON.stringify(helperReady)}, 'up');` +
           `setTimeout(()=>{try{fs.unlinkSync(${JSON.stringify(fixture.path)})}catch{};` +
           `fs.writeFileSync(${JSON.stringify(fixture.path)}, ${JSON.stringify(JSON.stringify(usurper) + '\n')});},300);`,
       ],
       { stdio: 'ignore' },
     );
     const helperDone = new Promise<void>((resolve) => helper.on('exit', () => resolve()));
+    const helperDeadline = Date.now() + 30_000;
+    while (!existsSync(helperReady) && Date.now() < helperDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(existsSync(helperReady), 'the usurper helper never started');
 
     const second = acquireLock(fixture.path, {
       waitMs: 0,

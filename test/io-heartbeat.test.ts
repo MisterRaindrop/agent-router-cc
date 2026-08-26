@@ -39,7 +39,12 @@ function beatAt(path: string): number {
   throw new Error(`lock at ${path} never parsed across 50 reads`);
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
+// The ceiling is a LIVENESS bound, not a latency claim: every caller asks "does this eventually
+// happen", and a thing that never happens never happens. 5s sat close enough to real startup and
+// scheduling latency that a loaded machine (load average 136, measured) failed these tests while
+// asserting nothing about the property under test. Set it far above any plausible latency so the
+// only way to hit it is a genuine hang.
+async function waitUntil(predicate: () => boolean, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return true;
@@ -294,9 +299,10 @@ test('the heartbeat stops once the lock is no longer ours', async () => {
         path,
         `${JSON.stringify({ pid: process.pid, startedAtMs: 1, beatAtMs: 1, ownerToken: 'someone-else' })}\n`,
       );
-      // Give it several intervals to misbehave; the child must have exited instead.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      assert.equal(beatAt(path), 1, 'the heartbeat wrote to a lock it no longer owned');
+      // Wait for the child to EXIT, then check it never wrote. A fixed 300ms window bet twice:
+      // that a correct child would notice within it, and that a buggy one would misbehave within
+      // it -- and under load neither is true, so the test could pass a broken heartbeat. Exiting
+      // is a definite event, and after it there is nothing left that could write.
       assert.ok(
         await waitUntil(() => {
           try {
@@ -308,6 +314,7 @@ test('the heartbeat stops once the lock is no longer ours', async () => {
         }),
         'the heartbeat child is still running',
       );
+      assert.equal(beatAt(path), 1, 'the heartbeat wrote to a lock it no longer owned');
     } finally {
       beater.stop();
     }
