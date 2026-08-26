@@ -15,7 +15,7 @@ test('created: no existing statusline -> bare wrapper command', () => {
   assert.deepEqual(plan.statusLine, {
     type: 'command',
     command: `node '${P}'`,
-    refreshInterval: 5,
+    refreshInterval: 10,
   });
 });
 
@@ -49,7 +49,7 @@ test('updated: a current command missing refreshInterval is repaired', () => {
   assert.deepEqual(plan.statusLine, {
     type: 'command',
     command: current,
-    refreshInterval: 5,
+    refreshInterval: 10,
   });
 });
 
@@ -63,7 +63,7 @@ test('a refreshInterval the user chose is carried through, not replaced', () => 
   for (const bad of ['fast', 0, -1, Number.NaN, null, undefined]) {
     const plan = planStatusLine(current, P, { type: 'command', refreshInterval: bad });
     assert.equal(plan.action, 'updated', `refreshInterval ${String(bad)} should be replaced`);
-    assert.equal(plan.statusLine.refreshInterval, 5);
+    assert.equal(plan.statusLine.refreshInterval, 10);
   }
 });
 

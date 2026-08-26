@@ -28,7 +28,6 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const SPINNER_FRAMES = [...'⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'];
 const MAX_STDIN_JSON_BYTES = 1024 * 1024;
 const MAX_STATUS_BYTES = 64 * 1024;
 // Measured on this project's own maintainer machine: the chained claude-hud takes a median of
@@ -229,7 +228,14 @@ function routerSegment(routerDir, now, activityApi) {
   try {
     const activities = activityApi.observeActivities(join(routerDir, 'activity'), now);
     if (activities.length === 0) return 'router ▶ idle';
-    const spinner = SPINNER_FRAMES[Math.floor(now / 1000) % SPINNER_FRAMES.length];
+    // No spinner. It was added when the refresh interval was 2 seconds, on a cost estimate that
+    // turned out to be wrong by twenty times -- the chained statusline actually takes ~1.2s per
+    // render because it runs `git status`. At the honest interval (10s) a spinner shows one frame
+    // for ten seconds, which reads as motion that has STOPPED: worse than no spinner at all,
+    // and exactly the kind of confident-looking lie this whole feature exists to remove.
+    //
+    // The numbers carry liveness instead, and they are honest at any refresh rate: every field is
+    // computed at render time, so a stale line is uniformly stale rather than partly moving.
     return `router ▶ ${activities.map(({ record, state, beatAgeMs }) => {
       if (state === 'disconnected') {
         return `${record.label} 已失联 ${elapsedAge(beatAgeMs)}`;
@@ -238,7 +244,7 @@ function routerSegment(routerDir, now, activityApi) {
         typeof record.status_path === 'string'
           ? statusDetails(record.status_path, routerDir, now)
           : '';
-      return `${spinner} ${record.label}${details}`;
+      return `${record.label}${details}`;
     }).join(' | ')}`;
   } catch {
     // Activity rendering is display-only. Never let it replace or truncate the inner HUD.

@@ -18,7 +18,7 @@ const MARKER = 'router-usage.mjs';
 // The honest conclusion is that the right interval depends on what the user chained and how big
 // their repository is, and router cannot measure either. So: write a conservative default, and
 // leave any value the user already chose alone.
-const REFRESH_INTERVAL_SECONDS = 5 as const;
+const REFRESH_INTERVAL_SECONDS = 10 as const;
 
 export type StatusLineAction = 'created' | 'chained' | 'already-configured' | 'repointed' | 'updated';
 

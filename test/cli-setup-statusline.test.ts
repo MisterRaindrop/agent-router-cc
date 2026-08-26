@@ -44,7 +44,7 @@ test('created: writes a statusLine into a fresh settings.json, preserving other 
     assert.deepEqual(s.statusLine, {
       type: 'command',
       command: configuredCommand,
-      refreshInterval: 5,
+      refreshInterval: 10,
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -61,7 +61,7 @@ test('chained: an existing statusline is preserved, and re-running is idempotent
     assert.equal(first.action, 'chained');
     assert.equal(first.chained, 'my-hud');
     assert.match(readSettings(settings).statusLine!.command!, /ROUTER_INNER_STATUSLINE='my-hud' node/);
-    assert.equal(readSettings(settings).statusLine!.refreshInterval, 5);
+    assert.equal(readSettings(settings).statusLine!.refreshInterval, 10);
 
     const second = JSON.parse(router(['setup-statusline', '--settings', settings, '--statusline', SL, '--json']).out);
     assert.equal(second.action, 'already-configured'); // no double-wrap
@@ -80,7 +80,7 @@ test('updated: repairs a current command missing refreshInterval and tells the u
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /^updated statusLine/m);
     assert.match(r.out, /restart Claude Code/);
-    assert.equal(readSettings(settings).statusLine?.refreshInterval, 5);
+    assert.equal(readSettings(settings).statusLine?.refreshInterval, 10);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -117,7 +117,7 @@ test('updated: says the interval was not set when the field was simply absent', 
 
     const r = router(['setup-statusline', '--settings', settings, '--statusline', SL]);
     assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /refreshInterval was not set; wrote 5/);
+    assert.match(r.out, /refreshInterval was not set; wrote 10/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -161,7 +161,7 @@ test('preserves unknown statusLine keys while updating managed fields', () => {
     const statusLine = readSettings(settings).statusLine;
     assert.equal(statusLine?.padding, 'compact');
     assert.equal(statusLine?.type, 'command');
-    assert.equal(statusLine?.refreshInterval, 5);
+    assert.equal(statusLine?.refreshInterval, 10);
     assert.match(statusLine?.command ?? '', /ROUTER_INNER_STATUSLINE='my-hud' node/);
   } finally {
     rmSync(dir, { recursive: true, force: true });

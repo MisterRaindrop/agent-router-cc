@@ -15005,7 +15005,7 @@ function renderRouting(report) {
 
 // src/core/statuslineSetup.ts
 var MARKER = "router-usage.mjs";
-var REFRESH_INTERVAL_SECONDS = 5;
+var REFRESH_INTERVAL_SECONDS = 10;
 function validInterval(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
