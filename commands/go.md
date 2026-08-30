@@ -103,6 +103,27 @@ its report, so this is what it does:
 12  release      terminate the executor's process group, release the lock
 ```
 
+**Before you fix anything, look for the answer already in this repository.** Search `src/` for
+the *mechanism*, in one or two words -- not the symptom in a sentence. Then write what you found
+into the adjudication: a `file:line`, or the sentence "looked, nothing there". An unwritten search
+and an unperformed one leave the same trace.
+
+Three times in a single day the answer was already here and went unused: a statusline that killed
+only its direct child while `src/io/signals.ts` and `src/io/lock.ts` had been killing by process
+group all along, for the identical reason; a reclaim guard with no lease or token while
+`clearDeadReclaimer` in `src/io/lock.ts` was exactly that protocol; and an unbounded read added in
+the same change that had just bounded its sibling. The first of those survived three adversarial
+review rounds and ended in 190 orphaned `git` processes and a load average of 86.
+
+"Same class" means the same mechanism, not the same module. "A child's descendants outlive its
+timeout" and "an executor's background work outlives its run" are one class, though one lives in a
+statusline and the other in a lock.
+
+Measured, so you know what to expect: `rg -il "child" src/` returns seven files with
+`src/io/signals.ts` first; `rg -il "mutex" src/` returns two. This works here because the code
+carries comments explaining *why*, and `rg` searches those too -- in a repository without them,
+expect less.
+
 **Do not commit your own fixes onto `router/<task-id>`.** The scope check at step 10 runs over
 `base_sha..HEAD`, so any commit you add lands in it and gets judged against the executor's
 `allowed_globs` -- which yours were never written for. Measured twice: a one-line fix of a review
