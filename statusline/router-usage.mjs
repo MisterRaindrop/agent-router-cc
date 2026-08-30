@@ -335,11 +335,16 @@ function innerOutput(raw) {
     });
     if (typeof result.pid === 'number' && result.pid > 0) {
       try {
-        // Unconditional, and that is the contract: once a render returns, nothing the inner HUD
-        // started outlives it. Narrowing this to the timeout path would leave the sibling leak
-        // open -- a shell that exits on its own before its children do (the EPIPE case above) is
-        // not a timeout and still leaves them running. The cost is real and accepted: an inner HUD
-        // that deliberately backgrounds work to warm a cache loses it on every render.
+        // Every render signals the inner HUD's own process group, on the normal path as well as
+        // the timeout path: a shell that exits before its children do is not a timeout, and
+        // narrowing this to ETIMEDOUT would leave that leak open. The cost is real and accepted --
+        // an inner HUD that backgrounds work to warm a cache loses it on every render.
+        //
+        // The contract is exactly "background work left INSIDE THAT GROUP does not survive a
+        // render", and deliberately not "nothing the HUD started survives". Three things sit
+        // outside it: a descendant that calls setsid to leave the group, an EPERM this cannot act
+        // on (see below), and the gap between this signal and the group actually emptying -- which
+        // is not waited on, the way drainGroup in src/io/supervisor.ts waits.
         process.kill(-result.pid, 'SIGKILL');
       } catch {
         /*

@@ -531,37 +531,80 @@ test('an oversized stdin payload is not buffered whole and the inner HUD still r
 // spawned keeps running, and a statusline runs again every refresh interval -- so a HUD whose git
 // status cannot finish in time leaks a process tree per render until the machine is unusable.
 //
-// Check EVERY survivor the fixture creates, not one of them: this HUD leaves a node child and a
-// `sleep` behind, and a regression that reaped only the first would pass a one-pid test.
+// Two tests, because the reap is unconditional and the two paths reach it differently: a HUD that
+// hangs until the timeout, and a HUD that returns at once and leaves work behind. Fencing only the
+// first lets the guard be narrowed to `result.error.code === 'ETIMEDOUT'` with the suite still
+// green -- measured, that is exactly what happened.
 //
 // Rejected: asserting the shell's process GROUP is empty. Without `detached` the shell is not a
 // group leader, so its pid is nobody's pgid, `kill(-pid, 0)` answers ESRCH immediately, and the
 // test passes against the very code it is meant to fence. Measured -- that version went green
 // with the fix removed.
+
+// Survivors are node, started by absolute path, never `sleep` off PATH: a PATH entry that exits
+// immediately would still give the shell a valid `$!`, and the test could not tell that apart from
+// a survivor that was correctly reaped. Each one exits on its own after a bounded wait, so a leak
+// this fixture causes cannot outlive the run by much.
+const SURVIVOR_MS = 120_000;
+function survivor(pidVar: string, readyVar: string): string {
+  const program =
+    `require("node:fs").writeFileSync(process.env.${readyVar}, String(process.pid)); ` +
+    `setTimeout(() => process.exit(0), ${SURVIVOR_MS})`;
+  // `$!` right after `&` is that job's pid, with no window in which the file is not yet written.
+  // The node program writes its OWN pid to the ready file, so the test can confirm the two agree
+  // and know the pid it is about to signal is the process it started.
+  //
+  // The redirects are load-bearing, not tidiness. A background child inherits the shell's stdout
+  // pipe, and spawnSync does not return until every writer has closed it -- so without them a HUD
+  // that exits immediately still blocks the render for the full timeout, and the normal-exit test
+  // below silently becomes a second timeout test. Measured: it passed with the reap narrowed to
+  // ETIMEDOUT, which is the exact regression it exists to catch.
+  return `"$HUD_NODE" -e '${program}' >/dev/null 2>&1 </dev/null & printf '%s' "$!" > "$${pidVar}"; `;
+}
+
+function readPid(file: string): number {
+  try {
+    const n = Number(readFileSync(file, 'utf8').trim());
+    return Number.isInteger(n) && n > 1 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Only ESRCH means gone. EPERM means the process is still there and merely not ours to signal --
+// the same reading as processGroupIsGone in src/io/signals.ts. Treating EPERM as death is how a
+// test like this reports a pass it did not earn.
+function pidIsGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+}
+
+// A pid observed gone is never signalled again: the number can be handed to an unrelated process
+// at any point after that, and this fixture can wait 20 seconds for its second survivor.
+function reapFixture(files: readonly string[], confirmedGone: ReadonlySet<number>): void {
+  for (const file of files) {
+    const pid = readPid(file);
+    if (pid > 1 && !confirmedGone.has(pid) && !pidIsGone(pid)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* cleanup only */
+      }
+    }
+  }
+}
+
 test('a hung inner HUD leaves none of its descendants behind', async () => {
   const fx = repo();
-  const nodePidFile = join(fx.dir, 'descendant-node.pid');
-  const sleepPidFile = join(fx.dir, 'descendant-sleep.pid');
-  // Read from disk in the finally block too, so cleanup does not depend on which assertion threw.
-  const readPid = (file: string): number => {
-    try {
-      const n = Number(readFileSync(file, 'utf8').trim());
-      return Number.isInteger(n) && n > 1 ? n : 0;
-    } catch {
-      return 0;
-    }
-  };
-  // Only ESRCH means gone. EPERM means the process is still there and merely not ours to signal --
-  // the same reading as processGroupIsGone in src/io/signals.ts. Treating EPERM as death is how a
-  // test like this reports a pass it did not earn.
-  const gone = (pid: number): boolean => {
-    try {
-      process.kill(pid, 0);
-      return false;
-    } catch (err) {
-      return (err as NodeJS.ErrnoException).code === 'ESRCH';
-    }
-  };
+  const pidA = join(fx.dir, 'survivor-a.pid');
+  const pidB = join(fx.dir, 'survivor-b.pid');
+  const readyA = join(fx.dir, 'survivor-a.ready');
+  const readyB = join(fx.dir, 'survivor-b.ready');
+  const gone = new Set<number>();
   try {
     mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
     // Paths and the node binary travel by environment, never spliced into the shell source: a
@@ -569,9 +612,8 @@ test('a hung inner HUD leaves none of its descendants behind', async () => {
     // guaranteed to be on PATH just because this process was started from it.
     const inner =
       `printf 'partial-hud'; ` +
-      `"$HUD_NODE" -e 'require("node:fs").writeFileSync(process.env.HUD_NODE_PID_FILE, String(process.pid)); setInterval(() => {}, 1000)' & ` +
-      `sleep 60 & ` +
-      `printf '%s' "$!" > "$HUD_SLEEP_PID_FILE"; ` +
+      survivor('HUD_PID_A', 'HUD_READY_A') +
+      survivor('HUD_PID_B', 'HUD_READY_B') +
       `wait`;
     const result = renderRaw(
       fx.dir,
@@ -580,41 +622,90 @@ test('a hung inner HUD leaves none of its descendants behind', async () => {
         ...pinned(),
         ROUTER_INNER_STATUSLINE: inner,
         HUD_NODE: process.execPath,
-        HUD_NODE_PID_FILE: nodePidFile,
-        HUD_SLEEP_PID_FILE: sleepPidFile,
+        HUD_PID_A: pidA,
+        HUD_PID_B: pidB,
+        HUD_READY_A: readyA,
+        HUD_READY_B: readyB,
       },
       30_000,
     );
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^partial-hud/);
 
-    const nodePid = readPid(nodePidFile);
-    const sleepPid = readPid(sleepPidFile);
-    assert.ok(nodePid > 1, 'the inner HUD never started its node descendant: nothing was tested');
-    assert.ok(sleepPid > 1, 'the inner HUD never started its sleep descendant: nothing was tested');
+    // Both survivors ran long enough to report their own pid, and it is the pid the shell handed
+    // back -- so what follows is about the processes this fixture started, not about two numbers.
+    const a = readPid(pidA);
+    const b = readPid(pidB);
+    assert.ok(a > 1 && b > 1, 'the inner HUD never started its descendants: nothing was tested');
+    assert.equal(readPid(readyA), a, 'survivor A never ran: nothing was tested');
+    assert.equal(readPid(readyB), b, 'survivor B never ran: nothing was tested');
 
     const deadline = Date.now() + 20_000;
-    while ((!gone(nodePid) || !gone(sleepPid)) && Date.now() < deadline) {
+    while ((!pidIsGone(a) || !pidIsGone(b)) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    assert.ok(gone(nodePid), "the inner HUD's node descendant survived the timeout");
-    assert.ok(gone(sleepPid), "the inner HUD's sleep descendant survived the timeout");
+    if (pidIsGone(a)) gone.add(a);
+    if (pidIsGone(b)) gone.add(b);
+    assert.ok(gone.has(a), "the inner HUD's first descendant survived the timeout");
+    assert.ok(gone.has(b), "the inner HUD's second descendant survived the timeout");
   } finally {
     // Unconditional, and read from disk rather than from a variable: every assertion above can
-    // throw after the fixture already started a process that never exits on its own, and
-    // renderRaw itself can time out before any of them run. A pid can in principle be recycled
-    // before this runs; the window is the test's own runtime and the alternative -- leaving a
-    // `setInterval` alive on the machine -- is the failure this repo already paid for once.
-    for (const file of [nodePidFile, sleepPidFile]) {
-      const pid = readPid(file);
-      if (pid > 1 && !gone(pid)) {
-        try {
-          process.kill(pid, 'SIGKILL');
-        } catch {
-          /* cleanup only */
-        }
-      }
+    // throw after the fixture already started a process, and renderRaw itself can time out before
+    // any of them run.
+    reapFixture([pidA, pidB], gone);
+    fx.cleanup();
+  }
+});
+
+// The other half of the same contract, and the one a narrowed guard would break: the HUD returns
+// immediately and successfully, so nothing times out, and the work it backgrounded still has to be
+// gone by the time the render is over.
+test('an inner HUD that exits at once still takes its background work with it', async () => {
+  const fx = repo();
+  const pidA = join(fx.dir, 'survivor-a.pid');
+  const pidB = join(fx.dir, 'survivor-b.pid');
+  const gone = new Set<number>();
+  try {
+    mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
+    // No `wait`: the shell backgrounds two long-lived children and returns. The pids come from
+    // `$!` rather than from the children themselves, because here they are reaped within
+    // milliseconds and would not get the chance to write anything -- the test above is what
+    // proves this same command really does start a live node process.
+    const inner =
+      `printf 'quick-hud'; ` +
+      survivor('HUD_PID_A', 'HUD_READY_A') +
+      survivor('HUD_PID_B', 'HUD_READY_B');
+    const result = renderRaw(
+      fx.dir,
+      JSON.stringify({ cwd: fx.dir }),
+      {
+        ...pinned(),
+        ROUTER_INNER_STATUSLINE: inner,
+        HUD_NODE: process.execPath,
+        HUD_PID_A: pidA,
+        HUD_PID_B: pidB,
+        HUD_READY_A: join(fx.dir, 'survivor-a.ready'),
+        HUD_READY_B: join(fx.dir, 'survivor-b.ready'),
+      },
+      30_000,
+    );
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /^quick-hud/);
+
+    const a = readPid(pidA);
+    const b = readPid(pidB);
+    assert.ok(a > 1 && b > 1, 'the inner HUD never backgrounded anything: nothing was tested');
+
+    const deadline = Date.now() + 20_000;
+    while ((!pidIsGone(a) || !pidIsGone(b)) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
     }
+    if (pidIsGone(a)) gone.add(a);
+    if (pidIsGone(b)) gone.add(b);
+    assert.ok(gone.has(a), 'a normally-exiting HUD left its first background child running');
+    assert.ok(gone.has(b), 'a normally-exiting HUD left its second background child running');
+  } finally {
+    reapFixture([pidA, pidB], gone);
     fx.cleanup();
   }
 });
