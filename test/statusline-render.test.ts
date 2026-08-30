@@ -18,7 +18,6 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -531,42 +530,91 @@ test('an oversized stdin payload is not buffered whole and the inner HUD still r
 // The 190-orphan bug. spawnSync's timeout kills the shell it started; anything that shell
 // spawned keeps running, and a statusline runs again every refresh interval -- so a HUD whose git
 // status cannot finish in time leaks a process tree per render until the machine is unusable.
-test('a hung inner HUD leaves no descendants behind', async () => {
+//
+// Check EVERY survivor the fixture creates, not one of them: this HUD leaves a node child and a
+// `sleep` behind, and a regression that reaped only the first would pass a one-pid test.
+//
+// Rejected: asserting the shell's process GROUP is empty. Without `detached` the shell is not a
+// group leader, so its pid is nobody's pgid, `kill(-pid, 0)` answers ESRCH immediately, and the
+// test passes against the very code it is meant to fence. Measured -- that version went green
+// with the fix removed.
+test('a hung inner HUD leaves none of its descendants behind', async () => {
   const fx = repo();
+  const nodePidFile = join(fx.dir, 'descendant-node.pid');
+  const sleepPidFile = join(fx.dir, 'descendant-sleep.pid');
+  // Read from disk in the finally block too, so cleanup does not depend on which assertion threw.
+  const readPid = (file: string): number => {
+    try {
+      const n = Number(readFileSync(file, 'utf8').trim());
+      return Number.isInteger(n) && n > 1 ? n : 0;
+    } catch {
+      return 0;
+    }
+  };
+  // Only ESRCH means gone. EPERM means the process is still there and merely not ours to signal --
+  // the same reading as processGroupIsGone in src/io/signals.ts. Treating EPERM as death is how a
+  // test like this reports a pass it did not earn.
+  const gone = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'ESRCH';
+    }
+  };
   try {
     mkdirSync(join(fx.dir, '.router', 'activity'), { recursive: true });
-    const pidFile = join(fx.dir, 'grandchild.pid');
-    // The shell prints, then starts a child that outlives it, then hangs itself.
+    // Paths and the node binary travel by environment, never spliced into the shell source: a
+    // TMPDIR holding a quote or a `$` would otherwise be re-interpreted, and `node` is not
+    // guaranteed to be on PATH just because this process was started from it.
     const inner =
       `printf 'partial-hud'; ` +
-      `node -e "require('node:fs').writeFileSync('${pidFile}', String(process.pid)); setInterval(()=>{}, 1000)" & ` +
-      `sleep 60`;
-    const result = renderRaw(fx.dir, JSON.stringify({ cwd: fx.dir }), { ...pinned(), ROUTER_INNER_STATUSLINE: inner }, 30_000);
+      `"$HUD_NODE" -e 'require("node:fs").writeFileSync(process.env.HUD_NODE_PID_FILE, String(process.pid)); setInterval(() => {}, 1000)' & ` +
+      `sleep 60 & ` +
+      `printf '%s' "$!" > "$HUD_SLEEP_PID_FILE"; ` +
+      `wait`;
+    const result = renderRaw(
+      fx.dir,
+      JSON.stringify({ cwd: fx.dir }),
+      {
+        ...pinned(),
+        ROUTER_INNER_STATUSLINE: inner,
+        HUD_NODE: process.execPath,
+        HUD_NODE_PID_FILE: nodePidFile,
+        HUD_SLEEP_PID_FILE: sleepPidFile,
+      },
+      30_000,
+    );
     assert.equal(result.status, 0);
     assert.match(result.stdout, /^partial-hud/);
 
-    assert.ok(existsSync(pidFile), 'the inner HUD never started its descendant: nothing was tested');
-    const pid = Number(readFileSync(pidFile, 'utf8').trim());
-    assert.ok(Number.isInteger(pid) && pid > 1);
-    const alive = (): boolean => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    };
+    const nodePid = readPid(nodePidFile);
+    const sleepPid = readPid(sleepPidFile);
+    assert.ok(nodePid > 1, 'the inner HUD never started its node descendant: nothing was tested');
+    assert.ok(sleepPid > 1, 'the inner HUD never started its sleep descendant: nothing was tested');
+
     const deadline = Date.now() + 20_000;
-    while (alive() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-    if (alive()) {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        /* cleanup only */
-      }
-      assert.fail('the inner HUD\'s descendant survived the timeout');
+    while ((!gone(nodePid) || !gone(sleepPid)) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
     }
+    assert.ok(gone(nodePid), "the inner HUD's node descendant survived the timeout");
+    assert.ok(gone(sleepPid), "the inner HUD's sleep descendant survived the timeout");
   } finally {
+    // Unconditional, and read from disk rather than from a variable: every assertion above can
+    // throw after the fixture already started a process that never exits on its own, and
+    // renderRaw itself can time out before any of them run. A pid can in principle be recycled
+    // before this runs; the window is the test's own runtime and the alternative -- leaving a
+    // `setInterval` alive on the machine -- is the failure this repo already paid for once.
+    for (const file of [nodePidFile, sleepPidFile]) {
+      const pid = readPid(file);
+      if (pid > 1 && !gone(pid)) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          /* cleanup only */
+        }
+      }
+    }
     fx.cleanup();
   }
 });

@@ -322,8 +322,9 @@ function innerOutput(raw) {
     // found alive on one machine, spaced exactly one refresh interval apart, with the oldest 14
     // minutes old -- load average 86 on 18 cores, under 1% idle.
     //
-    // Router already knows this: reapExecutorGroup and drainGroup kill executors by process group
-    // for exactly this reason (io/signals.ts). The statusline never applied its own lesson.
+    // Router already knows this: reapExecutorGroup (src/io/lock.ts) and drainGroup
+    // (src/io/supervisor.ts) kill executors by process group for exactly this reason, both on top
+    // of killProcessGroup in src/io/signals.ts. The statusline never applied its own lesson.
     const result = spawnSync(inner, {
       shell: true,
       input: raw,
@@ -334,11 +335,20 @@ function innerOutput(raw) {
     });
     if (typeof result.pid === 'number' && result.pid > 0) {
       try {
-        // The leader is already gone; this reaches whatever it left behind. ESRCH means the group
-        // is empty, which is the outcome we wanted anyway.
+        // Unconditional, and that is the contract: once a render returns, nothing the inner HUD
+        // started outlives it. Narrowing this to the timeout path would leave the sibling leak
+        // open -- a shell that exits on its own before its children do (the EPIPE case above) is
+        // not a timeout and still leaves them running. The cost is real and accepted: an inner HUD
+        // that deliberately backgrounds work to warm a cache loses it on every render.
         process.kill(-result.pid, 'SIGKILL');
       } catch {
-        /* empty group, or a pgid we no longer own: nothing left to reap either way */
+        /*
+         * ESRCH here means the group is empty -- the outcome we wanted. EPERM does NOT: the group
+         * is still there and merely not ours to signal, which is exactly how processGroupIsGone in
+         * src/io/signals.ts reads it. A statusline has no channel to report that and must not
+         * replace the user's HUD line with an error, so it stays silent -- but do not read this
+         * catch as "nothing was left behind".
+         */
       }
     }
     const text = typeof result.stdout === 'string' ? result.stdout : '';
