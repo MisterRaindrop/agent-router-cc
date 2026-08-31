@@ -18,9 +18,38 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 - Two FIFO tests were bounded by node startup latency (750ms / 1500ms) rather than by the
   finite-versus-infinite distinction they existed to make, so they failed on a loaded machine while
   asserting nothing about FIFOs.
+- The statusline's inner-HUD reap is now tested on **both** paths it runs on. It had only ever been
+  fenced on the timeout path, so narrowing it to `ETIMEDOUT` left the suite green while a HUD that
+  exited normally leaked its background children again. Behaviour is unchanged; the production
+  change is comments, which now describe a contract the code can actually keep: work left inside
+  the inner HUD's *process group* does not survive a render — a descendant that calls `setsid` is
+  outside it, and so is the interval before the group drains.
 
 ### Changed
 
+- **`/router:review` now has to say why a round ended, and a round is not over because it ran.** A
+  reviewer that a content filter refused does not know it was refused and does not say so: its log
+  is simply short, and short reads exactly like clean. Every lens is now classified before a round
+  can close — `verdicts`, `blocked`, `truncated`, `empty`, checked in that order because one lens
+  read 666KB, produced one finding, and was refused at the moment it wrote its report. A lens that
+  is not `verdicts` did not conclude; it did not "find nothing". The round ends on zero blocking
+  findings with every lens `verdicts`, never on a round count — a cap does not produce convergence,
+  it hides the absence of one. Round two and later review `<previous round's head>..HEAD`, because
+  the fixes are what that round is for: of nine findings across rounds two and three of one plan,
+  two were defects the earlier fixes had introduced.
+- **A finding that cannot be reproduced is `unverified`, not discarded.** Reproduction decides
+  blocking versus unverified; it does not decide reported versus discarded. Only a finding with no
+  mechanism at all is dropped. Getting this backwards would have thrown away this project's own
+  heartbeat defect, which was raised with no reproduction and was entirely real. `unverified`
+  findings go into the reviewed work's own `DESIGN.md` known-limits section, where the next feature
+  reads them — a per-round decisions file is where they go to die, measured: one was re-raised and
+  re-adjudicated in all three rounds because it lived only there.
+- **`/router:go` asks you to search the repository before fixing anything.** Search for the
+  mechanism in one or two words, not the symptom in a sentence, and write the result into the
+  adjudication as a `file:line` or the sentence "looked, nothing there" — an unwritten search and an
+  unperformed one leave the same trace. Three times in one day the answer was already here and went
+  unused; the first of those survived three adversarial review rounds and ended in 190 orphaned
+  `git` processes and a load average of 86.
 - **The spinner is gone, and `refreshInterval` goes back to 10 seconds.** The 2-second interval was
   chosen from a cost estimate that was wrong by twenty times (~122ms per render; really ~1777ms),
   and at 2 seconds renders overlapped until five statusline processes were alive and the load
