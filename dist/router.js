@@ -9587,7 +9587,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.0" : "0.0.0-dev";
+var VERSION = true ? "0.12.1" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts

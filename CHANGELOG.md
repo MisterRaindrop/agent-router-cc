@@ -8,6 +8,11 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-31
+
+Three rules about how a code review ends. No new code paths: the production diff is comments
+and one new test.
+
 ### Fixed
 
 - **The statusline replaced the user's whole HUD with a bare `router` on most renders.** The 1s
