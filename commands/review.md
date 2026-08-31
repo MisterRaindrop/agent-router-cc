@@ -97,8 +97,20 @@ finished one look identical from a distance:
   in a report. Investigation is not a verdict.
 - **the provider refused the answer.** `codex` returns
   `ERROR: This content was flagged for possible cybersecurity risk` and exits 0 -- so the exit
-  code says success and the file says nothing. Grep the file for `flagged for possible` before
-  reporting anything from it.
+  code says success and the file says nothing.
+
+  **Match on position, not on the string.** A plain grep for `flagged for possible` gives a false
+  positive in this repository, because a reviewer that reads this very file quotes the phrase back
+  into its transcript. Measured on six real logs: the two healthy ones each matched twice, in the
+  middle of the file, on a line indented under a line number. The two refused ones matched on the
+  **last two lines**, on a line that **starts** with `ERROR:`. So: a refusal is `^ERROR: This
+  content was flagged` within the last few lines. Anywhere else is a quotation.
+
+**Never list the trigger words in order to avoid them.** Writing "do not produce a repro script
+that spawns a detached child, kills a process group, or forges a state file" into a brief is a
+list of trigger words, and it got a reviewer refused **on the prompt** -- 4.3KB of log, zero
+findings, it never started work. Say the same thing positively: "give reproduction steps only; I
+will run them."
 
 **On that filter specifically.** It fires on what the reviewer *writes*, not only on your brief.
 Rewording the brief away from offensive-security vocabulary ("process group", "sandbox escape",
@@ -245,6 +257,26 @@ found" is not "proven" -- a required check left `unverified` means `assurance` i
   bug or cannot run at all; a guard broader than the problem that silently drops behaviour; or
   new validation that rejects already-stored data. **advisory** = design/maintainability.
   **nit** = pure preference (do not block).
+- **Reproduction decides `blocking` versus `unverified`. It does not decide reported versus
+  discarded.** A finding that names a mechanism and cites `file:line`, but that no available test
+  can surface, is `unverified`: it does not block, and **it does not disappear**. Only a finding
+  with no mechanism at all -- "possibly", "consider hardening", no concrete input or state -- is
+  discarded.
+
+  Getting this backwards throws away real bugs. This project's own heartbeat defect (`spawnSync`
+  blocks the event loop, so an in-process timer stops during a long compile) was raised with no
+  reproduction, was entirely real, and was later reproduced and fixed by a test that had to block
+  the loop for real to see it.
+
+  And `unverified` earns its keep in the other direction too: one such finding was left on the list
+  rather than acted on, and the fix later attempted for it turned out to be a net regression and was
+  reverted. "Record it, do not act yet" was the correct call.
+
+  **Write `unverified` findings into the reviewed work's own `DESIGN.md`, in its known-limits
+  section** -- that is where the next feature will read them. A per-round decisions file is where
+  they go to die: measured, one `unverified` finding was re-raised and re-adjudicated in all three
+  rounds because it lived only there. When the work has no `DESIGN.md`, put the limit in a comment
+  at the code site, which is the one place that cannot drift away from what it describes.
 - Earn the block: if nothing is blocking, say so plainly -- do not manufacture findings.
 - **A blocking finding may also apply to the reference implementation.** Say so when it does,
   instead of softening it -- "the original fix has the same flaw" is a valid, useful finding,
@@ -257,7 +289,46 @@ misses things too). Fix the accepted **blocking** findings (yourself, or dispatc
 task via `/router:go`), then re-run the relevant tests, then a **fresh run of the full
 Verification Matrix against the final code** (prior evidence is now stale), then **resume
 the same reviewer session** to confirm each blocking finding is genuinely resolved --
-verify against the new code, never on a "fixed it" claim. Repeat until the user is satisfied.
+verify against the new code, never on a "fixed it" claim.
+
+### Before you call a round finished
+
+**Classify every lens, and write the classification into the decisions record.** Not "did it find
+anything" -- *did it speak at all*. A reviewer that was refused does not know it was refused and
+does not say so; its log is simply short. Silence and a clean bill of health look identical, which
+is the whole reason this step exists.
+
+| Class | How you tell |
+|---|---|
+| `verdicts` | the file carries structured findings |
+| `blocked` | `^ERROR: This content was flagged` in the last few lines, **or** it stopped before reporting |
+| `truncated` | the text ends in tool output, or mid-finding |
+| `empty` | neither findings nor an explicit "I read it and found nothing" |
+
+**Check in that order, because a file can be two of them.** Measured: one lens read 666KB of code,
+emitted a single finding, and was then refused at the moment it wrote its report. A "does it have
+findings" test calls that a review.
+
+**A lens that is not `verdicts` did not produce a conclusion. It did not "find nothing".** Report
+it that way, and do not let it count toward a quiet round.
+
+### The stop rule
+
+**A round that produces zero blocking findings, with every lens classified `verdicts`, ends the
+review.** Not a round count: a cap does not produce convergence, it hides the absence of it, and a
+reviewer that says "nothing blocking" in round three may just be out of budget.
+
+Round two and later review **`<previous round's head_sha>..HEAD`**, not the original range. **The
+fixes are what this round is reviewing.** Measured: of nine findings in rounds two and three of one
+plan, most were about round one's fixes, and two were defects the fixes had introduced -- one of
+them failed a successful six-minute run because a legitimate re-run of the same label was judged
+fatal. A round that re-runs the original range cannot see any of that. Put the range in the report,
+so the next reader can see what was actually reviewed.
+
+Two or three rounds is the expected *result*, never the target. Four rounds where each one found
+something real is convergence working; two rounds where a lens never spoke is not.
+
+The user can always ask for another round. The stop rule is the default, not a prohibition.
 
 **Expect your own fixes to be the next round's findings.** Measured over three rounds on one
 change: round 1's fixes contained a regression that let unverified code reach `main`, and round

@@ -322,8 +322,9 @@ function innerOutput(raw) {
     // found alive on one machine, spaced exactly one refresh interval apart, with the oldest 14
     // minutes old -- load average 86 on 18 cores, under 1% idle.
     //
-    // Router already knows this: reapExecutorGroup and drainGroup kill executors by process group
-    // for exactly this reason (io/signals.ts). The statusline never applied its own lesson.
+    // Router already knows this: reapExecutorGroup (src/io/lock.ts) and drainGroup
+    // (src/io/supervisor.ts) kill executors by process group for exactly this reason, both on top
+    // of killProcessGroup in src/io/signals.ts. The statusline never applied its own lesson.
     const result = spawnSync(inner, {
       shell: true,
       input: raw,
@@ -334,11 +335,25 @@ function innerOutput(raw) {
     });
     if (typeof result.pid === 'number' && result.pid > 0) {
       try {
-        // The leader is already gone; this reaches whatever it left behind. ESRCH means the group
-        // is empty, which is the outcome we wanted anyway.
+        // Every render signals the inner HUD's own process group, on the normal path as well as
+        // the timeout path: a shell that exits before its children do is not a timeout, and
+        // narrowing this to ETIMEDOUT would leave that leak open. The cost is real and accepted --
+        // an inner HUD that backgrounds work to warm a cache loses it on every render.
+        //
+        // The contract is exactly "background work left INSIDE THAT GROUP does not survive a
+        // render", and deliberately not "nothing the HUD started survives". Three things sit
+        // outside it: a descendant that calls setsid to leave the group, an EPERM this cannot act
+        // on (see below), and the gap between this signal and the group actually emptying -- which
+        // is not waited on, the way drainGroup in src/io/supervisor.ts waits.
         process.kill(-result.pid, 'SIGKILL');
       } catch {
-        /* empty group, or a pgid we no longer own: nothing left to reap either way */
+        /*
+         * ESRCH here means the group is empty -- the outcome we wanted. EPERM does NOT: the group
+         * is still there and merely not ours to signal, which is exactly how processGroupIsGone in
+         * src/io/signals.ts reads it. A statusline has no channel to report that and must not
+         * replace the user's HUD line with an error, so it stays silent -- but do not read this
+         * catch as "nothing was left behind".
+         */
       }
     }
     const text = typeof result.stdout === 'string' ? result.stdout : '';
