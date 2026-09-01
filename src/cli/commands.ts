@@ -619,6 +619,27 @@ function documentStage(frontmatter: Record<string, unknown> | null, allowed: Set
   return typeof status === 'string' && allowed.has(status) ? status : null;
 }
 
+// `status:` is arbitrary text from a file and the plans table is written straight to a terminal,
+// where an escape sequence would move the cursor or set a colour instead of being read. Everything
+// outside printable ASCII becomes `.`: that covers ESC, the C0 and C1 ranges, CR and LF, and it
+// also keeps the column measurable, since a double-width glyph counts as one unit to width() but
+// takes two cells on the terminal.
+function printableStatus(raw: string): string {
+  return raw.replace(/[^\x20-\x7e]/g, '.');
+}
+
+// A declared status that no vocabulary recognizes is a different fact from no status at all, and
+// both used to render as `-` -- so a typo in this one frontmatter field was invisible in the
+// listing. Recognition itself stays with documentStage; this only names what it rejected, marked
+// with `?` so it cannot be misread as a stage name. Null means "nothing was declared", which is
+// what `-` continues to mean: a mapping or a sequence under `status:` is not a status either.
+function unrecognizedStage(frontmatter: Record<string, unknown> | null, allowed: Set<string>): string | null {
+  const status = frontmatter?.status;
+  if (status === undefined || status === null || typeof status === 'object') return null;
+  if (documentStage(frontmatter, allowed) !== null) return null;
+  return `?${printableStatus(String(status))}`;
+}
+
 function highestCritiqueRound(entries: string[]): number | null {
   let max: number | null = null;
   for (const name of entries) {
@@ -672,10 +693,19 @@ const plans: Handler = (ctx) => {
     // An existing but unparseable work plan still owns the stage (it stays unknown) rather than
     // falling through: a plan on disk means the earlier stages are done, and reporting
     // "brainstorming" over a broken plan would read as regress rather than as damage.
+    //
+    // A status nothing recognizes is then reported under its own mark, but only once every level
+    // has been searched for a recognized one: marking must not reorder the documents, so a typo in
+    // the design does not hide a converged brainstorm below it.
     if (!hasPlan) {
+      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, 'BRAINSTORM.md');
       stage =
         documentStage(designFrontmatter, DESIGN_STATUSES) ??
-        documentStage(planDocumentFrontmatter(paths, id, 'BRAINSTORM.md'), BRAINSTORM_STATUSES);
+        documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ??
+        unrecognizedStage(designFrontmatter, DESIGN_STATUSES) ??
+        unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
+    } else {
+      stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
     }
     let critiqueRound: number | null = null;
     try {
