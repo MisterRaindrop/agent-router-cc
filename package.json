@@ -1,6 +1,6 @@
 {
   "name": "agent-router-cc",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "Task-routing CLI + Claude Code plugin (router). The main session plans, reviews and verifies; the CLI owns worktree isolation, supervision, concurrency, and environment-free gates on every diff.",
   "type": "module",
   "bin": {
@@ -33,8 +33,8 @@
     "web-tree-sitter": "^0.25.3"
   },
   "devDependencies": {
-    "@types/node": "26.1.2",
-    "esbuild": "0.28.1",
+    "@types/node": "26.4.0",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2"
   },
   "license": "Apache-2.0",

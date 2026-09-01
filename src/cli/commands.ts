@@ -570,7 +570,12 @@ const list: Handler = (ctx) => {
 
 const DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 const BRAINSTORM_STATUSES = new Set(['brainstorming', 'converged', 'rejected']);
-const DESIGN_STATUSES = new Set(['design_draft', 'design_approved']);
+// `design_abandoned` is terminal, and it exists because there was no terminal state to reach. A
+// design flow the user stops part-way -- "just do the whole thing, skip the design" -- left its
+// document on `design_draft` forever, so `router plans` listed finished work as the only unfinished
+// plan and every review of what was outstanding had to explain it again. Brainstorm has `rejected`
+// for the same situation; design had nothing.
+const DESIGN_STATUSES = new Set(['design_draft', 'design_approved', 'design_abandoned']);
 const PLAN_STATUSES = new Set(['plan_draft', 'plan_approved', 'executing', 'done']);
 
 function documentFrontmatter(text: string): Record<string, unknown> | null {
@@ -957,6 +962,31 @@ const symbol: Handler = async (ctx) => {
   return 0;
 };
 
+/**
+ * What to print when the tree-sitter probe throws.
+ *
+ * `(e as Error).message` alone is not enough, and the gap cost real time: a grammar whose ABI the
+ * runtime refuses throws an Error with an EMPTY message, so `doctor` reported
+ * `tree-sitter: UNAVAILABLE ()` -- the one line whose job is to say why, saying nothing. Diagnosing
+ * it needed a hand-written probe script. Measured on `web-tree-sitter` 0.26.13 against
+ * `tree-sitter-wasms` ^0.1.13, where `Parser.init` succeeds and `Language.load` is what fails.
+ */
+export function describeLoadFailure(e: unknown): string {
+  const err = e as Partial<Error> & { code?: string };
+  const parts = [
+    err?.name ?? typeof e,
+    ...(typeof err?.code === 'string' ? [err.code] : []),
+    ...(typeof err?.message === 'string' && err.message.trim() !== '' ? [err.message] : []),
+  ];
+  const detail = parts.join(': ');
+  // An empty message almost always means the runtime rejected the grammar, and the two versions
+  // move independently -- so name both, rather than leave the reader with a bare `Error`.
+  return typeof err?.message === 'string' && err.message.trim() === ''
+    ? `${detail} -- no message; usually a grammar the runtime will not accept, ` +
+        `so check web-tree-sitter and tree-sitter-wasms against each other`
+    : detail;
+}
+
 // Self-check the code-intelligence layer: config switches, wasm loadable, cache dir.
 const doctor: Handler = async (ctx) => {
   const { paths } = depsFor(ctx, true /* read-only */);
@@ -968,7 +998,7 @@ const doctor: Handler = async (ctx) => {
     wasmOk = parsed.syms.length > 0;
     wasmDetail = `grammar ${parsed.grammar}`;
   } catch (e) {
-    wasmDetail = (e as Error).message;
+    wasmDetail = describeLoadFailure(e);
   }
   const cacheWritable = existsSync(paths.root);
   emit(

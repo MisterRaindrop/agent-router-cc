@@ -4,11 +4,12 @@
 import { test } from 'node:test';
 import { childEnv } from './childEnv.ts';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import * as fx from '../testkit/gitRepo.ts';
+import { describeLoadFailure } from '../src/cli/commands.ts';
 
 const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const NODE = process.execPath;
@@ -104,6 +105,36 @@ test('symbol: unknown subcommand exits 2', () => {
   const dir = repoWithSource();
   const r = router(dir, ['symbol', 'bogus']);
   assert.equal(r.code, 2);
+});
+
+// A load failure has to name itself. The runtime throws an Error with an EMPTY message when it
+// rejects a grammar's ABI, and `doctor` used to print `UNAVAILABLE ()` -- the one line whose job is
+// to explain, explaining nothing. Diagnosing a real occurrence needed a hand-written probe script.
+test('doctor names a load failure even when the error carries no message', () => {
+  for (const [thrown, expected] of [
+    [new Error(''), /Error -- no message; usually a grammar/],
+    [Object.assign(new Error(''), { code: 'ENOENT' }), /Error: ENOENT -- no message/],
+    [new TypeError('Parser.init is not a function'), /TypeError: Parser\.init is not a function/],
+    [Object.assign(new Error('boom'), { code: 'ERR_X' }), /Error: ERR_X: boom/],
+  ] as const) {
+    const out = describeLoadFailure(thrown);
+    assert.match(out, expected, `for ${String(thrown)}`);
+    assert.doesNotMatch(out, /^\s*$/, 'a failure must never describe itself as nothing');
+  }
+});
+
+// The other half: the helper being correct is worth nothing if `doctor` stops calling it. A
+// source assertion is weak, and it is here because the strong version is not available -- forcing a
+// real grammar-load failure inside a test would mean shipping a broken wasm. It is not decoration:
+// reverting the catch to `(e as Error).message` leaves the test above green, which is how this gap
+// was found in the first place.
+test('doctor routes its load failure through describeLoadFailure', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../src/cli/commands.ts', import.meta.url)),
+    'utf8',
+  );
+  assert.match(src, /wasmDetail = describeLoadFailure\(e\);/);
+  assert.doesNotMatch(src, /wasmDetail = \(e as Error\)\.message;/);
 });
 
 test('doctor: reports switches and wasm status', () => {

@@ -31,9 +31,14 @@ name: `router plans` reads that filename). If another session holds it, say so a
 ```yaml
 plan_id: <id>
 revision: 0            # frozen (bumped) at each approval
-status: design_draft   # design_draft | design_approved
+status: design_draft   # design_draft | design_approved | design_abandoned
 approved: null         # { revision, by, date } once approved
 ```
+
+`design_abandoned` is the terminal state for a design the user stops part-way -- "just build the
+whole thing, skip the design". Set it, keep the document as the archive of what *was* confirmed, and
+say in it why the flow stopped. Without it such a design sits on `design_draft` forever and
+`router plans` lists finished work as the one unfinished plan.
 
 Approval is an explicit user action and **always the last action of the stage**. Any edit
 after approval bumps `revision`, requires re-approval, drops an existing `WORKPLAN.md` back to

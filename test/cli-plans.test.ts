@@ -184,6 +184,25 @@ test('plans reports the brainstorm stage when it is the only document', () => {
   }
 });
 
+// `design_abandoned` is terminal, and it is here because there was no terminal state to reach: a
+// design the user stops part-way sat on `design_draft` forever and read as the one unfinished plan.
+test('a design the user stopped part-way reports a terminal stage, not a draft', () => {
+  const dir = fx.initRepo();
+  try {
+    writeDesignMd(dir, 'd-stopped', '---\nplan_id: d-stopped\nstatus: design_abandoned\n---\nbody\n');
+    writeDesignMd(dir, 'd-open', '---\nplan_id: d-open\nstatus: design_draft\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /d-stopped\s+-\s+unknown\s+design_abandoned/);
+    // The draft state still exists and still reads as unfinished -- the new status is an addition,
+    // not a rename of the old one.
+    assert.match(text.out, /d-open\s+-\s+unknown\s+design_draft/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 // Precedence, in both directions.
 test('a later document outranks the brainstorm, and a broken plan does not fall back to it', () => {
   const dir = fx.initRepo();

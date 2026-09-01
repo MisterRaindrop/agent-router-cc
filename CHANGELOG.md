@@ -8,6 +8,31 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-09-01
+
+### Fixed
+
+- **`router doctor` said `tree-sitter: UNAVAILABLE ()`** — the one line whose job is to explain a
+  failure, explaining nothing. The runtime throws an `Error` with an empty message when it rejects a
+  grammar's ABI, and the probe printed `.message` verbatim. Diagnosing a real occurrence needed a
+  hand-written script. It now names the error type and code, and says which two packages to compare
+  when there is no message at all. Measured on `web-tree-sitter` 0.26.13 against
+  `tree-sitter-wasms` ^0.1.13: `Parser.init` succeeds, `Language.load` is what fails.
+- `package-lock.json` still declared version `0.9.0` three releases later. Regenerated.
+
+### Added
+
+- **`design_abandoned`**, a terminal state for a design the user stops part-way — "just build the
+  whole thing, skip the design". Such a document used to sit on `design_draft` forever, so
+  `router plans` listed finished work as the only unfinished plan. Brainstorm has `rejected` for the
+  same situation; design had nothing.
+
+### Changed
+
+- Dev dependencies: `@types/node` 26.1.2 → 26.4.0, `esbuild` 0.28.1 → 0.28.2. `web-tree-sitter` is
+  deliberately held at `^0.25.3`: 0.26 makes `Language.load` reject the `tree-sitter-wasms` grammar
+  and takes nine symbol-index tests with it.
+
 ## [0.12.2] - 2026-09-01
 
 ### Fixed

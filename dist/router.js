@@ -9587,7 +9587,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.2" : "0.0.0-dev";
+var VERSION = true ? "0.12.3" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -15639,7 +15639,7 @@ ${leftover} task branch(es) still present. \`router land <id>\` merges and delet
 };
 var DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 var BRAINSTORM_STATUSES = /* @__PURE__ */ new Set(["brainstorming", "converged", "rejected"]);
-var DESIGN_STATUSES = /* @__PURE__ */ new Set(["design_draft", "design_approved"]);
+var DESIGN_STATUSES = /* @__PURE__ */ new Set(["design_draft", "design_approved", "design_abandoned"]);
 var PLAN_STATUSES = /* @__PURE__ */ new Set(["plan_draft", "plan_approved", "executing", "done"]);
 function documentFrontmatter(text2) {
   const match = DOCUMENT_FRONTMATTER_RE.exec(text2);
@@ -15941,6 +15941,16 @@ var symbol = async (ctx) => {
   emit(ctx.json, { ok: true, result: r.data, reparsed: r.reparsed }, () => `${r.text}${note}`);
   return 0;
 };
+function describeLoadFailure(e) {
+  const err2 = e;
+  const parts = [
+    err2?.name ?? typeof e,
+    ...typeof err2?.code === "string" ? [err2.code] : [],
+    ...typeof err2?.message === "string" && err2.message.trim() !== "" ? [err2.message] : []
+  ];
+  const detail = parts.join(": ");
+  return typeof err2?.message === "string" && err2.message.trim() === "" ? `${detail} -- no message; usually a grammar the runtime will not accept, so check web-tree-sitter and tree-sitter-wasms against each other` : detail;
+}
 var doctor = async (ctx) => {
   const { paths } = depsFor(
     ctx,
@@ -15955,7 +15965,7 @@ var doctor = async (ctx) => {
     wasmOk = parsed.syms.length > 0;
     wasmDetail = `grammar ${parsed.grammar}`;
   } catch (e) {
-    wasmDetail = e.message;
+    wasmDetail = describeLoadFailure(e);
   }
   const cacheWritable = existsSync10(paths.root);
   emit(
