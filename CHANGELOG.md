@@ -8,6 +8,34 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-09-01
+
+An independent review of 0.12.4's change found two defects in it. Both are fixed here.
+
+### Fixed
+
+- **Only one of four text columns was sanitized.** 0.12.4 neutralized the `stage` column because the
+  plans table is written straight to a terminal — and left `id`, `revision` and `design` raw, though a
+  directory name and both revisions are arbitrary text out of the same files. Measured:
+  `revision: "r<ESC>[31mRED"` put two escape bytes on the terminal. Sanitization now happens at the
+  render boundary, on the same value the column width is computed from.
+- **The rule "a control character means something was declared" held for two characters and no
+  others.** `String.trim()` also removes TAB, CR, LF, VT, FF, NBSP, FEFF and U+2028, so
+  `status: "\t\r"` rendered `-` while `status: "\e\a"` rendered `?..` — one rule answering two ways.
+  Only plain spaces are padding now. A trailing TAB survives as one `.`, which is one terminal cell
+  and more than the reader used to be told.
+- **A frontmatter value has no size limit and the whole of it reached the table.** Cells sourced from
+  frontmatter are capped at 32 characters with an ellipsis; `--json` keeps the full value for anyone
+  who wants it. The cap deliberately does **not** apply to a plan id: that is a directory name and the
+  row's key, and this table's own test pins that a long one widens the column rather than being cut.
+
+### Changed
+
+- Eight behaviours that were verified by hand during review now carry assertions: numeric, boolean,
+  mapping and sequence statuses; DEL, C1, TAB and wide-glyph sanitization; a value of 5000 characters;
+  a parseable document with no `status` key; and which document owns the stage when every level is
+  unrecognized.
+
 ## [0.12.4] - 2026-09-01
 
 ### Fixed

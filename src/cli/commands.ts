@@ -597,6 +597,14 @@ function scalarText(value: unknown): string | null {
 
 // Current plans declare `revision`; `plan_revision` remains readable for artifacts frozen
 // by the legacy flow. Malformed or missing frontmatter degrades only this row.
+//
+// KNOWN LIMIT, reported 2026-09-01 and deliberately not fixed: this conflates "absent" with
+// "invalid", which is the same blind spot the stage column was just fixed for. `scalarText` returns
+// null for a boolean, an array or a mapping, so `revision: []` beside a legacy `plan_revision: old`
+// silently reports `old` and hides that the authoritative field is corrupt; an invalid revision and
+// no revision at all both render `-`; and `revision: ""` renders a visually empty column. Closing it
+// means a present-valid / present-invalid / absent tri-state through both callers and both columns,
+// which is a wider change than the one it was found in.
 function planRevision(frontmatter: Record<string, unknown> | null): string | null {
   return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
 }
@@ -619,36 +627,62 @@ function documentStage(frontmatter: Record<string, unknown> | null, allowed: Set
   return typeof status === 'string' && allowed.has(status) ? status : null;
 }
 
-// `status:` is arbitrary text from a file and the plans table is written straight to a terminal,
-// where an escape sequence would move the cursor or set a colour instead of being read. Everything
-// outside printable ASCII becomes `.`: that covers ESC, the C0 and C1 ranges, CR and LF, and it
-// also keeps the column measurable, since a double-width glyph counts as one unit to width() but
-// takes two cells on the terminal.
-function printableStatus(raw: string): string {
+// Anything read out of a file and written to a terminal goes through here first: an escape sequence
+// in that text would move the cursor or set a colour instead of being read. Everything outside
+// printable ASCII becomes `.`, which covers ESC, the C0 and C1 ranges, DEL, CR, LF and TAB, and
+// keeps the value measurable -- a double-width glyph counts as one unit to width() but takes two
+// cells on the terminal, so leaving it in rags the table.
+function printable(raw: string): string {
   return raw.replace(/[^\x20-\x7e]/g, '.');
 }
 
-// A declared status that no vocabulary recognizes is a different fact from no status at all, and
-// both used to render as `-` -- so a typo in this one frontmatter field was invisible in the
-// listing. Recognition itself stays with documentStage; this only names what it rejected, marked
-// with `?` so it cannot be misread as a stage name. Null means "nothing was declared", which is
-// what `-` continues to mean: a mapping or a sequence under `status:` is not a status either.
+/**
+ * One cell whose value came out of frontmatter: sanitized, and bounded.
+ *
+ * The bound is not tidiness. A YAML scalar has no size limit, so a multi-megabyte value used to be
+ * copied whole into the row, into the width calculation, and onto stdout -- one plan could make the
+ * listing unreadable. The full value stays in `--json`, which is where a caller that actually wants
+ * it should look.
+ *
+ * It applies to frontmatter ONLY, and not to a plan id: an id is a directory name, bounded by the
+ * filesystem and chosen by the person running router, and this table's own test pins that a long one
+ * widens the table rather than being cut -- it is the row's key, and half a key is worse than a wide
+ * column. Measured: a 32-char cap truncated `2026-08-12-a-design-plan-id-that-is-longer-...` and
+ * that test went red, which is exactly what it is for.
+ */
+const CELL_MAX = 32;
+
+function frontmatterCell(raw: string): string {
+  const clean = printable(raw);
+  return clean.length <= CELL_MAX ? clean : `${clean.slice(0, CELL_MAX - 3)}...`;
+}
+
+/**
+ * The stage to report when `documentStage` recognized nothing, or null when the document declared
+ * nothing at all.
+ *
+ * Two jobs, and the caller depends on both: the string is what the row shows, and the null is what
+ * lets the search fall through to the next document. Recognition itself stays in `documentStage`;
+ * this only names what that rejected, marked with `?` so the value cannot be misread as a stage
+ * name -- no vocabulary contains a `?`.
+ *
+ * `-` keeps meaning "nothing declared", so this returns null for four different ways of writing
+ * nothing: no `status` key, a YAML null, an empty string, and a run of plain spaces. A mapping or a
+ * sequence is not a status either.
+ */
 function unrecognizedStage(frontmatter: Record<string, unknown> | null, allowed: Set<string>): string | null {
   const status = frontmatter?.status;
   if (status === undefined || status === null || typeof status === 'object') return null;
   if (documentStage(frontmatter, allowed) !== null) return null;
-  // Whether anything was declared is decided on the RAW value, before sanitizing: the `.` that
-  // printableStatus writes is this renderer's own invention, so counting it as content would turn
-  // `status: "\t"` into `?.` -- a mark over a character the file never held. Trimming the raw value
-  // asks the only question that matters, did the author write anything but whitespace, and an empty
-  // or blank value answers no: `?` with nothing after it marks nothing, and tells the reader less
-  // than `-`. Control characters are not whitespace and do answer yes -- `status: "\e\a"` renders
-  // `?..`, deliberately: something IS in that field, and `-` would hide a corrupted document, the
-  // blind spot this column exists to remove. Trimming also keeps the file's own leading and
-  // trailing spaces from ragging the column; recognition stays exact, so a padded copy of a
-  // recognized word is still marked rather than quietly accepted as that word.
-  const declared = String(status).trim();
-  return declared === '' ? null : `?${printableStatus(declared)}`;
+  // Only PLAIN SPACES are stripped, not `String.trim()`'s idea of whitespace, and the difference is
+  // the whole point: trim() also removes TAB, CR, LF, VT, FF, NBSP, FEFF and U+2028, so
+  // `status: "\t\r"` became `-` while `status: "\e\a"` became `?..` -- the same rule answering two
+  // ways for no reason the reader could see. A control character is not the author writing nothing;
+  // it is a corrupted field, and `-` there hides exactly the damage this column exists to show.
+  // Padding is still stripped so the file's own spaces cannot rag the column, and recognition stays
+  // exact, so a padded copy of a recognized word is marked rather than quietly accepted as it.
+  const shown = String(status).replace(/^ +| +$/g, '');
+  return shown === '' ? null : `?${printable(shown)}`;
 }
 
 function highestCritiqueRound(entries: string[]): number | null {
@@ -724,6 +758,13 @@ const plans: Handler = (ctx) => {
     } catch {
       /* plan dir unreadable -- treat as no critiques rather than failing the row */
     }
+    // KNOWN LIMIT, reported 2026-09-01 and deliberately not fixed: `stage` carries a presentation
+    // decision into `--json`, which `src/cli/output.ts` calls stable machine output. A consumer that
+    // accepted one of the three vocabularies or null may now see `?unexpected`, and the sanitized
+    // form is lossy -- a non-ASCII status survives only as dots. The clean shape is a structured
+    // {kind, raw, recognized} with `stage` kept to its enum, but that changes the JSON contract; the
+    // repository has no producer-side consumer (four test call sites, no other reader), so the cost
+    // was judged higher than the exposure. Revisit if anything starts parsing this field.
     return {
       id,
       plan_revision: planRevision(planFrontmatter),
@@ -736,12 +777,18 @@ const plans: Handler = (ctx) => {
   });
   emit(ctx.json, { ok: true, plans: rows }, () => {
     if (rows.length === 0) return 'No plans in .router/plans.';
+    // EVERY text cell is sanitized here, at the boundary, not at the one place a defect was found.
+    // `stage` was hardened on its own first and the other three columns stayed raw: a directory name
+    // and both revisions are arbitrary text out of the same files, and `revision: "r<ESC>[31mRED"`
+    // put two escape bytes on the terminal -- measured. The bound is applied to the same value the
+    // width is computed from, so a capped cell and its column always agree.
+    const cell = frontmatterCell;
     const width = (header: string, floor: number, values: string[]): number =>
       Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
-    const idWidth = width('id', 24, rows.map((r) => r.id));
-    const revisionWidth = width('revision', 12, rows.map((r) => r.plan_revision ?? 'unknown'));
-    const designWidth = width('design', 8, rows.map((r) => r.design_revision ?? '-'));
-    const stageWidth = width('stage', 8, rows.map((r) => r.stage ?? '-'));
+    const idWidth = width('id', 24, rows.map((r) => printable(r.id)));
+    const revisionWidth = width('revision', 12, rows.map((r) => cell(r.plan_revision ?? 'unknown')));
+    const designWidth = width('design', 8, rows.map((r) => cell(r.design_revision ?? '-')));
+    const stageWidth = width('stage', 8, rows.map((r) => cell(r.stage ?? '-')));
     const critiqueWidth = width('critique', 10, rows.map((r) => r.critique_round === null ? '-' : String(r.critique_round)));
     const decisionsWidth = width('decisions', 12, rows.map((r) => r.decisions ? 'yes' : '-'));
     const lines = [
@@ -750,10 +797,10 @@ const plans: Handler = (ctx) => {
     ];
     for (const r of rows)
       lines.push(
-        pad(r.id, idWidth) +
-          pad(r.design_revision ?? '-', designWidth) +
-          pad(r.plan_revision ?? 'unknown', revisionWidth) +
-          pad(r.stage ?? '-', stageWidth) +
+        pad(printable(r.id), idWidth) +
+          pad(cell(r.design_revision ?? '-'), designWidth) +
+          pad(cell(r.plan_revision ?? 'unknown'), revisionWidth) +
+          pad(cell(r.stage ?? '-'), stageWidth) +
           pad(r.critique_round === null ? '-' : String(r.critique_round), critiqueWidth) +
           pad(r.decisions ? 'yes' : '-', decisionsWidth) +
           (r.locked ? 'yes' : '-'),

@@ -287,8 +287,10 @@ test('a status whose value is empty or blank is not a declared status', () => {
     writeBrainstormMd(dir, 'b-bare-value', '---\nplan_id: b-bare-value\nstatus:\n---\nbody\n');
     writeBrainstormMd(dir, 'b-empty', '---\nstatus: ""\n---\nbody\n');
     writeBrainstormMd(dir, 'b-blank', '---\nstatus: "   "\n---\nbody\n');
-    // The file's own surrounding whitespace is not content: the mark carries the trimmed value, so
-    // it cannot rag the column with leading or trailing spaces.
+    // Plain spaces around the value are padding and are stripped, so the file's own indentation
+    // cannot rag the column. The trailing TAB is NOT padding: it is a control character, and this
+    // column exists to show that something is in the field. It survives as one `.`, which is both
+    // one terminal cell and more than the reader used to be told.
     writeBrainstormMd(dir, 'b-padded', '---\nstatus: "  daydreaming\\t"\n---\nbody\n');
     // Recognition is still exact, so a padded copy of a recognized word is marked rather than
     // quietly accepted as that word -- the document does not say `converged`.
@@ -304,7 +306,7 @@ test('a status whose value is empty or blank is not a declared status', () => {
     assert.match(text.out, /b-blank\s+-\s+unknown\s+-\s+-\s+-\s+-/);
     assert.match(text.out, /b-control\s+-\s+unknown\s+\?\.\.\s+-\s+-\s+-/);
     assert.match(text.out, /b-empty\s+-\s+unknown\s+-\s+-\s+-\s+-/);
-    assert.match(text.out, /b-padded\s+-\s+unknown\s+\?daydreaming\s+-\s+-\s+-/);
+    assert.match(text.out, /b-padded\s+-\s+unknown\s+\?daydreaming\.\s+-\s+-\s+-/);
     assert.match(text.out, /b-padded-known\s+-\s+unknown\s+\?converged\s+-\s+-\s+-/);
     assert.equal(
       text.out.includes(String.fromCharCode(27)),
@@ -320,9 +322,140 @@ test('a status whose value is empty or blank is not a declared status', () => {
       'b-blank': null,
       'b-control': '?..',
       'b-empty': null,
-      'b-padded': '?daydreaming',
+      'b-padded': '?daydreaming.',
       'b-padded-known': '?converged',
     });
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The sanitizer was added for the stage column and the other three stayed raw -- a directory name
+// and both revisions are arbitrary text out of the same files. Measured before this test existed:
+// `revision: "r<ESC>[31mRED"` put two escape bytes on the terminal.
+test('every text column is sanitized, not only the one a defect was found in', () => {
+  const dir = fx.initRepo();
+  try {
+    const esc = String.fromCharCode(27);
+    writePlanMd(dir, 'p-rev', '---\nrevision: "r\\e[31mRED"\nstatus: done\n---\nbody\n');
+    writeDesignMd(dir, 'd-rev', '---\nrevision: "d\\e[32mGRN"\nstatus: design_draft\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.equal(text.out.includes(esc), false, `no escape byte may reach the terminal: ${JSON.stringify(text.out)}`);
+    // The neutralized value is still identifiable, so the reader can see what the file holds.
+    assert.match(text.out, /p-rev\s+-\s+r\.\[31mRED\s+done/);
+    assert.match(text.out, /d-rev\s+d\.\[32mGRN\s+unknown\s+design_draft/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// A frontmatter scalar has no size limit, and the whole value used to reach the row, the width
+// calculation and stdout. One plan could make the listing unreadable.
+test('a huge value is bounded in the table and kept whole in --json', () => {
+  const dir = fx.initRepo();
+  try {
+    const long = 'x'.repeat(5000);
+    writeBrainstormMd(dir, 'huge', `---\nstatus: "${long}"\n---\nbody\n`);
+    writePlanMd(dir, 'huge-rev', `---\nrevision: "${'y'.repeat(5000)}"\nstatus: done\n---\nbody\n`);
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    for (const line of text.out.split('\n')) {
+      assert.ok(line.length < 200, `a row grew without bound: ${line.length} chars`);
+    }
+    assert.match(text.out, /huge\s+-\s+unknown\s+\?x+\.\.\.\s/);
+    assert.match(text.out, /huge-rev\s+-\s+y+\.\.\.\s+done/);
+
+    // The full value is still available where a caller can ask for it deliberately.
+    const json = router(dir, ['plans', '--json']);
+    const rows = (JSON.parse(json.out) as { plans: { id: string; stage: string | null }[] }).plans;
+    assert.equal(rows.find((r) => r.id === 'huge')?.stage?.length, long.length + 1);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// `String.trim()` removes TAB, CR, LF, VT, FF, NBSP, FEFF and U+2028 as whitespace, so deciding
+// "was anything declared" with it made `status: "\t\r"` render `-` while `status: "\e\a"` rendered
+// `?..` -- one rule answering two ways. A control character is a corrupted field, not an author
+// writing nothing, and `-` there hides the damage this column exists to show.
+test('a control-character status is declared; only plain spaces are not', () => {
+  const dir = fx.initRepo();
+  try {
+    // Every one of these is whitespace to trim() and must NOT be read as "nothing declared".
+    writeBrainstormMd(dir, 'a-tab-cr', '---\nstatus: "\\t\\r"\n---\nbody\n');
+    writeBrainstormMd(dir, 'b-lf', '---\nstatus: "\\n"\n---\nbody\n');
+    writeBrainstormMd(dir, 'c-vt-ff', '---\nstatus: "\\v\\f"\n---\nbody\n');
+    writeBrainstormMd(dir, 'd-nbsp', '---\nstatus: "\\u00a0"\n---\nbody\n');
+    writeBrainstormMd(dir, 'e-bom', '---\nstatus: "\\ufeff"\n---\nbody\n');
+    writeBrainstormMd(dir, 'f-linesep', '---\nstatus: "\\u2028"\n---\nbody\n');
+    // ...and these three are the author writing nothing.
+    writeBrainstormMd(dir, 'g-empty', '---\nstatus: ""\n---\nbody\n');
+    writeBrainstormMd(dir, 'h-spaces', '---\nstatus: "   "\n---\nbody\n');
+    writeBrainstormMd(dir, 'i-null', '---\nstatus:\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    for (const id of ['a-tab-cr', 'b-lf', 'c-vt-ff', 'd-nbsp', 'e-bom', 'f-linesep']) {
+      assert.match(text.out, new RegExp(`${id}\\s+-\\s+unknown\\s+\\?\\.`), `${id} must read as declared`);
+    }
+    for (const id of ['g-empty', 'h-spaces', 'i-null']) {
+      assert.match(text.out, new RegExp(`${id}\\s+-\\s+unknown\\s+-\\s`), `${id} must read as nothing declared`);
+    }
+    // Whatever those bytes were, none of them reached the terminal.
+    assert.doesNotMatch(text.out, /[^\x20-\x7e\n]/, 'a row carried a byte outside printable ASCII');
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The behaviours above were all verified by hand and none of them had an assertion. A test that
+// exists only for the shape someone happened to try is why `\t` and `\e` diverged in the first place.
+test('non-string and non-ASCII statuses render predictably', () => {
+  const dir = fx.initRepo();
+  try {
+    writeBrainstormMd(dir, 'a-number', '---\nstatus: 123\n---\nbody\n');
+    writeBrainstormMd(dir, 'b-bool', '---\nstatus: true\n---\nbody\n');
+    // Neither a mapping nor a sequence is a status; both read as nothing declared rather than
+    // being stringified into the column.
+    writeBrainstormMd(dir, 'c-mapping', '---\nstatus: {a: 1}\n---\nbody\n');
+    writeBrainstormMd(dir, 'd-sequence', '---\nstatus: [a, b]\n---\nbody\n');
+    writeBrainstormMd(dir, 'e-del-c1', '---\nstatus: "x\\x7fy\\x85z"\n---\nbody\n');
+    writeBrainstormMd(dir, 'f-wide', '---\nstatus: "\\u5bbd\\u5b57"\n---\nbody\n');
+    // A parseable document that simply has no `status` key: absent, not unrecognized.
+    writeBrainstormMd(dir, 'g-no-key', '---\nplan_id: g-no-key\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /a-number\s+-\s+unknown\s+\?123\s/);
+    assert.match(text.out, /b-bool\s+-\s+unknown\s+\?true\s/);
+    assert.match(text.out, /c-mapping\s+-\s+unknown\s+-\s/);
+    assert.match(text.out, /d-sequence\s+-\s+unknown\s+-\s/);
+    assert.match(text.out, /e-del-c1\s+-\s+unknown\s+\?x\.y\.z\s/);
+    assert.match(text.out, /f-wide\s+-\s+unknown\s+\?\.\.\s/);
+    assert.match(text.out, /g-no-key\s+-\s+unknown\s+-\s/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// Two documents both unrecognized: which one the row reports has to be pinned, or a later
+// refactor changes it by accident and nothing notices.
+test('with every level unrecognized, the marked stage follows the same order as a recognized one', () => {
+  const dir = fx.initRepo();
+  try {
+    writeBrainstormMd(dir, 'two-typos', '---\nstatus: bs_typo\n---\nbody\n');
+    writeDesignMd(dir, 'two-typos', '---\nrevision: 4\nstatus: dz_typo\n---\nbody\n');
+    writeBrainstormMd(dir, 'three-typos', '---\nstatus: bs_typo\n---\nbody\n');
+    writeDesignMd(dir, 'three-typos', '---\nrevision: 4\nstatus: dz_typo\n---\nbody\n');
+    writePlanMd(dir, 'three-typos', '---\nrevision: 9\nstatus: pl_typo\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /two-typos\s+4\s+unknown\s+\?dz_typo\s/);
+    assert.match(text.out, /three-typos\s+4\s+9\s+\?pl_typo\s/);
   } finally {
     fx.cleanup(dir);
   }
