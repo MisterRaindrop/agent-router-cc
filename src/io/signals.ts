@@ -44,3 +44,51 @@ export function processGroupIsGone(pgid: number): boolean {
     return (err as NodeJS.ErrnoException).code === 'ESRCH';
   }
 }
+
+/**
+ * Block this thread for `ms`.
+ *
+ * Only for callers that are synchronous by construction. Every one of them has already frozen the
+ * event loop with `spawnSync` or is inside a CLI step that must not yield, so there is no loop left
+ * to hand control back to and a promise here would never be resolved.
+ */
+export function sleepSync(ms: number): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+export interface DrainOutcome {
+  /** What emptied the group. Absent when it was already empty on arrival. */
+  signal?: 'SIGTERM' | 'SIGKILL';
+  /** Something outlived SIGKILL. The caller may NOT treat the workspace as quiet. */
+  survived: boolean;
+}
+
+/**
+ * Signal a process group and do not return until it is empty: SIGTERM, wait, SIGKILL, wait.
+ *
+ * The synchronous twin of `drainGroup` in io/supervisor.ts, and synchronous for the opposite
+ * reason that one is async: the supervisor has an idle event loop to poll on, while every caller
+ * here has already blocked it with `spawnSync`.
+ *
+ * `onPoll` runs once per tick, for a caller that holds a lease it must keep renewing while this
+ * loop -- the slow part -- runs.
+ */
+export function drainGroupSync(
+  pgid: number,
+  graceMs: number,
+  onPoll: () => void = () => {},
+  stepMs = 50,
+): DrainOutcome {
+  if (!Number.isInteger(pgid) || pgid <= 1) return { survived: false };
+  if (processGroupIsGone(pgid)) return { survived: false };
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    killProcessGroup(pgid, signal);
+    const deadline = Date.now() + graceMs;
+    while (Date.now() < deadline) {
+      if (processGroupIsGone(pgid)) return { signal, survived: false };
+      sleepSync(stepMs);
+      onPoll();
+    }
+  }
+  return { survived: true };
+}

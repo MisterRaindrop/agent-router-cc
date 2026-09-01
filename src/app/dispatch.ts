@@ -680,7 +680,12 @@ async function withCheckoutLock(
       },
       stillOwned: () => ownsLock(lock.path, lock.ownerToken),
     });
-    groupSurvived = result.executor_group_survived === true;
+    // Either writer counts. `executor_group_survived` is the executor's own group; the verifier's
+    // gate and verify commands run in this process and leave groups of their own, and a build that
+    // outlived SIGKILL is writing the same checkout the executor would have. Both have to hold the
+    // lock shut -- the invariant below is about the tree, not about whose process it was.
+    groupSurvived =
+      result.executor_group_survived === true || result.verifier?.group_survived === true;
     return result;
   } finally {
     // Step 12, in this order: kill the executor's process group, THEN release the lock. The

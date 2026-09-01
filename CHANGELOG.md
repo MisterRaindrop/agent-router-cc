@@ -8,6 +8,34 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-09-01
+
+### Fixed
+
+- **A gate or verify command that timed out left its build running in the checkout, and router then
+  handed that checkout to the next task.** `runCommand` is how every reset, verify and gate command
+  runs, and `spawnSync`'s `timeout` kills the direct child only — `npm`, `make`, `cmake` and every
+  test runner start their own children. Measured: `timedOut: true` with the grandchild still alive,
+  after which `dispatch` releases the exclusive lock on the stated invariant that no writer is left
+  in the tree. Commands now lead their own process group and `runCommand` does not return until that
+  group is empty, on **every** path — a command that exits 0 while its children keep working leaves
+  the identical writer behind and is not a timeout. A group that outlives SIGKILL is reported as
+  `group_survived`, fails the gate, and holds the lock shut, matching what the executor path already
+  did.
+- The SIGTERM-then-SIGKILL-then-confirm-empty protocol existed in three copies. It is now one,
+  `drainGroupSync` in `src/io/signals.ts`, shared by the lock's reclaim path and the verifier.
+
+### Changed
+
+- **The RED-before-GREEN rule now covers tests that are not bug fixes.** `assurance-core.md` already
+  required a regression test to fail against the old implementation; a test written for behaviour
+  that already works needs the same proof, and did not have to give it. Three times in one plan a
+  test looked better than what it replaced, passed with the fix, **and** passed with the fix
+  removed. Two additions come with it: break the code once per part of the fix, because three
+  regressions in one change need three failing tests and one "delete the whole thing" run passes
+  over two of them; and assert the fixture did what you needed before asserting what you care about,
+  so a mis-aimed test is loud rather than green.
+
 ## [0.12.1] - 2026-08-31
 
 Three rules about how a code review ends. No new code paths: the production diff is comments

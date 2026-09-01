@@ -160,6 +160,12 @@ export interface VerifierReport {
    * so it is `unverified` in assurance terms, not evidence that the code is broken.
    */
   timed_out?: boolean;
+  /**
+   * A gate or verify command left a process group that outlived SIGKILL. Like `timed_out` this is
+   * `unverified` rather than a defect in the change -- but it is worse in one way the caller has to
+   * act on: something is still able to write this checkout, so the lock may not be released.
+   */
+  group_survived?: boolean;
 }
 
 // -- Run result + metrics ------------------------------------------------------

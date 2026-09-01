@@ -34,7 +34,24 @@ Every check reports exactly one of: `pass` | `fail` | `unverified` | `not-applic
 These are prohibited, in both authoring tests (go) and judging them (review):
 - Do not delete, skip, or weaken a test to make the suite pass.
 - Do not change the test and the implementation together and then declare GREEN — the test
-  must fail against the OLD implementation first (RED) for bug fixes / regressions.
+  must fail against the OLD implementation first (RED). **Not only for bug fixes.** A test
+  written for behaviour that already works needs the same proof: green shows the test runs,
+  only red shows it is attached to what it claims to fence. Break the code it covers — delete
+  the guard, narrow the condition — watch that exact test go red, then put the code back.
+  - **Break it once per part of the fix.** `detached` plus a drain that runs on every path is
+    three separate regressions: remove `detached`, remove the drain, narrow the drain to the
+    timeout path. Each needs its own failing test; one RED run against "delete the whole
+    thing" passes over two of them.
+  - **Assert the fixture did what you needed, before asserting what you care about.**
+    `assert.equal(rc, 0, 'the fixture did not exit cleanly: nothing was tested')`. Without it a
+    test cannot tell "the bug is gone" from "the setup never happened" — both are green.
+  - Measured, three times in one plan, each a test that looked better than what it replaced and
+    passed with the fix **and** with the fix removed: an assertion that a shell's process group
+    was empty (without `detached` the shell is not a group leader, so its pid is nobody's pgid
+    and the check is vacuously true); a "the HUD exits normally" test that ran the full timeout
+    every time, because a background child inherits the stdout pipe and `spawnSync` waits for
+    every writer to close it; and the same shape again where an active child handle held its
+    parent's event loop open.
 - Do not mock or stub the very logic under test.
 - Do not count a test that only raises coverage but asserts nothing.
 - Do not mark a check `pass` that you did not actually run.
