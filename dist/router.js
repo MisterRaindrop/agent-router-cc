@@ -15670,6 +15670,16 @@ function documentStage(frontmatter, allowed) {
   const status = frontmatter?.status;
   return typeof status === "string" && allowed.has(status) ? status : null;
 }
+function printableStatus(raw) {
+  return raw.replace(/[^\x20-\x7e]/g, ".");
+}
+function unrecognizedStage(frontmatter, allowed) {
+  const status = frontmatter?.status;
+  if (status === void 0 || status === null || typeof status === "object") return null;
+  if (documentStage(frontmatter, allowed) !== null) return null;
+  const declared = String(status).trim();
+  return declared === "" ? null : `?${printableStatus(declared)}`;
+}
 function highestCritiqueRound(entries) {
   let max = null;
   for (const name of entries) {
@@ -15702,7 +15712,10 @@ var plans = (ctx) => {
     } catch {
     }
     if (!hasPlan) {
-      stage = documentStage(designFrontmatter, DESIGN_STATUSES) ?? documentStage(planDocumentFrontmatter(paths, id, "BRAINSTORM.md"), BRAINSTORM_STATUSES);
+      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, "BRAINSTORM.md");
+      stage = documentStage(designFrontmatter, DESIGN_STATUSES) ?? documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ?? unrecognizedStage(designFrontmatter, DESIGN_STATUSES) ?? unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
+    } else {
+      stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
     }
     let critiqueRound = null;
     try {
