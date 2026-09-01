@@ -9587,7 +9587,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.4" : "0.0.0-dev";
+var VERSION = true ? "0.12.5" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -15670,15 +15670,20 @@ function documentStage(frontmatter, allowed) {
   const status = frontmatter?.status;
   return typeof status === "string" && allowed.has(status) ? status : null;
 }
-function printableStatus(raw) {
+function printable(raw) {
   return raw.replace(/[^\x20-\x7e]/g, ".");
+}
+var CELL_MAX = 32;
+function frontmatterCell(raw) {
+  const clean = printable(raw);
+  return clean.length <= CELL_MAX ? clean : `${clean.slice(0, CELL_MAX - 3)}...`;
 }
 function unrecognizedStage(frontmatter, allowed) {
   const status = frontmatter?.status;
   if (status === void 0 || status === null || typeof status === "object") return null;
   if (documentStage(frontmatter, allowed) !== null) return null;
-  const declared = String(status).trim();
-  return declared === "" ? null : `?${printableStatus(declared)}`;
+  const shown = String(status).replace(/^ +| +$/g, "");
+  return shown === "" ? null : `?${printable(shown)}`;
 }
 function highestCritiqueRound(entries) {
   let max = null;
@@ -15734,11 +15739,12 @@ var plans = (ctx) => {
   });
   emit(ctx.json, { ok: true, plans: rows }, () => {
     if (rows.length === 0) return "No plans in .router/plans.";
+    const cell = frontmatterCell;
     const width = (header, floor, values) => Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
-    const idWidth = width("id", 24, rows.map((r) => r.id));
-    const revisionWidth = width("revision", 12, rows.map((r) => r.plan_revision ?? "unknown"));
-    const designWidth = width("design", 8, rows.map((r) => r.design_revision ?? "-"));
-    const stageWidth = width("stage", 8, rows.map((r) => r.stage ?? "-"));
+    const idWidth = width("id", 24, rows.map((r) => printable(r.id)));
+    const revisionWidth = width("revision", 12, rows.map((r) => cell(r.plan_revision ?? "unknown")));
+    const designWidth = width("design", 8, rows.map((r) => cell(r.design_revision ?? "-")));
+    const stageWidth = width("stage", 8, rows.map((r) => cell(r.stage ?? "-")));
     const critiqueWidth = width("critique", 10, rows.map((r) => r.critique_round === null ? "-" : String(r.critique_round)));
     const decisionsWidth = width("decisions", 12, rows.map((r) => r.decisions ? "yes" : "-"));
     const lines = [
@@ -15747,7 +15753,7 @@ var plans = (ctx) => {
     ];
     for (const r of rows)
       lines.push(
-        pad2(r.id, idWidth) + pad2(r.design_revision ?? "-", designWidth) + pad2(r.plan_revision ?? "unknown", revisionWidth) + pad2(r.stage ?? "-", stageWidth) + pad2(r.critique_round === null ? "-" : String(r.critique_round), critiqueWidth) + pad2(r.decisions ? "yes" : "-", decisionsWidth) + (r.locked ? "yes" : "-")
+        pad2(printable(r.id), idWidth) + pad2(cell(r.design_revision ?? "-"), designWidth) + pad2(cell(r.plan_revision ?? "unknown"), revisionWidth) + pad2(cell(r.stage ?? "-"), stageWidth) + pad2(r.critique_round === null ? "-" : String(r.critique_round), critiqueWidth) + pad2(r.decisions ? "yes" : "-", decisionsWidth) + (r.locked ? "yes" : "-")
       );
     return lines.join("\n");
   });
