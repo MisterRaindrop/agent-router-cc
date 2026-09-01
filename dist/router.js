@@ -15677,7 +15677,8 @@ function unrecognizedStage(frontmatter, allowed) {
   const status = frontmatter?.status;
   if (status === void 0 || status === null || typeof status === "object") return null;
   if (documentStage(frontmatter, allowed) !== null) return null;
-  return `?${printableStatus(String(status))}`;
+  const declared = String(status).trim();
+  return declared === "" ? null : `?${printableStatus(declared)}`;
 }
 function highestCritiqueRound(entries) {
   let max = null;
