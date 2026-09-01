@@ -8,6 +8,28 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-09-01
+
+### Fixed
+
+- **`router plans` reported "a status nothing recognizes" and "no document at all" identically**, both
+  as `-`, so a typo in that one frontmatter field was invisible in the listing. An unrecognized
+  status now renders `?<status>`, and `-` means only "no document, or no status declared".
+
+  The value is neutralized before printing, which is the whole reason a naive echo was reverted
+  earlier: `status:` is arbitrary text from a file and this table is written straight to a terminal,
+  where an escape sequence moves the cursor or sets a colour instead of being read. Everything
+  outside printable ASCII becomes `.` — ESC, the C0/C1 ranges, CR and LF — which also keeps one unit
+  to one terminal cell so the column is measured like every other one.
+
+  Four ways of writing nothing give one answer: no `status` key, `status:`, `status: ""` and
+  `status: "   "` all render `-`. A padded value is marked rather than quietly accepted, so
+  `status: " converged "` shows `?converged` — the document does not say `converged`. A status of
+  only control characters counts as declared (`?..`), deliberately: `-` there would hide a corrupted
+  document, which is the blind spot this column exists to remove.
+
+  `stage` in `--json` carries the same marker.
+
 ## [0.12.3] - 2026-09-01
 
 ### Fixed
