@@ -278,6 +278,56 @@ test('a status carrying an escape sequence and control characters is neutralized
   }
 });
 
+// An empty value, an empty string and a blank string are the same fact as no field at all --
+// nothing was declared -- so they have to read like their YAML-null twin. A bare `?` marks nothing
+// and tells the reader less than `-` does.
+test('a status whose value is empty or blank is not a declared status', () => {
+  const dir = fx.initRepo();
+  try {
+    writeBrainstormMd(dir, 'b-bare-value', '---\nplan_id: b-bare-value\nstatus:\n---\nbody\n');
+    writeBrainstormMd(dir, 'b-empty', '---\nstatus: ""\n---\nbody\n');
+    writeBrainstormMd(dir, 'b-blank', '---\nstatus: "   "\n---\nbody\n');
+    // The file's own surrounding whitespace is not content: the mark carries the trimmed value, so
+    // it cannot rag the column with leading or trailing spaces.
+    writeBrainstormMd(dir, 'b-padded', '---\nstatus: "  daydreaming\\t"\n---\nbody\n');
+    // Recognition is still exact, so a padded copy of a recognized word is marked rather than
+    // quietly accepted as that word -- the document does not say `converged`.
+    writeBrainstormMd(dir, 'b-padded-known', '---\nstatus: " converged "\n---\nbody\n');
+    // Decided deliberately: a value that is only control characters IS declared. Something is in
+    // that field, and reporting `-` would hide a corrupted document. Control characters are not
+    // whitespace, so the raw value answers "yes, something was written".
+    writeBrainstormMd(dir, 'b-control', '---\nstatus: "\\e\\a"\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /b-bare-value\s+-\s+unknown\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /b-blank\s+-\s+unknown\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /b-control\s+-\s+unknown\s+\?\.\.\s+-\s+-\s+-/);
+    assert.match(text.out, /b-empty\s+-\s+unknown\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /b-padded\s+-\s+unknown\s+\?daydreaming\s+-\s+-\s+-/);
+    assert.match(text.out, /b-padded-known\s+-\s+unknown\s+\?converged\s+-\s+-\s+-/);
+    assert.equal(
+      text.out.includes(String.fromCharCode(27)),
+      false,
+      `no escape byte may reach the terminal: ${JSON.stringify(text.out)}`,
+    );
+
+    const json = router(dir, ['plans', '--json']);
+    assert.equal(json.code, 0, json.out);
+    const rows = (JSON.parse(json.out) as { plans: { id: string; stage: string | null }[] }).plans;
+    assert.deepEqual(Object.fromEntries(rows.map((r) => [r.id, r.stage])), {
+      'b-bare-value': null,
+      'b-blank': null,
+      'b-control': '?..',
+      'b-empty': null,
+      'b-padded': '?daydreaming',
+      'b-padded-known': '?converged',
+    });
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 // Precedence, in both directions.
 test('a later document outranks the brainstorm, and a broken plan does not fall back to it', () => {
   const dir = fx.initRepo();

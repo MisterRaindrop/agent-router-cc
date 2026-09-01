@@ -637,7 +637,18 @@ function unrecognizedStage(frontmatter: Record<string, unknown> | null, allowed:
   const status = frontmatter?.status;
   if (status === undefined || status === null || typeof status === 'object') return null;
   if (documentStage(frontmatter, allowed) !== null) return null;
-  return `?${printableStatus(String(status))}`;
+  // Whether anything was declared is decided on the RAW value, before sanitizing: the `.` that
+  // printableStatus writes is this renderer's own invention, so counting it as content would turn
+  // `status: "\t"` into `?.` -- a mark over a character the file never held. Trimming the raw value
+  // asks the only question that matters, did the author write anything but whitespace, and an empty
+  // or blank value answers no: `?` with nothing after it marks nothing, and tells the reader less
+  // than `-`. Control characters are not whitespace and do answer yes -- `status: "\e\a"` renders
+  // `?..`, deliberately: something IS in that field, and `-` would hide a corrupted document, the
+  // blind spot this column exists to remove. Trimming also keeps the file's own leading and
+  // trailing spaces from ragging the column; recognition stays exact, so a padded copy of a
+  // recognized word is still marked rather than quietly accepted as that word.
+  const declared = String(status).trim();
+  return declared === '' ? null : `?${printableStatus(declared)}`;
 }
 
 function highestCritiqueRound(entries: string[]): number | null {
