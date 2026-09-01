@@ -168,6 +168,20 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
     if (argv.length === 0) continue;
     const r = runCommand(argv, { cwd: req.workDir, env: gateEnv, timeoutMs: limitMs });
     const label = (req.gate?.reset ?? []).length > 1 ? `reset[${i}]` : 'reset';
+    // Checked before rc, before the timeout, before anything: whatever the command reported, a
+    // process group that outlived SIGKILL is still able to write this checkout. Every later check
+    // -- and every later command -- would be describing a tree something else is editing.
+    if (r.groupSurvived) {
+      checks.push(
+        fail(label, `${argv.join(' ')} left a process group that survived SIGKILL`),
+      );
+      return {
+        result: 'FAILED',
+        checks,
+        changed_lines: verdict.changedLines,
+        group_survived: true,
+      };
+    }
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: 'FAILED', checks, changed_lines: verdict.changedLines };
@@ -195,6 +209,20 @@ export function verifyTask(req: TaskVerifyRequest): VerifierReport {
       timeoutMs: limitMs,
     });
     const label = commands.length > 1 ? `${prefix}[${i}]` : prefix;
+    // Checked before rc, before the timeout, before anything: whatever the command reported, a
+    // process group that outlived SIGKILL is still able to write this checkout. Every later check
+    // -- and every later command -- would be describing a tree something else is editing.
+    if (r.groupSurvived) {
+      checks.push(
+        fail(label, `${argv.join(' ')} left a process group that survived SIGKILL`),
+      );
+      return {
+        result: 'FAILED',
+        checks,
+        changed_lines: verdict.changedLines,
+        group_survived: true,
+      };
+    }
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: 'FAILED', checks, changed_lines: verdict.changedLines };

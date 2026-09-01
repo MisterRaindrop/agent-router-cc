@@ -9587,7 +9587,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.1" : "0.0.0-dev";
+var VERSION = true ? "0.12.2" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -10413,6 +10413,24 @@ function processGroupIsGone(pgid) {
     return err2.code === "ESRCH";
   }
 }
+function sleepSync(ms) {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function drainGroupSync(pgid, graceMs, onPoll = () => {
+}, stepMs = 50) {
+  if (!Number.isInteger(pgid) || pgid <= 1) return { survived: false };
+  if (processGroupIsGone(pgid)) return { survived: false };
+  for (const signal of ["SIGTERM", "SIGKILL"]) {
+    killProcessGroup(pgid, signal);
+    const deadline2 = Date.now() + graceMs;
+    while (Date.now() < deadline2) {
+      if (processGroupIsGone(pgid)) return { signal, survived: false };
+      sleepSync(stepMs);
+      onPoll();
+    }
+  }
+  return { survived: true };
+}
 
 // src/io/lock.ts
 import {
@@ -10501,24 +10519,13 @@ function pidIsGone(pid) {
 }
 function reapExecutorGroup(pgid, graceMs, onPoll = () => {
 }) {
-  if (processGroupIsGone(pgid)) return void 0;
-  killProcessGroup(pgid, "SIGTERM");
-  const termDeadline = Date.now() + graceMs;
-  while (Date.now() < termDeadline) {
-    if (processGroupIsGone(pgid)) return { pgid, signal: "SIGTERM" };
-    sleepSync(50);
-    onPoll();
+  const outcome = drainGroupSync(pgid, graceMs, onPoll);
+  if (outcome.survived) {
+    throw new Error(
+      `cannot reclaim lock: the previous holder's executor group ${pgid} survived SIGKILL. Proceeding would put two executors in one checkout; kill it manually and retry.`
+    );
   }
-  killProcessGroup(pgid, "SIGKILL");
-  const killDeadline = Date.now() + graceMs;
-  while (Date.now() < killDeadline) {
-    if (processGroupIsGone(pgid)) return { pgid, signal: "SIGKILL" };
-    sleepSync(50);
-    onPoll();
-  }
-  throw new Error(
-    `cannot reclaim lock: the previous holder's executor group ${pgid} survived SIGKILL. Proceeding would put two executors in one checkout; kill it manually and retry.`
-  );
+  return outcome.signal === void 0 ? void 0 : { pgid, signal: outcome.signal };
 }
 function readSnapshot(path) {
   let fd;
@@ -10688,9 +10695,6 @@ function writeStored(fd, value) {
   }
   ftruncateSync(fd, data.length);
   fsyncSync2(fd);
-}
-function sleepSync(ms) {
-  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function assertOption(name, value, allowZero) {
   if (!Number.isFinite(value) || (allowZero ? value < 0 : value <= 0)) {
@@ -12929,9 +12933,18 @@ function dirOf(path) {
 
 // src/io/proc.ts
 import { spawnSync } from "node:child_process";
+var DEFAULT_REAP_GRACE_MS2 = 5e3;
+var DETACHED = { detached: true };
 function runCommand(argv, opts) {
   if (argv.length === 0) {
-    return { rc: null, stdout: "", stderr: "", timedOut: false, spawnError: "empty argv" };
+    return {
+      rc: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      spawnError: "empty argv",
+      groupSurvived: false
+    };
   }
   const [cmd, ...args] = argv;
   const r = spawnSync(cmd, args, {
@@ -12941,16 +12954,19 @@ function runCommand(argv, opts) {
     encoding: "utf8",
     timeout: opts.timeoutMs,
     maxBuffer: opts.maxBufferBytes ?? 64 * 1024 * 1024,
-    killSignal: "SIGKILL"
+    killSignal: "SIGKILL",
+    ...DETACHED
   });
   const timedOut = r.error !== void 0 && r.error.code === "ETIMEDOUT";
   const spawnError = r.error !== void 0 && !timedOut ? r.error.message ?? String(r.error) : null;
+  const drained = typeof r.pid === "number" ? drainGroupSync(r.pid, opts.reapGraceMs ?? DEFAULT_REAP_GRACE_MS2) : { survived: false };
   return {
     rc: r.status,
     stdout: r.stdout ?? "",
     stderr: r.stderr ?? "",
     timedOut,
-    spawnError
+    spawnError,
+    groupSurvived: drained.survived
   };
 }
 
@@ -13036,6 +13052,17 @@ function verifyTask(req) {
     if (argv.length === 0) continue;
     const r = runCommand(argv, { cwd: req.workDir, env: gateEnv, timeoutMs: limitMs });
     const label = (req.gate?.reset ?? []).length > 1 ? `reset[${i}]` : "reset";
+    if (r.groupSurvived) {
+      checks.push(
+        fail(label, `${argv.join(" ")} left a process group that survived SIGKILL`)
+      );
+      return {
+        result: "FAILED",
+        checks,
+        changed_lines: verdict.changedLines,
+        group_survived: true
+      };
+    }
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: "FAILED", checks, changed_lines: verdict.changedLines };
@@ -13061,6 +13088,17 @@ function verifyTask(req) {
       timeoutMs: limitMs
     });
     const label = commands.length > 1 ? `${prefix}[${i}]` : prefix;
+    if (r.groupSurvived) {
+      checks.push(
+        fail(label, `${argv.join(" ")} left a process group that survived SIGKILL`)
+      );
+      return {
+        result: "FAILED",
+        checks,
+        changed_lines: verdict.changedLines,
+        group_survived: true
+      };
+    }
     if (r.spawnError !== null) {
       checks.push(fail(label, `spawn error: ${r.spawnError}`));
       return { result: "FAILED", checks, changed_lines: verdict.changedLines };
@@ -13454,7 +13492,7 @@ async function withCheckoutLock(lock, body) {
       },
       stillOwned: () => ownsLock(lock.path, lock.ownerToken)
     });
-    groupSurvived = result2.executor_group_survived === true;
+    groupSurvived = result2.executor_group_survived === true || result2.verifier?.group_survived === true;
     return result2;
   } finally {
     if (execPgid !== null) killProcessGroup(execPgid, "SIGKILL");

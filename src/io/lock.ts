@@ -1,7 +1,7 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-import { killProcessGroup, processGroupIsGone } from './signals.ts';
+import { drainGroupSync, processGroupIsGone, sleepSync } from './signals.ts';
 import {
   closeSync,
   fstatSync,
@@ -205,25 +205,17 @@ function reapExecutorGroup(
   graceMs: number,
   onPoll: () => void = () => {},
 ): TakeoverInfo['reaped'] | undefined {
-  if (processGroupIsGone(pgid)) return undefined;
-  killProcessGroup(pgid, 'SIGTERM');
-  const termDeadline = Date.now() + graceMs;
-  while (Date.now() < termDeadline) {
-    if (processGroupIsGone(pgid)) return { pgid, signal: 'SIGTERM' };
-    sleepSync(50);
-    onPoll(); // renew the reclaimer lease: this loop is the slow part, not a dead process
+  // `onPoll` renews the reclaimer lease on every tick: this loop is the slow part of taking the
+  // lock over, and a reclaimer that went quiet while draining would be declared dead by the next
+  // one. drainGroupSync is the shared protocol -- io/proc.ts drains verify commands with it.
+  const outcome = drainGroupSync(pgid, graceMs, onPoll);
+  if (outcome.survived) {
+    throw new Error(
+      `cannot reclaim lock: the previous holder's executor group ${pgid} survived SIGKILL. ` +
+        `Proceeding would put two executors in one checkout; kill it manually and retry.`,
+    );
   }
-  killProcessGroup(pgid, 'SIGKILL');
-  const killDeadline = Date.now() + graceMs;
-  while (Date.now() < killDeadline) {
-    if (processGroupIsGone(pgid)) return { pgid, signal: 'SIGKILL' };
-    sleepSync(50);
-    onPoll();
-  }
-  throw new Error(
-    `cannot reclaim lock: the previous holder's executor group ${pgid} survived SIGKILL. ` +
-      `Proceeding would put two executors in one checkout; kill it manually and retry.`,
-  );
+  return outcome.signal === undefined ? undefined : { pgid, signal: outcome.signal };
 }
 
 /** The lock file's exact bytes together with the identity of the inode they came from. */
@@ -505,10 +497,6 @@ function writeStored(fd: number, value: StoredLock): void {
   }
   ftruncateSync(fd, data.length);
   fsyncSync(fd);
-}
-
-function sleepSync(ms: number): void {
-  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function assertOption(name: string, value: number, allowZero: boolean): void {
