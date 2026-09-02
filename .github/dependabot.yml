@@ -10,7 +10,22 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies"]
-    # Dev-only deps (the shipped bundle is dependency-free); group the noise.
     groups:
+      # These two are coupled by the grammar ABI and must move together or not at all: 0.26 of the
+      # runtime rejects the grammars `tree-sitter-wasms@^0.1.13` ships, and `Language.load` throws
+      # an Error with an EMPTY message. One of them alone is a broken symbol index.
+      tree-sitter:
+        patterns: ["web-tree-sitter", "tree-sitter-wasms"]
+      # The build's own tools, and these really are dev-only -- nothing here reaches a user.
       dev-dependencies:
+        dependency-type: "development"
         patterns: ["*"]
+    # Anything else -- the remaining runtime dependencies -- gets its OWN pull request, which is
+    # what dependabot does for a dependency matching no group.
+    #
+    # This whole block used to be one group named `dev-dependencies` with `patterns: ["*"]`, on the
+    # stated reasoning that "the shipped bundle is dependency-free". That reasoning is wrong:
+    # `web-tree-sitter` and `tree-sitter-wasms` are vendored into `dist/vendor/` and ship, so a bump
+    # arriving under a dev-dependency label changes the code users run. Measured twice, #65 and #86:
+    # a `web-tree-sitter` bump rode in on a PR titled as dev noise and took nine symbol-index tests
+    # with it, and the second time it did so with `js-yaml` for company.

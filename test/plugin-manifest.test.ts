@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { load } from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -81,6 +82,39 @@ test('hooks.json wires the PreToolUse guard and the guard script exists', () => 
 //
 // Asserted here rather than left to review, because a command file is the whole implementation
 // of a command: if `brainstorm.md` is missing, the stage does not exist, and nothing else fails.
+
+// `web-tree-sitter` and `tree-sitter-wasms` are vendored into `dist/vendor/` and therefore SHIP.
+// Grouping them under a name that says `dev-dependencies` is how a bump that breaks the symbol
+// index arrived twice looking like build noise (#65, #86, nine failing tests each time). This
+// asserts the config, not behaviour -- it is what is available, and the alternative is noticing
+// the next time by reading a red CI run.
+test('dependabot does not file runtime dependency bumps as dev noise', () => {
+  const config = load(
+    readFileSync(fileURLToPath(new URL('../.github/dependabot.yml', import.meta.url)), 'utf8'),
+  ) as { updates: { 'package-ecosystem': string; groups?: Record<string, Record<string, unknown>> }[] };
+  const npm = config.updates.find((u) => u['package-ecosystem'] === 'npm');
+  assert.ok(npm, 'there is no npm update block to check');
+  const groups = npm.groups ?? {};
+
+  // Whatever the dev group is called, it may not sweep up production dependencies.
+  for (const [name, group] of Object.entries(groups)) {
+    if (!/dev/.test(name)) continue;
+    assert.equal(
+      group['dependency-type'],
+      'development',
+      `group "${name}" is named for dev dependencies but does not restrict itself to them`,
+    );
+  }
+
+  // The two tree-sitter packages are coupled by the grammar ABI: proposed apart, each is a broken
+  // symbol index, so they belong in one group together and in no dev group.
+  const pair = Object.values(groups).find((g) => {
+    const patterns = (g['patterns'] ?? []) as string[];
+    return patterns.includes('web-tree-sitter') && patterns.includes('tree-sitter-wasms');
+  });
+  assert.ok(pair, 'web-tree-sitter and tree-sitter-wasms must be grouped together, not proposed apart');
+  assert.notEqual(pair['dependency-type'], 'development', 'the tree-sitter pair is not dev-only: it ships in dist/vendor/');
+});
 
 const COMMANDS = new URL('../commands/', import.meta.url);
 const commandFiles = (): string[] => readdirSync(COMMANDS).filter((f) => f.endsWith('.md'));
