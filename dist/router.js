@@ -9587,7 +9587,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.5" : "0.0.0-dev";
+var VERSION = true ? "0.12.6" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -15711,16 +15711,20 @@ var plans = (ctx) => {
     let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
     let designRevision = null;
     let designFrontmatter = null;
+    let hasDesign = true;
     try {
       designFrontmatter = documentFrontmatter(readFileSync14(join13(paths.planDir(id), "DESIGN.md"), "utf8"));
       designRevision = scalarText(designFrontmatter?.revision);
-    } catch {
+    } catch (error) {
+      if (error.code === "ENOENT") hasDesign = false;
     }
-    if (!hasPlan) {
-      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, "BRAINSTORM.md");
-      stage = documentStage(designFrontmatter, DESIGN_STATUSES) ?? documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ?? unrecognizedStage(designFrontmatter, DESIGN_STATUSES) ?? unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
-    } else {
+    if (hasPlan) {
       stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
+    } else if (hasDesign) {
+      stage = documentStage(designFrontmatter, DESIGN_STATUSES) ?? unrecognizedStage(designFrontmatter, DESIGN_STATUSES);
+    } else {
+      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, "BRAINSTORM.md");
+      stage = documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ?? unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
     }
     let critiqueRound = null;
     try {

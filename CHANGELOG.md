@@ -8,8 +8,25 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-09-02
+
 ### Fixed
 
+- **A typo in a `DESIGN.md` was hidden by the brainstorm below it.** `router plans` picked the
+  furthest document whose status it *recognized*, so a design declaring `desgin_draft` fell through
+  to a `converged` BRAINSTORM — the listing reported a finished earlier stage and the error in the
+  current one was invisible. That is the blind spot the unrecognized-status mark was added to
+  remove, reproduced one level up, and it was unchanged from before that mark existed.
+
+  Ownership now follows which document **exists**: work plan, else design, else brainstorm, and the
+  search stops there. `hasPlan` already worked this way and its comment already said why — a plan on
+  disk means the earlier stages are done, so reporting "brainstorming" over a broken plan reads as
+  regress rather than as damage. The design level simply never got the same treatment.
+
+  A design that exists but cannot be parsed therefore reports `-` rather than borrowing the
+  brainstorm's status. **Known limit, recorded at the code site:** `-` there is still
+  indistinguishable from "no document", which is the same class of conflation one step further, and
+  closing it means inventing a value for "present but unreadable".
 - **A lock test failed CI on a loaded runner while asserting nothing about the code.** It bounded the
   window in which the lock file may be absent during a reap at a hardcoded 100ms; a 4-core runner
   reported 162ms and went red. Measured five times on an idle machine, that window is **0ms** — the
