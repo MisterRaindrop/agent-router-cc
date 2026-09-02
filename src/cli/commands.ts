@@ -724,33 +724,44 @@ const plans: Handler = (ctx) => {
     // bumped revision at every approval. Two documents, two revisions, two columns.
     let designRevision: string | null = null;
     let designFrontmatter: Record<string, unknown> | null = null;
+    // Existence is tracked separately from readability, exactly as `hasPlan` is: a DESIGN.md that
+    // is present but unparseable is damage, and a DESIGN.md that is absent is a stage not started.
+    // Both used to arrive here as `null` and were therefore indistinguishable.
+    let hasDesign = true;
     try {
       designFrontmatter = documentFrontmatter(readFileSync(join(paths.planDir(id), 'DESIGN.md'), 'utf8'));
       designRevision = scalarText(designFrontmatter?.revision);
-    } catch {
-      /* missing or unreadable DESIGN.md -- no design revision to report */
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') hasDesign = false;
+      /* present but unreadable: it still owns the stage, which therefore stays unknown */
     }
-    // Furthest recognized document wins: work plan, else design, else brainstorm. The brainstorm
-    // level was missing, so a converged brainstorm -- a finished stage with its direction and
-    // rejected alternatives on disk -- reported no stage at all and looked like an empty
-    // directory. Same class of blind spot as the design revision being unreadable here.
+    // The document that EXISTS owns the stage -- work plan, else design, else brainstorm -- and the
+    // search stops there. It is not "the furthest document whose status this build recognizes",
+    // which is what it used to be, and the difference is the whole point of this column: a DESIGN.md
+    // declaring `desgin_draft` fell through to a `converged` BRAINSTORM below it, so the listing
+    // reported a finished earlier stage and the typo in the design stayed completely invisible --
+    // the exact blind spot the mark was added to remove, reproduced one level up.
     //
-    // An existing but unparseable work plan still owns the stage (it stays unknown) rather than
-    // falling through: a plan on disk means the earlier stages are done, and reporting
-    // "brainstorming" over a broken plan would read as regress rather than as damage.
+    // `hasPlan` already worked this way, and its comment already said why: a plan on disk means the
+    // earlier stages are done, so reporting "brainstorming" over a broken plan reads as regress
+    // rather than as damage. The design level simply never got the same treatment.
     //
-    // A status nothing recognizes is then reported under its own mark, but only once every level
-    // has been searched for a recognized one: marking must not reorder the documents, so a typo in
-    // the design does not hide a converged brainstorm below it.
-    if (!hasPlan) {
-      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, 'BRAINSTORM.md');
+    // KNOWN LIMIT, one step further and deliberately not taken here: a document that exists but
+    // cannot be parsed reports `-`, which is also what "no document" reports. That is the same
+    // class of conflation, and closing it means inventing a value for "present but unreadable" --
+    // a wider decision than restoring ownership. `-` is still an improvement on the old answer,
+    // which actively claimed a stage that was not the current one.
+    if (hasPlan) {
+      stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
+    } else if (hasDesign) {
       stage =
         documentStage(designFrontmatter, DESIGN_STATUSES) ??
-        documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ??
-        unrecognizedStage(designFrontmatter, DESIGN_STATUSES) ??
-        unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
+        unrecognizedStage(designFrontmatter, DESIGN_STATUSES);
     } else {
-      stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
+      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, 'BRAINSTORM.md');
+      stage =
+        documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ??
+        unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
     }
     let critiqueRound: number | null = null;
     try {

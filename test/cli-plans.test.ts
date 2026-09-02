@@ -487,20 +487,55 @@ test('a later document outranks the brainstorm, and a broken plan does not fall 
   }
 });
 
-// Marking an unrecognized status must not reorder the documents: a recognized status still wins
-// wherever it is found, and the mark only fills the gap where every level came up unrecognized.
-test('an unrecognized status does not change which document owns the stage', () => {
+// Which document owns the stage is decided by which one EXISTS, not by which one happens to have a
+// status this build recognizes. The difference was a blind spot one level up from the one the mark
+// was added for: a DESIGN.md declaring `desgin_draft` fell through to a `converged` BRAINSTORM, so
+// the listing reported a finished earlier stage and the typo in the design was invisible.
+test('the document that exists owns the stage, even when its status is not recognized', () => {
   const dir = fx.initRepo();
   try {
-    // A recognized design outranks a typo in the brainstorm below it.
+    // The case that used to lie: a typo in the design, a recognized status below it.
+    writeBrainstormMd(dir, 'a-design-typo', '---\nstatus: converged\n---\nbody\n');
+    writeDesignMd(dir, 'a-design-typo', '---\nrevision: 3\nstatus: desgin_draft\n---\nbody\n');
+    // Same shape one level up, and this one already behaved: a typo in the plan.
+    writeBrainstormMd(dir, 'b-plan-typo', '---\nstatus: converged\n---\nbody\n');
+    writeDesignMd(dir, 'b-plan-typo', '---\nrevision: 2\nstatus: design_approved\n---\nbody\n');
+    writePlanMd(dir, 'b-plan-typo', '---\nrevision: 7\nstatus: pl_typo\n---\nbody\n');
+    // A design that exists but cannot be parsed owns the stage too, so it reports nothing rather
+    // than borrowing the brainstorm's -- `-` is the honest answer, and it is what a broken PLAN.md
+    // has always reported.
+    writeBrainstormMd(dir, 'c-design-broken', '---\nstatus: converged\n---\nbody\n');
+    writeDesignMd(dir, 'c-design-broken', 'no frontmatter at all\n');
+    // And with no design at all, the brainstorm still owns it -- ownership moved, it did not vanish.
+    writeBrainstormMd(dir, 'd-brainstorm-only', '---\nstatus: converged\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /a-design-typo\s+3\s+unknown\s+\?desgin_draft\s/);
+    assert.match(text.out, /b-plan-typo\s+2\s+7\s+\?pl_typo\s/);
+    assert.match(text.out, /c-design-broken\s+-\s+unknown\s+-\s/);
+    assert.match(text.out, /d-brainstorm-only\s+-\s+unknown\s+converged\s/);
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
+// The mark reports what the owning document declares; it does not move ownership. Ownership is the
+// test above -- whichever document exists, highest first. So a typo is reported at the level that
+// holds it, and a recognized status is reported unchanged at the level that holds it.
+test('the mark reports the owning document and does not move ownership', () => {
+  const dir = fx.initRepo();
+  try {
+    // A design that exists outranks the brainstorm below it, typo or not -- here it is recognized.
     writeBrainstormMd(dir, 'typo-brainstorm', '---\nstatus: daydreaming\n---\nbody\n');
     writeDesignMd(dir, 'typo-brainstorm', '---\nrevision: 1\nstatus: design_approved\n---\nbody\n');
     // A typo in the work plan still owns the stage over a recognized design: a plan on disk means
-    // the earlier stages are done, so reporting the design's status would read as regress.
+    // the earlier stages are done, so reporting the design's status would read as regress. This
+    // level always behaved; the design level is what this release brought into line with it.
     writeDesignMd(dir, 'typo-plan', '---\nrevision: 2\nstatus: design_approved\n---\nbody\n');
     writePlanMd(dir, 'typo-plan', '---\nrevision: 5\nstatus: plan_aproved\n---\nbody\n');
-    // With no plan, a typo in the design does not hide a recognized brainstorm: a recognized
-    // status is reported exactly as before, at whatever level it is found.
+    // A typo in the design is reported AT the design, not hidden behind the brainstorm below it.
+    // The design exists, so the design owns the stage -- see the ownership test below.
     writeBrainstormMd(dir, 'typo-design', '---\nstatus: converged\n---\nbody\n');
     writeDesignMd(dir, 'typo-design', '---\nrevision: 3\nstatus: desgin_draft\n---\nbody\n');
 
@@ -508,7 +543,7 @@ test('an unrecognized status does not change which document owns the stage', () 
     assert.equal(text.code, 0, text.out);
     assert.match(text.out, /typo-brainstorm\s+1\s+unknown\s+design_approved\s/);
     assert.match(text.out, /typo-plan\s+2\s+5\s+\?plan_aproved\s/);
-    assert.match(text.out, /typo-design\s+3\s+unknown\s+converged\s/);
+    assert.match(text.out, /typo-design\s+3\s+unknown\s+\?desgin_draft\s/);
   } finally {
     fx.cleanup(dir);
   }
