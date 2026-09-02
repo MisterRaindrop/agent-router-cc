@@ -8,6 +8,20 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dependabot filed runtime dependency bumps under a group named `dev-dependencies`.** The group
+  was `patterns: ["*"]` — everything — on the stated reasoning that "the shipped bundle is
+  dependency-free". That reasoning is wrong: `web-tree-sitter` and `tree-sitter-wasms` are vendored
+  into `dist/vendor/` and ship, so a bump arriving under a dev label changes the code users run.
+  Measured twice, in #65 and #86: a `web-tree-sitter` bump rode in on a PR titled as build noise and
+  took nine symbol-index tests with it, the second time bringing `js-yaml` along.
+
+  The dev group is now restricted to `dependency-type: development`, the two tree-sitter packages are
+  grouped as the pair they are — coupled by the grammar ABI, and each broken alone — and every other
+  runtime dependency gets its own pull request. `test/plugin-manifest.test.ts` asserts the shape, so
+  reverting it goes red rather than being noticed by the next failing CI run.
+
 ## [0.12.6] - 2026-09-02
 
 ### Fixed
