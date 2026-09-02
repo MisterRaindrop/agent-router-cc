@@ -8,6 +8,17 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A lock test failed CI on a loaded runner while asserting nothing about the code.** It bounded the
+  window in which the lock file may be absent during a reap at a hardcoded 100ms; a 4-core runner
+  reported 162ms and went red. Measured five times on an idle machine, that window is **0ms** — the
+  20ms sampler never once catches it, because the gap is two syscalls. The 162ms was the reclaiming
+  process being descheduled between them, which is not a property of the lock. The bound is now one
+  reap grace, derived from the same constant the test drives the reap with, and it was characterized
+  from both sides: a 300ms handover still passes, a 600ms one fails, and the order this test exists
+  to catch leaves the file absent for the whole ~800ms reap.
+
 ## [0.12.5] - 2026-09-01
 
 An independent review of 0.12.4's change found two defects in it. Both are fixed here.

@@ -300,6 +300,11 @@ test('recordExecPgid refuses once the lock has been taken over', () => {
 // executor group -- and the comment there claimed the opposite of what the code did. Reaping can
 // wait out a SIGTERM grace and escalate to SIGKILL, so for that whole span the lock path did not
 // exist and a third process could take it while the orphan was still writing the checkout.
+// One grace period of the forced reap. The test drives SIGTERM-grace then SIGKILL-grace, so the
+// whole reap is twice this, and the assertion at the end is expressed in the same unit -- a bound
+// and the thing it bounds cannot drift apart if they share a constant.
+const REAP_GRACE_MS = 400;
+
 test('the lock file stays in place until the orphan group is dead (finding 1)', async () => {
   const fixture = freshLock();
   try {
@@ -369,7 +374,7 @@ test('the lock file stays in place until the orphan group is dead (finding 1)', 
       waitMs: 0,
       staleMs: 50,
       now: () => 100,
-      reapGraceMs: 400, // forces SIGTERM grace -> SIGKILL, i.e. a real wait
+      reapGraceMs: REAP_GRACE_MS, // forces SIGTERM grace -> SIGKILL, i.e. a real wait
     });
     assert.ok(!('blocked' in second));
     // The orphan is dead by the time we hold the lock, and it took a SIGKILL to do it.
@@ -382,9 +387,31 @@ test('the lock file stays in place until the orphan group is dead (finding 1)', 
     await watched;
     const { seen, longest } = JSON.parse(out.trim()) as { seen: number; longest: number };
     assert.ok(seen > 10, `watcher barely sampled (seen=${seen})`);
-    // The whole finding in one number. Under the old unlink-then-reap order the file was absent
-    // for the entire ~800ms reap; the handover gap this order still has is a single tick at most.
-    assert.ok(longest < 100, `lock file was absent for ${longest}ms during the reap (${seen} samples)`);
+    // The whole finding in one number, and the bound is derived from the reap rather than picked.
+    //
+    // Under the old unlink-then-reap order the file was absent for the ENTIRE reap: two grace
+    // periods, so ~2 x REAP_GRACE_MS. This order unlinks after the reap, so the only gap left is
+    // the handover between that unlink and the replacement lock -- two syscalls.
+    //
+    // The measured gap is therefore scheduler noise, not the code holding anything: five runs on an
+    // idle 18-core machine reported longest=0ms, i.e. the 20ms sampler never once caught it. The
+    // same test on a 4-core CI runner reported 162ms and failed a hardcoded `< 100`. That number
+    // said nothing about the code -- it said the reclaiming process was descheduled between two
+    // syscalls -- and a threshold that a busy machine can cross on its own stops being evidence.
+    //
+    // One reap grace sits between the noise and the defect, and both edges were measured by widening
+    // the handover on purpose: a 300ms gap still passes, a 600ms gap fails here and reports
+    // `absent for 584ms during a 800ms reap`. Observed noise tops out at 162ms, the old order is
+    // ~800ms, and the bound is 400ms.
+    //
+    // The first attempt at that RED reordered the reclaim to unlink before the reap -- and the test
+    // went red on an EARLIER assertion, because the reorder also changed the takeover result. Red
+    // for the wrong reason proves nothing about this line, which is why the probe above widens only
+    // the handover and leaves control flow alone.
+    assert.ok(
+      longest < REAP_GRACE_MS,
+      `lock file was absent for ${longest}ms during a ${2 * REAP_GRACE_MS}ms reap (${seen} samples)`,
+    );
     second.release();
     rmSync(stubDir, { recursive: true, force: true });
   } finally {
