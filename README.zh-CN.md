@@ -74,8 +74,33 @@ Opus 亲自写代码时完全一样。路由档位的实测一次通过率:**89%
 /router:go
 ```
 
-之后更新:`/plugin marketplace update agent-router-cc`,在 `/plugin` 菜单的 **Installed**
-里更新 **router**(或 `claude plugin update router@agent-router-cc`),再 `/reload-plugins`。
+### 在另一台机器上,或者在脚本里
+
+同样两步,不用打开 Claude Code。仓库是公开的,不需要 SSH key,也不需要 `gh` 登录:
+
+```bash
+claude plugin marketplace add MisterRaindrop/agent-router-cc
+claude plugin install router@agent-router-cc -y      # 非 TTY(脚本里)时 -y 是必需的
+```
+
+重启 Claude Code 生效,然后确认装进去的是什么:
+
+```bash
+claude plugin list | grep -A3 router     # → 版本、scope、Status: ✔ enabled
+```
+
+### 更新
+
+```bash
+claude plugin marketplace update agent-router-cc     # 先刷 marketplace 缓存
+claude plugin update router@agent-router-cc
+```
+
+在 Claude Code 里的等价操作:`/plugin marketplace update agent-router-cc`,在 `/plugin` 菜单的
+**Installed** 里更新 **router**,再 `/reload-plugins`。
+
+命令文件(`commands/`、`skills/`、`hooks/`)只在启动时读一次,所以改到它们的版本必须重启;
+CLI bundle 不用 —— `dist/router.js` 每次调用都是新起进程。
 
 ## 📐 一次运行的形状
 

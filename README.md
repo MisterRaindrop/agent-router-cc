@@ -81,8 +81,35 @@ Then just talk to Opus, plan the change together, and:
 /router:go
 ```
 
-To update later: `/plugin marketplace update agent-router-cc`, update **router** from the
-`/plugin` menu (or `claude plugin update router@agent-router-cc`), then `/reload-plugins`.
+### On another machine, or from a script
+
+The same two steps without opening Claude Code. The repository is public, so no SSH key and no
+`gh` login are needed:
+
+```bash
+claude plugin marketplace add MisterRaindrop/agent-router-cc
+claude plugin install router@agent-router-cc -y      # -y is required when stdin/stdout is not a TTY
+```
+
+Restart Claude Code to apply, then check what landed:
+
+```bash
+claude plugin list | grep -A3 router     # → Version, Scope, Status: ✔ enabled
+```
+
+### Updating
+
+```bash
+claude plugin marketplace update agent-router-cc     # refresh the marketplace cache first
+claude plugin update router@agent-router-cc
+```
+
+Inside Claude Code the equivalent is `/plugin marketplace update agent-router-cc`, then update
+**router** from the `/plugin` menu, then `/reload-plugins`.
+
+Command files (`commands/`, `skills/`, `hooks/`) are read once at startup, so a version that
+changes one of them needs the restart. The CLI bundle does not: `dist/router.js` is spawned fresh
+on every call.
 
 ## 📐 The shape of a run
 
