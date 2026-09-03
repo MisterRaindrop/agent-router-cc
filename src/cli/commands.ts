@@ -610,15 +610,26 @@ function planRevision(frontmatter: Record<string, unknown> | null): string | nul
 }
 
 /** Frontmatter of one document in a plan directory, or null when absent or unreadable. */
-function planDocumentFrontmatter(
-  paths: RouterPaths,
-  planId: string,
-  name: string,
-): Record<string, unknown> | null {
+/**
+ * One document of a plan, with existence kept separate from readability.
+ *
+ * A single `null` used to answer both "there is no such file" and "the file is there and says
+ * nothing I can use", and the plans listing then reported them identically. Those are different
+ * facts about a plan: one is a stage not started, the other is damage.
+ */
+interface PlanDocument {
+  exists: boolean;
+  frontmatter: Record<string, unknown> | null;
+}
+
+function planDocument(paths: RouterPaths, planId: string, name: string): PlanDocument {
   try {
-    return documentFrontmatter(readFileSync(join(paths.planDir(planId), name), 'utf8'));
-  } catch {
-    return null;
+    const text = readFileSync(join(paths.planDir(planId), name), 'utf8');
+    return { exists: true, frontmatter: documentFrontmatter(text) };
+  } catch (error) {
+    // Present but unreadable -- a permission error, a directory in its place -- is damage, not
+    // absence, and only ENOENT means the stage was never started.
+    return { exists: (error as NodeJS.ErrnoException).code !== 'ENOENT', frontmatter: null };
   }
 }
 
@@ -656,6 +667,23 @@ function frontmatterCell(raw: string): string {
   const clean = printable(raw);
   return clean.length <= CELL_MAX ? clean : `${clean.slice(0, CELL_MAX - 3)}...`;
 }
+
+/**
+ * What the stage column reports for a document that is on disk and unusable.
+ *
+ * `-` cannot say this: it means "no document, or no status declared", and a plan whose DESIGN.md
+ * has broken frontmatter is neither.
+ *
+ * Three causes reach it, and they are one fact from the listing's side -- the document exists and
+ * cannot be read as a stage record: the file could not be opened at all, it has no frontmatter
+ * block, or the block is not valid YAML.
+ *
+ * `!` rather than the `?` an unrecognized status carries, because those are different facts: `?`
+ * reports what the field says, `!` reports that there was nothing to read. No status vocabulary
+ * contains either character, and a status literally spelled `unreadable` renders `?unreadable`, so
+ * the two never collide.
+ */
+const UNREADABLE_DOCUMENT = '!unreadable';
 
 /**
  * The stage to report when `documentStage` recognized nothing, or null when the document declared
@@ -746,22 +774,28 @@ const plans: Handler = (ctx) => {
     // earlier stages are done, so reporting "brainstorming" over a broken plan reads as regress
     // rather than as damage. The design level simply never got the same treatment.
     //
-    // KNOWN LIMIT, one step further and deliberately not taken here: a document that exists but
-    // cannot be parsed reports `-`, which is also what "no document" reports. That is the same
-    // class of conflation, and closing it means inventing a value for "present but unreadable" --
-    // a wider decision than restoring ownership. `-` is still an improvement on the old answer,
-    // which actively claimed a stage that was not the current one.
+    // The limit recorded here in 0.12.6 -- "present but unparseable reports `-`, the same as no
+    // document" -- is closed: that case reports `!unreadable`, see UNREADABLE_DOCUMENT.
+    //
+    // Within the owning document there are three answers, not two: a status it declares, `-` when it
+    // declares none, and `!unreadable` when the document is there and its frontmatter is not. That
+    // last one used to collapse into `-`, so "the design is damaged" and "there is no design" read
+    // the same -- the same conflation as the stage column itself, one level down.
+    const declared = (
+      frontmatter: Record<string, unknown> | null,
+      allowed: Set<string>,
+    ): string | null =>
+      frontmatter === null
+        ? UNREADABLE_DOCUMENT
+        : documentStage(frontmatter, allowed) ?? unrecognizedStage(frontmatter, allowed);
+
     if (hasPlan) {
-      stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
+      stage ??= declared(planFrontmatter, PLAN_STATUSES);
     } else if (hasDesign) {
-      stage =
-        documentStage(designFrontmatter, DESIGN_STATUSES) ??
-        unrecognizedStage(designFrontmatter, DESIGN_STATUSES);
+      stage = declared(designFrontmatter, DESIGN_STATUSES);
     } else {
-      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, 'BRAINSTORM.md');
-      stage =
-        documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ??
-        unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
+      const brainstorm = planDocument(paths, id, 'BRAINSTORM.md');
+      stage = brainstorm.exists ? declared(brainstorm.frontmatter, BRAINSTORM_STATUSES) : null;
     }
     let critiqueRound: number | null = null;
     try {

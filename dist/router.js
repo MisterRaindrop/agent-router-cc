@@ -9587,7 +9587,7 @@ function dump(input, options = {}) {
 }
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.6" : "0.0.0-dev";
+var VERSION = true ? "0.12.7" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -15659,11 +15659,12 @@ function scalarText(value) {
 function planRevision(frontmatter) {
   return scalarText(frontmatter?.revision) ?? scalarText(frontmatter?.plan_revision);
 }
-function planDocumentFrontmatter(paths, planId, name) {
+function planDocument(paths, planId, name) {
   try {
-    return documentFrontmatter(readFileSync14(join13(paths.planDir(planId), name), "utf8"));
-  } catch {
-    return null;
+    const text2 = readFileSync14(join13(paths.planDir(planId), name), "utf8");
+    return { exists: true, frontmatter: documentFrontmatter(text2) };
+  } catch (error) {
+    return { exists: error.code !== "ENOENT", frontmatter: null };
   }
 }
 function documentStage(frontmatter, allowed) {
@@ -15678,6 +15679,7 @@ function frontmatterCell(raw) {
   const clean = printable(raw);
   return clean.length <= CELL_MAX ? clean : `${clean.slice(0, CELL_MAX - 3)}...`;
 }
+var UNREADABLE_DOCUMENT = "!unreadable";
 function unrecognizedStage(frontmatter, allowed) {
   const status = frontmatter?.status;
   if (status === void 0 || status === null || typeof status === "object") return null;
@@ -15718,13 +15720,14 @@ var plans = (ctx) => {
     } catch (error) {
       if (error.code === "ENOENT") hasDesign = false;
     }
+    const declared = (frontmatter, allowed) => frontmatter === null ? UNREADABLE_DOCUMENT : documentStage(frontmatter, allowed) ?? unrecognizedStage(frontmatter, allowed);
     if (hasPlan) {
-      stage ??= unrecognizedStage(planFrontmatter, PLAN_STATUSES);
+      stage ??= declared(planFrontmatter, PLAN_STATUSES);
     } else if (hasDesign) {
-      stage = documentStage(designFrontmatter, DESIGN_STATUSES) ?? unrecognizedStage(designFrontmatter, DESIGN_STATUSES);
+      stage = declared(designFrontmatter, DESIGN_STATUSES);
     } else {
-      const brainstormFrontmatter = planDocumentFrontmatter(paths, id, "BRAINSTORM.md");
-      stage = documentStage(brainstormFrontmatter, BRAINSTORM_STATUSES) ?? unrecognizedStage(brainstormFrontmatter, BRAINSTORM_STATUSES);
+      const brainstorm = planDocument(paths, id, "BRAINSTORM.md");
+      stage = brainstorm.exists ? declared(brainstorm.frontmatter, BRAINSTORM_STATUSES) : null;
     }
     let critiqueRound = null;
     try {
