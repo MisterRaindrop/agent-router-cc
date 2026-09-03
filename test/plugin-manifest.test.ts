@@ -91,7 +91,13 @@ test('hooks.json wires the PreToolUse guard and the guard script exists', () => 
 test('dependabot does not file runtime dependency bumps as dev noise', () => {
   const config = load(
     readFileSync(fileURLToPath(new URL('../.github/dependabot.yml', import.meta.url)), 'utf8'),
-  ) as { updates: { 'package-ecosystem': string; groups?: Record<string, Record<string, unknown>> }[] };
+  ) as {
+    updates: {
+      'package-ecosystem': string;
+      groups?: Record<string, Record<string, unknown>>;
+      ignore?: Record<string, unknown>[];
+    }[];
+  };
   const npm = config.updates.find((u) => u['package-ecosystem'] === 'npm');
   assert.ok(npm, 'there is no npm update block to check');
   const groups = npm.groups ?? {};
@@ -108,6 +114,19 @@ test('dependabot does not file runtime dependency bumps as dev noise', () => {
 
   // The two tree-sitter packages are coupled by the grammar ABI: proposed apart, each is a broken
   // symbol index, so they belong in one group together and in no dev group.
+  // web-tree-sitter is held below 0.26 while tree-sitter-wasms has no ABI-compatible release. The
+  // hold has to be narrow: a blanket ignore would also stop 0.25.x patches, and it has to be
+  // removable, so it must not be expressed as a pinned version range that rots.
+  const ignores = (npm.ignore ?? []) as Record<string, unknown>[];
+  const held = ignores.find((i) => i['dependency-name'] === 'web-tree-sitter');
+  assert.ok(held, 'web-tree-sitter is not held: 0.26+ takes nine symbol-index tests down');
+  const types = (held['update-types'] ?? []) as string[];
+  assert.deepEqual(
+    [...types].sort(),
+    ['version-update:semver-major', 'version-update:semver-minor'],
+    'the hold must stop the minor/major step and nothing else -- 0.25.x patches still flow',
+  );
+
   const pair = Object.values(groups).find((g) => {
     const patterns = (g['patterns'] ?? []) as string[];
     return patterns.includes('web-tree-sitter') && patterns.includes('tree-sitter-wasms');

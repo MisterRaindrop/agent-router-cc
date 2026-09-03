@@ -8,6 +8,25 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`web-tree-sitter` is held below 0.26 until `tree-sitter-wasms` catches up.** 0.26 and later reject
+  the grammars `^0.1.13` ships — `Parser.init` succeeds, `Language.load` throws an `Error` with an
+  empty message, and nine symbol-index tests go down. Measured on 0.26.13, with 0.27.0 proposed next,
+  and it arrived weekly.
+
+  Grouping the two packages did not stop it, which is the part worth knowing: a dependabot group only
+  collects members that **have** an update, and `tree-sitter-wasms` has published nothing newer, so
+  the group arrived holding `web-tree-sitter` alone. The hold is narrow — patches within 0.25.x still
+  flow — and the comment says what removes it.
+
+- Recorded while closing that out, because two runtime bumps were closed on the wrong diagnosis: a
+  `js-yaml` bump failed CI on the **committed-bundle check**, not on any incompatibility. esbuild
+  inlines runtime dependencies into `dist/router.js`, which is committed, so **every** runtime bump
+  arrives red until somebody runs `npm run build` — 665 insertions and 503 deletions in the bundle
+  for a version that passed 512/512 the whole time. That is a different failure from an ABI break and
+  reading them as one thing cost a wrong prediction.
+
 ## [0.12.7] - 2026-09-03
 
 ### Fixed

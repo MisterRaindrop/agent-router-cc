@@ -10,6 +10,22 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies"]
+    ignore:
+      # web-tree-sitter 0.26 and later reject the grammars `tree-sitter-wasms@^0.1.13` ships:
+      # `Parser.init` succeeds, `Language.load` throws an Error with an EMPTY message, and nine
+      # symbol-index tests go down with it. Measured on 0.26.13, and 0.27.0 was proposed next.
+      #
+      # Grouping the two does not fix this, which is the thing worth knowing: a dependabot group only
+      # collects members that HAVE an update, and `tree-sitter-wasms` has published nothing newer --
+      # so the group arrives holding web-tree-sitter alone. There is no version pair that works yet.
+      #
+      # Patches within 0.25.x still flow; only the minor and major steps are held, and dependabot
+      # reads 0.25 -> 0.26 as minor because it treats every version as major.minor.patch.
+      #
+      # REMOVE THIS when `tree-sitter-wasms` publishes a release built for the newer ABI. That is the
+      # signal, and it arrives on its own as the tree-sitter group's pull request.
+      - dependency-name: "web-tree-sitter"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       # These two are coupled by the grammar ABI and must move together or not at all: 0.26 of the
       # runtime rejects the grammars `tree-sitter-wasms@^0.1.13` ships, and `Language.load` throws
