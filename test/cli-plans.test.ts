@@ -118,7 +118,7 @@ test('plans shows current and legacy revisions plus the furthest recognized docu
     assert.match(text.out, /plan-d\s+3\s+unknown\s+design_approved\s+-\s+-\s+-/);
     // plan-e has an unparsable PLAN.md over a design at revision 2: the design revision is
     // still reported, and the plan's is still `unknown` rather than borrowing the design's.
-    assert.match(text.out, /plan-e\s+2\s+unknown\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /plan-e\s+2\s+unknown\s+!unreadable\s+-\s+-\s+-/);
 
     const json = router(dir, ['plans', '--json']);
     assert.equal(json.code, 0, json.out);
@@ -128,7 +128,7 @@ test('plans shows current and legacy revisions plus the furthest recognized docu
       { id: 'plan-b', plan_revision: 'rev-9', design_revision: null, stage: 'executing', critique_round: 1, decisions: false, locked: true },
       { id: 'plan-c', plan_revision: null, design_revision: null, stage: '?unexpected', critique_round: null, decisions: false, locked: false },
       { id: 'plan-d', plan_revision: null, design_revision: '3', stage: 'design_approved', critique_round: null, decisions: false, locked: false },
-      { id: 'plan-e', plan_revision: null, design_revision: '2', stage: null, critique_round: null, decisions: false, locked: false },
+      { id: 'plan-e', plan_revision: null, design_revision: '2', stage: '!unreadable', critique_round: null, decisions: false, locked: false },
     ]);
   } finally {
     fx.cleanup(dir);
@@ -461,6 +461,49 @@ test('with every level unrecognized, the marked stage follows the same order as 
   }
 });
 
+// `-` used to answer two questions at once one level down as well: "there is no document" and
+// "the document is there and I cannot read it". The second is damage and the first is a stage not
+// started, and a listing that renders them alike hides the damage -- the same conflation this
+// column was fixed for, inside the owning document instead of across documents.
+test('a document that exists and cannot be read says so, rather than reporting nothing', () => {
+  const dir = fx.initRepo();
+  try {
+    // The three ways a document reaches the listing unusable, all one fact from here.
+    writePlanMd(dir, 'a-bad-yaml', '---\nrevision: [\n---\nbody\n');
+    writeDesignMd(dir, 'b-no-frontmatter', 'just prose, no frontmatter block\n');
+    writeBrainstormMd(dir, 'c-empty-file', '');
+    // Absence still reads as absence: an empty plan directory is not damage.
+    mkdirSync(planDir(dir, 'd-no-documents'), { recursive: true });
+    // A document that parses and simply declares no stage is also not damage.
+    writeDesignMd(dir, 'e-no-status', '---\nplan_id: e-no-status\nrevision: 3\n---\nbody\n');
+    // And a status literally spelled `unreadable` carries the OTHER marker, so the two never
+    // collide: `?` reports what the field says, `!` reports there was nothing to read.
+    writeBrainstormMd(dir, 'f-says-unreadable', '---\nstatus: unreadable\n---\nbody\n');
+
+    const text = router(dir, ['plans']);
+    assert.equal(text.code, 0, text.out);
+    assert.match(text.out, /a-bad-yaml\s+-\s+unknown\s+!unreadable\s/);
+    assert.match(text.out, /b-no-frontmatter\s+-\s+unknown\s+!unreadable\s/);
+    assert.match(text.out, /c-empty-file\s+-\s+unknown\s+!unreadable\s/);
+    assert.match(text.out, /d-no-documents\s+-\s+unknown\s+-\s/);
+    assert.match(text.out, /e-no-status\s+3\s+unknown\s+-\s/);
+    assert.match(text.out, /f-says-unreadable\s+-\s+unknown\s+\?unreadable\s/);
+
+    const json = router(dir, ['plans', '--json']);
+    const rows = (JSON.parse(json.out) as { plans: { id: string; stage: string | null }[] }).plans;
+    assert.deepEqual(Object.fromEntries(rows.map((r) => [r.id, r.stage])), {
+      'a-bad-yaml': '!unreadable',
+      'b-no-frontmatter': '!unreadable',
+      'c-empty-file': '!unreadable',
+      'd-no-documents': null,
+      'e-no-status': null,
+      'f-says-unreadable': '?unreadable',
+    });
+  } finally {
+    fx.cleanup(dir);
+  }
+});
+
 // Precedence, in both directions.
 test('a later document outranks the brainstorm, and a broken plan does not fall back to it', () => {
   const dir = fx.initRepo();
@@ -472,8 +515,9 @@ test('a later document outranks the brainstorm, and a broken plan does not fall 
     writeBrainstormMd(dir, 'has-plan', '---\nstatus: converged\n---\nbody\n');
     writeDesignMd(dir, 'has-plan', '---\nrevision: 1\nstatus: design_approved\n---\nbody\n');
     writePlanMd(dir, 'has-plan', '---\nrevision: 4\nstatus: executing\n---\nbody\n');
-    // An unparseable plan keeps the stage unknown: a plan on disk means the earlier stages are
-    // done, so reporting "converged" over a broken plan would read as regress, not as damage.
+    // An unparseable plan owns the stage and reports damage: a plan on disk means the earlier
+    // stages are done, so reporting "converged" over a broken plan would read as regress -- and
+    // `-` would read as "no plan here", which is also not what happened.
     writeBrainstormMd(dir, 'broken-plan', '---\nstatus: converged\n---\nbody\n');
     writePlanMd(dir, 'broken-plan', '---\nrevision: [\n---\nbody\n');
 
@@ -481,7 +525,7 @@ test('a later document outranks the brainstorm, and a broken plan does not fall 
     assert.equal(text.code, 0, text.out);
     assert.match(text.out, /has-design\s+2\s+unknown\s+design_approved/);
     assert.match(text.out, /has-plan\s+1\s+4\s+executing/);
-    assert.match(text.out, /broken-plan\s+-\s+unknown\s+-/);
+    assert.match(text.out, /broken-plan\s+-\s+unknown\s+!unreadable/);
   } finally {
     fx.cleanup(dir);
   }
@@ -501,9 +545,8 @@ test('the document that exists owns the stage, even when its status is not recog
     writeBrainstormMd(dir, 'b-plan-typo', '---\nstatus: converged\n---\nbody\n');
     writeDesignMd(dir, 'b-plan-typo', '---\nrevision: 2\nstatus: design_approved\n---\nbody\n');
     writePlanMd(dir, 'b-plan-typo', '---\nrevision: 7\nstatus: pl_typo\n---\nbody\n');
-    // A design that exists but cannot be parsed owns the stage too, so it reports nothing rather
-    // than borrowing the brainstorm's -- `-` is the honest answer, and it is what a broken PLAN.md
-    // has always reported.
+    // A design that exists but cannot be parsed owns the stage too, and says so: not the
+    // brainstorm's status, and not `-`, which would claim there is no design at all.
     writeBrainstormMd(dir, 'c-design-broken', '---\nstatus: converged\n---\nbody\n');
     writeDesignMd(dir, 'c-design-broken', 'no frontmatter at all\n');
     // And with no design at all, the brainstorm still owns it -- ownership moved, it did not vanish.
@@ -513,7 +556,7 @@ test('the document that exists owns the stage, even when its status is not recog
     assert.equal(text.code, 0, text.out);
     assert.match(text.out, /a-design-typo\s+3\s+unknown\s+\?desgin_draft\s/);
     assert.match(text.out, /b-plan-typo\s+2\s+7\s+\?pl_typo\s/);
-    assert.match(text.out, /c-design-broken\s+-\s+unknown\s+-\s/);
+    assert.match(text.out, /c-design-broken\s+-\s+unknown\s+!unreadable\s/);
     assert.match(text.out, /d-brainstorm-only\s+-\s+unknown\s+converged\s/);
   } finally {
     fx.cleanup(dir);

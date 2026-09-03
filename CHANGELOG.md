@@ -8,7 +8,22 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-09-03
+
 ### Fixed
+
+- **A plan document that exists and cannot be read reported nothing, exactly like a plan directory
+  with no document in it.** 0.12.6 recorded that as a known limit; this closes it. The stage column
+  now has three answers for the owning document instead of two: the status it declares, `-` when it
+  declares none, and **`!unreadable`** when the document is on disk and is not a usable stage record
+  — the file would not open, it has no frontmatter block, or the block is not valid YAML.
+
+  `!` rather than the `?` an unrecognized status carries, because those are different facts: `?`
+  reports what the field says, `!` reports that there was nothing to read. A status literally spelled
+  `unreadable` still renders `?unreadable`, so the two never collide.
+
+  Absence is untouched: an empty plan directory, and a document that parses and simply declares no
+  stage, both still report `-`.
 
 - **Dependabot filed runtime dependency bumps under a group named `dev-dependencies`.** The group
   was `patterns: ["*"]` — everything — on the stated reasoning that "the shipped bundle is
