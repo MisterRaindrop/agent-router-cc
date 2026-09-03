@@ -207,14 +207,14 @@ Declare it in `.router/gate.yaml` and the dispatch flow runs it:
 |---|---|
 | `gate` | the incremental build-and-test command |
 | `clean_gate` | the full-rebuild command |
-| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate` |
+| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate`. **Anchored at the repo root, unlike gitignore**: `CMakeLists.txt` is the root one only, the tree needs `**/CMakeLists.txt` |
 | `reset` | run **before** verification, clearing state a previous build left behind |
 | `env` | extra environment variable names the gate needs |
 | `lock_wait_minutes` | how long to wait when another run holds the checkout |
 | `gate_wall_minutes` | hard ceiling on one gate command |
 
 When `gate.yaml` declares commands they **replace** the task's `verify`: it describes how the
-project builds, `verify` describes one task, and running both builds twice. Any **deletion** in
+project builds, `verify` describes one task, and running both builds twice. Any **deletion or rename** in
 the diff forces `clean_gate` regardless of triggers -- an incremental build keeps a stale object
 for a source file that no longer exists, and nothing in the diff tells it to drop it.
 

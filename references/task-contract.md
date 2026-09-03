@@ -146,14 +146,14 @@ instead of in each task:
 |---|---|
 | `gate` | the incremental build-and-test command |
 | `clean_gate` | the full-rebuild command |
-| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate` |
+| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate`. **Anchored at the repo root, unlike gitignore**: `CMakeLists.txt` is the root one only, the tree needs `**/CMakeLists.txt` |
 | `reset` | run before verification, to clear state a previous build left behind |
 | `env` | extra environment variable names the gate needs |
 | `lock_wait_minutes` | how long to wait for the checkout when another run holds it |
 | `gate_wall_minutes` | hard ceiling on one gate command |
 
 When `gate.yaml` declares commands they **replace** `verify` -- it describes how the project
-builds, `verify` describes one task, and running both builds twice. Any **deletion** in the diff
+builds, `verify` describes one task, and running both builds twice. Any **deletion or rename** in the diff
 forces `clean_gate` regardless of triggers: an incremental build keeps a stale object for a
 source file that no longer exists and nothing tells it to drop it.
 
