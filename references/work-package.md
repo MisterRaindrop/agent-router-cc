@@ -93,7 +93,8 @@ Queue semantics: **verify on the integration head, not on the task's own older b
 task merges, every later task's base is stale, so "verified" would be a claim about code nobody
 will ship. Apply conflict -> back to its executor. Three gate depths: **Task** (affected modules,
 incremental) -> **Wave** (a batch together) -> **Milestone** (full clean build + full suite + CI).
-A diff that touches build files, a code generator, or **deletes** a file escalates to a clean
+A diff that touches build files, a code generator, or **removes a path** -- deleted or renamed --
+escalates to a clean
 build automatically -- incremental builds silently miss exactly those.
 
 Throughput is one gate at a time: with a gate of T minutes the ceiling is 1/T **regardless of how

@@ -199,11 +199,11 @@ exclusive lock the run already holds:
 |---|---|
 | `gate` | the incremental build-and-test command |
 | `clean_gate` | the full-rebuild command |
-| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate` |
+| `clean_triggers` | globs whose change forces `clean_gate` instead of `gate`. **Anchored at the repo root, unlike gitignore**: `CMakeLists.txt` is the root one only, the tree needs `**/CMakeLists.txt` |
 | `reset` | run before verification, to clear state a previous build left behind |
 | `lock_wait_minutes` | how long to wait when another run holds the checkout |
 
-Any **deletion** in the diff forces `clean_gate` regardless of triggers: an incremental build
+Any **deletion or rename** in the diff forces `clean_gate` regardless of triggers: an incremental build
 keeps a stale object for a source file that no longer exists, and nothing tells it to drop it.
 `mode: queue` remains for a project that verifies on an integration branch — `router gate` feeds
 commits one at a time into your own checkout under an exclusive lock, refusing if tracked files
