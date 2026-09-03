@@ -25,6 +25,17 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
   Absence is untouched: an empty plan directory, and a document that parses and simply declares no
   stage, both still report `-`.
 
+- **A renamed file selected the incremental gate.** The rule was "any deletion forces the full
+  rebuild", on the stated grounds that an incremental build can keep a stale object for a source file
+  that no longer exists — and a rename removes the old path just as surely. `src/A/Old.cpp` becoming
+  `src/A/New.cpp` left `Old.cpp.o` behind and rebuilt incrementally. Found by running `selectGate`
+  against real ClickHouse commits: a diff whose only status was `R` came back `task`.
+
+  The cost is the cost already accepted for deletions: renaming a `.sql` test fixture now buys a full
+  rebuild. Telling "a compiled path vanished" from "any path vanished" needs to know what the build
+  graph contains, which this cannot see, so it stays conservative in the direction that cannot ship a
+  stale object.
+
 - **Dependabot filed runtime dependency bumps under a group named `dev-dependencies`.** The group
   was `patterns: ["*"]` — everything — on the stated reasoning that "the shipped bundle is
   dependency-free". That reasoning is wrong: `web-tree-sitter` and `tree-sitter-wasms` are vendored
@@ -36,6 +47,16 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
   grouped as the pair they are — coupled by the grammar ABI, and each broken alone — and every other
   runtime dependency gets its own pull request. `test/plugin-manifest.test.ts` asserts the shape, so
   reverting it goes red rather than being noticed by the next failing CI run.
+
+### Changed
+
+- **`src/core/glob.ts` no longer calls itself gitignore-style**, because in the one way that catches
+  people it is not. Every pattern is anchored at the repository root, so `CMakeLists.txt` matches the
+  root file and not the tree; gitignore would match every one. Measured on ClickHouse, where a commit
+  touching only `src/CMakeLists.txt` selected the incremental gate under a `clean_triggers` list that
+  read `CMakeLists.txt` — a build file changed and the build was not redone. The anchoring itself is
+  deliberate and unchanged: `allowed_globs` must not match more than it says. Every place that
+  documents `clean_triggers` now says so.
 
 ## [0.12.6] - 2026-09-02
 
@@ -225,13 +246,11 @@ and one new test.
   yours: the right interval depends on what you chained and how large your repository is, and
   router can measure neither.
 
-
 ## [0.12.0] - 2026-08-25
 
 You can see what is running in the background, and see that it is *moving*. Designed
 through the project's own flow (brainstorm -> design -> workplan), built as five work
 packages, each independently reviewed and mutation-tested by the main session.
-
 
 ### Added
 

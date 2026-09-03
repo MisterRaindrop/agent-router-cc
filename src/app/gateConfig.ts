@@ -152,8 +152,16 @@ export function loadGateConfig(paths: RouterPaths): GateConfig {
  * only ever running `task.verify`, which meant `clean_triggers` -- the mechanism a C project
  * most needs -- was documented and unreachable.
  *
- * Any deletion forces the heavy gate regardless of triggers: an incremental build can keep a
- * stale object for a source file that no longer exists, and nothing in the diff says so.
+ * A path that STOPS EXISTING forces the heavy gate regardless of triggers: an incremental build can
+ * keep a stale object for a source file that is gone, and nothing in the diff says so. That is a
+ * deletion and it is equally a rename -- `src/A/Old.cpp -> src/A/New.cpp` leaves `Old.cpp.o` behind
+ * exactly as deleting it would, and a rename used to select the incremental gate. Verified against
+ * real ClickHouse commits: `R` came back `task`.
+ *
+ * The cost is the cost already accepted for deletions, and it is real: renaming a `.sql` test
+ * fixture now buys a full rebuild. Distinguishing "a compiled path vanished" from "any path
+ * vanished" needs to know which paths the build graph contains, which this cannot see -- so it is
+ * conservative in the direction that cannot silently ship a stale object.
  *
  * Returns null when the config declares no gate commands at all, which is the caller's signal
  * to fall back to whatever the task itself carries.
@@ -168,6 +176,7 @@ export function selectGate(
     changes.some(
       (entry) =>
         entry.status === 'D' ||
+        entry.status === 'R' ||
         matchAny(entry.path, triggers) ||
         (entry.oldPath !== undefined && matchAny(entry.oldPath, triggers)),
     );

@@ -11365,7 +11365,7 @@ function loadGateConfig(paths) {
 function selectGate(config, changes) {
   const triggers = config.clean_triggers ?? [];
   const useClean = config.clean_gate !== void 0 && changes.some(
-    (entry) => entry.status === "D" || matchAny(entry.path, triggers) || entry.oldPath !== void 0 && matchAny(entry.oldPath, triggers)
+    (entry) => entry.status === "D" || entry.status === "R" || matchAny(entry.path, triggers) || entry.oldPath !== void 0 && matchAny(entry.oldPath, triggers)
   );
   if (useClean) return { level: "clean", commands: config.clean_gate };
   if (config.gate !== void 0 && config.gate.length > 0) return { level: "task", commands: config.gate };

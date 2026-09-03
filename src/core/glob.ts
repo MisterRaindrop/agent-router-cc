@@ -1,11 +1,22 @@
 // Copyright 2026 The agent-router-cc Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Minimal gitignore-style glob matcher over forward-slash paths. PURE.
+// Minimal glob matcher over forward-slash paths. PURE.
 //   **   matches zero or more path segments
 //   *    matches within a single segment (not '/')
 //   ?    matches a single non-'/' char
 // Dotfiles are matched like any other name (git semantics).
+//
+// EVERY pattern is anchored at the repository root, and this is where it differs from gitignore in
+// the one way that catches people. In gitignore a pattern with no slash matches a file of that name
+// at ANY depth, so `CMakeLists.txt` covers the whole tree; here it covers exactly the root one, and
+// the tree needs `**/CMakeLists.txt`. Measured on ClickHouse, where a commit touching only
+// `src/CMakeLists.txt` selected the incremental gate under a `clean_triggers` list that read
+// `CMakeLists.txt` -- a build file changed and the build was not redone.
+//
+// The anchoring is not a defect: `allowed_globs` wants `src/app/**` to mean exactly that, and the
+// scope gate is the one check that must not match more than it says. It is the DESCRIPTION that was
+// wrong, and callers that let a human write patterns have to say so -- see `clean_triggers`.
 
 const cache = new Map<string, RegExp>();
 const REGEX_SPECIAL = new Set(['.', '+', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']);

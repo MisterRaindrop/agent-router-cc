@@ -211,6 +211,30 @@ test('selectGate escalates for any deletion, trigger or not', () => {
 
 // A rename moves a file out of one path and into another; if the ORIGIN was a trigger, the build
 // still has to forget it, so both ends are checked.
+// A renamed path stops existing exactly as a deleted one does, and the object file for the old
+// name survives an incremental build. Measured against real ClickHouse commits before this existed:
+// a diff whose only status was `R` came back `task`.
+test('selectGate escalates for a rename, because the old path is gone too', () => {
+  const config: GateConfig = {
+    mode: 'queue',
+    integration_branch: 'main',
+    gate: [['ninja', '-C', 'build']],
+    clean_gate: [['cmake', '--fresh', '-B', 'build']],
+    clean_triggers: ['cmake/**'],
+  };
+  // Neither end matches a trigger: the escalation has to come from the rename itself.
+  const withinADirectory = selectGate(config, [
+    entry('src/Core/New.cpp', 'R', 'src/Core/Old.cpp'),
+  ]);
+  assert.equal(withinADirectory?.level, 'clean');
+  const acrossDirectories = selectGate(config, [
+    entry('src/B/Thing.cpp', 'R', 'src/A/Thing.cpp'),
+  ]);
+  assert.equal(acrossDirectories?.level, 'clean');
+  // ...and an ordinary edit beside it is still not enough on its own.
+  assert.equal(selectGate(config, [entry('src/Core/Settings.cpp')])?.level, 'task');
+});
+
 test('selectGate checks both ends of a rename', () => {
   assert.deepEqual(
     selectGate(CONFIG, [entry('src/renamed.c', 'R', 'include/old.h')]),
