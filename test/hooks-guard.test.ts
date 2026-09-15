@@ -57,6 +57,8 @@ test('guard allows every artifact the workflow tells the orchestrator to author'
   assert.equal(guard({ file_path: '.router/plans/issue-42/PLAN.md' }), 0);
   assert.equal(guard({ file_path: '.router/plans/issue-42/critique-2.md' }), 0);
   assert.equal(guard({ file_path: '.router/plans/issue-42/DECISIONS.md' }), 0);
+  assert.equal(guard({ file_path: '.router/explanations/shared-checkout-4dc4e1f.md' }), 0);
+  assert.equal(guard({ file_path: '/abs/project/.router/explanations/router-resume-6780b65.html' }), 0);
 });
 
 test('a run directory stays protected even for a markdown name', () => {
@@ -71,6 +73,9 @@ test('a run directory stays protected even for a markdown name', () => {
   assert.equal(guard({ file_path: '.router/metrics.jsonl' }), 2);
   assert.equal(guard({ file_path: '.router/gate.lock' }), 2);
   assert.equal(guard({ file_path: '.router/symbols/abc123.json' }), 2);
+  assert.equal(guard({ file_path: '.router/explanations/result.json' }), 2);
+  assert.equal(guard({ file_path: '.router/explanations/archive/old.md' }), 2);
+  assert.equal(guard({ file_path: '.router/explanations/archive/old.html' }), 2);
 });
 
 test('guard allows edits inside worktree checkouts (exit 0)', () => {

@@ -8,6 +8,22 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-15
+
+### Added
+
+- **`/router:explain` turns an implemented feature into a short, code-grounded design page.** It
+  leads with the verdict, then uses one complete architecture diagram to show where the feature
+  sits and the path that makes it work. Necessary ordering is numbered inside that figure instead
+  of repeated as another timeline. It deliberately omits the file inventory, component table,
+  candidate designs, and verification matrix that made the first prototype read like an audit
+  report rather than something a human could judge quickly.
+
+  The command accepts a commit, an explicit range, or the working tree and writes a self-contained
+  page under `.router/explanations/`. Its instructions and reusable page template live in the
+  portable `feature-explain` skill, so the Claude Code command is only an entry point and a future
+  Codex plugin does not need a second copy of the explanation rules.
+
 ### Fixed
 
 - **`web-tree-sitter` is held below 0.26 until `tree-sitter-wasms` catches up.** 0.26 and later reject

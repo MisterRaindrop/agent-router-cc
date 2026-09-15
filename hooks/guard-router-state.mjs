@@ -15,6 +15,7 @@
 //   .router/<name>.md, gate.yaml, models.yaml, policy.yaml  -> authored config/notes
 //   .router/tasks/<id>/task.yaml and .router/tasks/<id>/*.md -> the contract
 //   .router/plans/<id>/**.md                                 -> plan, critiques, decisions
+//   .router/explanations/*.{html,md}                         -> human review aids
 //   .router/worktrees/**                                     -> the executor's working copy
 //
 // Everything else stays protected, and the boundary is deliberate: a run's own
@@ -61,6 +62,7 @@ const rel = target.slice(target.lastIndexOf('.router/') + '.router/'.length);
 const parts = rel.split('/').filter((p) => p !== '');
 const base = parts.at(-1) ?? '';
 const isMarkdown = base.toLowerCase().endsWith('.md');
+const isExplanation = isMarkdown || base.toLowerCase().endsWith('.html');
 
 // Configuration and notes the human or the orchestrator authors, at the top level.
 if (parts.length === 1 && (isMarkdown || ROOT_EDITABLE.has(base))) process.exit(0);
@@ -71,6 +73,10 @@ if (parts.length === 3 && parts[0] === 'tasks' && (base === 'task.yaml' || isMar
 }
 // Plan artifacts: PLAN.md, each round's critique, the decision record.
 if (parts.length >= 3 && parts[0] === 'plans' && isMarkdown) process.exit(0);
+// Feature explanations are authored by /router:explain. They describe code for a human and are
+// never an input to a gate, land decision, or CLI result, so allowing HTML or Markdown here cannot
+// forge execution evidence. Keep the shape flat and format-limited: other files stay state.
+if (parts.length === 2 && parts[0] === 'explanations' && isExplanation) process.exit(0);
 
 process.stderr.write(
   `router: refusing to edit managed state under .router/ (${base}). ` +
