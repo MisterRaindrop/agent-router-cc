@@ -213,6 +213,16 @@ depends_on: []
   只能从已批准的 Design 派生,并绑定其 revision:Design 一改版,Plan 自动降回草稿。
   你批准摘要后,`/router:go` **逐字执行**。日常小任务跳过这一切,直接 `/router:go`。
 
+## 🗺️ `/router:explain` —— 用系统视角阅读已经完成的功能
+
+代码完成后，运行 `/router:explain <commit>`（也可以传入明确的范围或 `--working-tree`），
+Router 会在 `.router/explanations/` 下生成一份可以直接打开的设计页面。开头直接给结论；
+一张完整设计图同时说明功能处在系统什么位置，以及它靠哪条路径工作。必要的执行顺序直接
+标在这张图上，不再重复画第二张流程图；只有证据会改变结论时，页面才增加问题提示。
+
+它不是 PR 文件摘要，也不是实现前的 `DESIGN.md`。它解释代码最终形成了什么系统，读者
+不需要再从文件清单里反推设计。
+
 ## 🔍 `/router:review` —— 绿灯之后的最后一关
 
 测试绿是**前提,不是证据** —— 测试本身也是被审对象。两个镜头(最好用两个不同的模型跑),
@@ -237,6 +247,7 @@ depends_on: []
 | `/router:design` | 大型功能的 opt-in 入口 —— 澄清、调研、逐节起草并批准 `DESIGN.md` |
 | `/router:design-review` | 对 Design 的对抗式第二意见 —— 每条意见由你裁决,绝不自动采纳 |
 | `/router:plan` | 把已批准的 Design 变成 `PLAN.md` —— 步骤、任务拆分、验证;经你批准 |
+| `/router:explain [范围]` | 用简短结论和一张完整设计图解释已经完成的代码；生成可直接打开的页面，接受 commit、Git 范围或 `--working-tree` |
 | `/router:review` | 对落地代码的独立、严格的双镜头复审 |
 | `/router:dispatch <id...>` | 用按配额挑选的执行器并发运行任务,产出已把关的 diff |
 | `/router:resume <id>` | 把失败原因送回该任务自己的执行器会话 |

@@ -9749,7 +9749,7 @@ var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 // src/domain/constants.ts
-var VERSION = true ? "0.12.7" : "0.0.0-dev";
+var VERSION = true ? "0.13.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts

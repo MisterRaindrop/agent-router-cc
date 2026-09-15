@@ -277,6 +277,17 @@ never recover by reading code. `BRAINSTORM.md` is deliberately excluded: it reco
 counter-evidence and the rejected directions, so handing it over would hand the executor a pile
 of ideas that were decided against.
 
+## 🗺️ `/router:explain` — read the feature as a system
+
+After code exists, `/router:explain <commit>` (or an explicit range or `--working-tree`) writes a
+self-contained design page under `.router/explanations/`. The opening gives the verdict, then one
+complete architecture diagram shows both where the feature sits and the path that makes it work.
+Small step numbers carry any load-bearing order inside that same figure; a problem strip appears
+only when the evidence changes the verdict.
+
+This is deliberately not a PR summary or a proposed `DESIGN.md`: it explains the system that the
+code produced, without making the reader reconstruct it from a file list.
+
 ## 🔍 `/router:review` — the last gate after green
 
 Green tests are the **precondition, not the evidence** — the tests themselves are under
@@ -304,6 +315,7 @@ go to lint/CI, not to the LLM.
 | `/router:design` | opt-in for large features — clarify, research, draft a `DESIGN.md` you approve section by section |
 | `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied. Also reports where an outside reader could not follow the document |
 | `/router:workplan` | turn the approved Design into `WORKPLAN.md` — steps, task breakdown, verification; you approve |
+| `/router:explain [scope]` | explain implemented code as a standalone page with a concise verdict and one complete design diagram; accepts a commit, range, or `--working-tree` |
 | `/router:review` | strict, independent two-lens review of the landed code |
 | `/router:resume <id>` | send a failure back to that task's own executor session |
 | `/router:result <id>` | per-check verifier report and log tail for a run |

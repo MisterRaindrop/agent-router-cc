@@ -161,6 +161,63 @@ test('the six flow commands all exist', () => {
   }
 });
 
+test('feature explain is a thin command over one portable output contract', () => {
+  const command = readFileSync(new URL('explain.md', COMMANDS), 'utf8');
+  const skill = readFileSync(new URL('../skills/feature-explain/SKILL.md', import.meta.url), 'utf8');
+  const template = readFileSync(
+    new URL('../skills/feature-explain/assets/design-explanation-template.html', import.meta.url),
+    'utf8',
+  );
+  const fm = frontmatter(skill);
+
+  assert.equal(fm.name, 'feature-explain');
+  assert.match(command, /skills\/feature-explain\/SKILL\.md/);
+  assert.match(command, /\$ARGUMENTS/);
+  assert.match(command, /Do not edit source code, create commits,\nor change branches/);
+
+  // One complete figure carries both structure and the load-bearing order. A second timeline is
+  // the exact duplication that made the reviewed page harder to judge, not more informative.
+  assert.match(skill, /assets\/design-explanation-template\.html/);
+  assert.match(skill, /<feature-slug>-<short-head>\.html/);
+  assert.match(skill, /one inline SVG architecture figure/);
+  assert.match(skill, /Do not add a second timeline/);
+  assert.match(skill, /small step numbers on the\narrows of the design diagram/);
+  assert.match(skill, /HTML-escape every value taken from commit messages/);
+
+  // These are the exact forms of padding rejected during the real sample reviews.
+  for (const omitted of [
+    'candidate diagrams',
+    'decision-flow diagram',
+    'component table',
+    'file list',
+    'verification matrix',
+    'evidence appendix',
+    'separate interaction diagram',
+  ]) {
+    const acrossLines = omitted.split(' ').join('\\s+');
+    assert.match(skill, new RegExp(acrossLines), `skill must explicitly omit ${omitted}`);
+  }
+
+  assert.match(template, /^<!doctype html>/);
+  for (const slot of [
+    'FEATURE_NAME',
+    'BASE_SHA',
+    'HEAD_SHA',
+    'VERDICT_HTML',
+    'DESKTOP_DIAGRAM_SVG',
+    'MOBILE_DESIGN_HTML',
+    'CORE_BOUNDARY_HTML',
+    'ISSUE_HTML',
+  ]) {
+    assert.match(template, new RegExp(`{{${slot}}}`), `template is missing ${slot}`);
+  }
+  assert.match(template, /@media \(max-width: 820px\)/);
+  assert.doesNotMatch(template, /<script\b|<iframe\b|https?:\/\/|fetch\s*\(/i);
+
+  const pkg = JSON.parse(read('../package.json')) as { files?: string[] };
+  assert.ok(pkg.files?.includes('skills/'), 'the npm package must ship the skill the command reads');
+});
+
 // These four existed only to drive parallel orchestration or to be a deprecated predecessor.
 // The MECHANISM survives where it is still needed -- `router dispatch` is still the CLI verb go
 // uses, and the queue gate's lock and clean-gate selection moved into the dispatch flow -- but

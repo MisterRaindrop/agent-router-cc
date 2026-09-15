@@ -258,6 +258,18 @@ will not guess a `reset` command, because that is the one that wipes state.
 Throughput is one gate at a time: with a gate of T minutes the ceiling is 1/T **regardless of how
 many executors run**. Two or three executors saturate it; more just lengthens the queue.
 
+## Read the implemented design when the diff is no longer the useful view
+
+`/router:explain <commit>` reads one completed feature and writes a self-contained
+`.router/explanations/<feature>-<head>.html` page. It gives the verdict first, then uses one complete
+architecture diagram to show where the feature sits, who owns its state, and which path makes it
+work. When order matters, numbered edges carry it inside the same figure instead of adding a second
+timeline. It includes a problem strip only when code, tests, or later fixes materially contradict
+the intended design.
+
+The explanation is a human review aid, not another gate. It never edits the feature, decides
+whether to merge, or replaces `/router:review`.
+
 ## 7. How much review each change earns
 
 Every tier gets the mechanical gates *and* the main session reading the **complete diff**. What
