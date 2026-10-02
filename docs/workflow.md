@@ -20,25 +20,32 @@ everyday task:   plan with Opus in conversation  ->  /router:go  ->  /router:rev
                                                      review, land
 
 large feature (opt-in -- the user's call, never router's):
-  /router:brainstorm -> /router:design -> /router:design-review (opt.) -> /router:workplan -> /router:go
-  question the idea;    clarify + code    independent adversarial          the how: task       executes the
-  compare with how      research;         pass; every objection            breakdown, deps,    approved plan
-  others solve it;      DESIGN.md         adjudicated by the user,         verification;       verbatim
-  argue against         approved section  none auto-applied                approved as
-                        by section                                         summary
+  /router:brainstorm  ->  /router:design  ->  /router:design-review (opt.)  ->  /router:go
+  question the idea;      clarify + code      independent adversarial           executes against
+  compare with how        research; one       pass; every objection             the approved
+  others solve it;        document, approved  adjudicated by the user,          DESIGN.md
+  argue against           section by section  none auto-applied
 ```
 
-`/router:go` pauses at exactly three points: confirm the package, handle whatever needs real
-judgment, and approve before anything merges. Nothing lands without you. (When `go` executes a
-work plan approved via the design flow, the first pause is skipped -- that was approved at
-`/router:workplan`; the other two remain.)
+`/router:go` pauses at exactly three points: confirm the slicing, handle whatever needs real
+judgment, and approve before anything merges. Nothing lands without you. The first pause covers
+the **whole feature, once** -- every package you intend to dispatch, what each touches, how each
+is verified -- and the dispatches that follow do not re-ask unless the slicing itself changes.
+That pause is a conversation: nothing is written to `.router/`, no status moves.
+
+There used to be a sixth stage, `/router:workplan`, which froze the breakdown into an approved
+`WORKPLAN.md`. It was removed in 0.14.0. Measured over five plans that used it: 28 of 35 "work
+packages" were main-session steps, which a package contract does not constrain at all, and 10 of
+17 real dispatches were authored outside the approved list anyway -- while the document itself
+cost 240-536 lines of main-session drafting plus an approval round. The one part with no
+replacement, the verification matrix, moved into `DESIGN.md` as its last section.
 
 **One run, one package, one executor.** The pin always carries all three fields (`kind`,
 `model`, `effort`) taken from that family's `critical` row in `router models`, because an
 omitted effort silently falls back to the provider default. The user may deliberately pin
 lower; router never lowers it on its own (a 429 fails loudly instead of demoting). The contract
-is a verbatim copy of the approved `WORKPLAN.md` **and `DESIGN.md`** (each anchored by revision
-+ sha256) or a ~40-line compact template. Dispatch runs **detached** (it survives the session)
+is a compact header plus a verbatim copy of the approved **`DESIGN.md`** (anchored by revision +
+sha256), or a ~40-line compact template when the work never had a design. Dispatch runs **detached** (it survives the session)
 with a listener that wakes the session at terminal states; progress lives in the statusline --
 every run writes a live `status.json` (phase, elapsed vs budget, log activity, stall countdown,
 a redacted `recent_action`) and per-phase timings into metrics. `commands/go.md` has the flow;
@@ -122,7 +129,7 @@ Because the executor shares your checkout, the run is a transaction:
 | reap | lock reclaimed from a dead holder -> kill its orphan executor group first, and wait for it |
 | rescue | your uncommitted work -> one commit, file list and sha reported |
 | branch | create `router/<task-id>`. Name already taken -> **fail**, never reuse |
-| contract | `WORKPLAN.md` + `DESIGN.md` concatenated verbatim, each with its sha256 |
+| contract | the compact header, plus `DESIGN.md` verbatim with its sha256 when one exists |
 | dispatch | launch the executor detached, cwd = the repository root |
 | work | the executor commits **one functional unit at a time** |
 | closing | assert: on the task branch, `base_sha` is an ancestor of `HEAD`, **nothing uncommitted** |
@@ -342,7 +349,7 @@ pattern the project already uses.
   models.yaml                   # optional tier overrides; `router models` shows the result
   metrics.jsonl                 # append-only: one row per run, plus orchestrator rows
   gate.lock                     # the exclusive lock on this checkout, while a run holds it
-  plans/<plan_id>/              # BRAINSTORM.md, DESIGN.md, WORKPLAN.md,
+  plans/<plan_id>/              # BRAINSTORM.md, DESIGN.md,
                                 #   critique-<round>.md, DECISIONS.md, spec.lock
   tasks/<id>/
     task.yaml                   # the machine contract (scope, tier, risk, verify, depends_on)

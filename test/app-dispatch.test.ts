@@ -820,9 +820,9 @@ for (const mutation of [
   });
 }
 
-test('editing a frozen plan is reported without failing the run', async () => {
+test('editing the frozen design is reported without failing the run', async () => {
   const { repo, paths, deps } = setup();
-  const planPath = paths.workplanMd('p1');
+  const planPath = join(paths.planDir('p1'), 'DESIGN.md');
   const editor = join(repo, 'fake-plan-editor.mjs');
   mkdirSync(paths.planDir('p1'), { recursive: true });
   writeFileSync(planPath, '# Before\n');
@@ -848,7 +848,7 @@ test('editing a frozen plan is reported without failing the run', async () => {
     assert.equal(result.exit_class, 'ok');
     assert.equal(result.verifier?.result, 'PASSED');
     assert.equal(result.state_tampering, undefined);
-    assert.deepEqual(result.state_changes, ['modified plans/p1/WORKPLAN.md']);
+    assert.deepEqual(result.state_changes, ['modified plans/p1/DESIGN.md']);
   } finally {
     if (prev === undefined) delete process.env.ROUTER_CODEX_BIN;
     else process.env.ROUTER_CODEX_BIN = prev;

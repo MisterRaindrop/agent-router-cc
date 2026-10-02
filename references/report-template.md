@@ -26,8 +26,8 @@ real gate:      pass | fail | pre-existing failure | never ran   -> <log path>
 review; nothing lowers it. A missing delivery header, `scope_drift: true`, or a package the gate
 never ran on is a Phase 1 finding in its own right.
 
-If scope drifted or the bar was never approved, stop and return to `/router:design` /
-`/router:workplan` rather than reviewing against a bar that no longer matches the code.
+If scope drifted or the bar was never approved, stop and return to `/router:design` rather
+than reviewing against a bar that no longer matches the code.
 
 ## Finding shape
 
@@ -45,9 +45,9 @@ Emit each finding as:
   confidence: high | medium | low }
 ```
 
-`level: spec` means the bar itself is wrong (a Design acceptance criterion, or a Plan
-verification row that proves the wrong thing) — that returns to `/router:design` /
-`/router:workplan`, it is not fixed silently in review.
+`level: spec` means the bar itself is wrong (an acceptance criterion, or a verification-matrix
+row that proves the wrong thing) — that returns to `/router:design`, it is not fixed silently in
+review.
 
 ## Evidence block
 

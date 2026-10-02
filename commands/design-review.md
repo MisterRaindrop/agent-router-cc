@@ -3,9 +3,11 @@ description: Adversarial review of a Design by an independent model -- every obj
 allowed-tools: Bash, Read, Write, Task, AskUserQuestion
 ---
 Get an independent, adversarial second opinion on a **`DESIGN.md`** -- the approach, its
-risks, whether a simpler road exists. This reviews the *design*, not implementation steps
-and not task breakdown (those live in `WORKPLAN.md`, which gets no adversarial pass). Optional,
-user-invoked, any number of rounds; run it **before** the Design is approved. If the Design
+risks, whether a simpler road exists. This reviews the *design*: the approach, the invariants,
+the acceptance criteria and where section 8 says each one gets proven. It does not review how
+the work will be sliced into packages -- that is decided in conversation at `/router:go` and
+is never a document. Optional, user-invoked, any number of rounds; run it **before** the
+Design is approved. If the Design
 was already approved, any change accepted here bumps its revision and requires re-approval.
 
 **You do not review your own design.** Launch an independent reviewer -- a different model

@@ -120,20 +120,20 @@ everyday task:   plan with Opus in conversation  →  /router:go  →  /router:r
                                                     review, land
 
 large feature (opt-in, YOUR call — router never judges task size):
-  /router:brainstorm  →  /router:design  →  /router:design-review (opt.)  →  /router:workplan  →  /router:go
-  question the idea;     clarify +          independent adversarial          the how: steps,      executes the
-  compare with how       research; a        pass; every objection            task breakdown,      approved plan
-  others solve it;       DESIGN.md you      adjudicated by you,              verification;        verbatim
-  argue the case         approve section    nothing auto-applied             you approve
+  /router:brainstorm  →  /router:design  →  /router:design-review (opt.)  →  /router:go
+  question the idea;     clarify +          independent adversarial          executes against
+  compare with how       research; one      pass; every objection            the approved
+  others solve it;       DESIGN.md you      adjudicated by you,              DESIGN.md
+  argue the case         approve section    nothing auto-applied
   against                by section
 ```
 
-`/router:go` pauses at exactly **three points** — nothing happens without you (when it
-executes a Plan approved via the design flow, the breakdown confirmation is skipped: you
-already approved that list at `/router:workplan`):
+`/router:go` pauses at exactly **three points** — nothing happens without you:
 
-1. **Confirm the task breakdown.** Every package is shown with its file scope and target
-   model before anything runs.
+1. **Confirm the task breakdown**, once, for the whole feature. Every package you intend to
+   dispatch is shown with its file scope and target model before anything runs; the dispatches
+   that follow do not re-ask unless the slicing itself changes. It is a conversation — nothing
+   is written to disk, no approval is frozen into a document.
 2. **Unclear tasks stay with you.** Anything needing real judgment or design, Opus does
    with you directly instead of handing it to a cheap model.
 3. **Approve before merge.** Nothing lands in your branch without your say-so.
@@ -264,15 +264,18 @@ document is yours to approve:
   closed. **Each objection is adjudicated by you** — accept / reject / discuss, recorded in
   `DECISIONS.md`; nothing touches the document before your verdict. Runs in the background,
   truncation-guarded, session resumed across rounds.
-- **`/router:workplan` → `WORKPLAN.md`** (how: steps, task breakdown, dependencies,
-  verification matrix, rollout) — derived only from an approved Design and bound to its
-  revision: a Design revision drops the work plan back to draft. You approve a summary;
-  `/router:go` then executes it verbatim. Everyday tasks skip all of this and use `/router:go`
-  directly.
+There is no separate work-plan stage. One existed until 0.14.0 and was removed: measured over
+the five plans that used it, 28 of 35 "work packages" were main-session steps that a package
+contract does not constrain at all, and 10 of 17 real dispatches were authored outside the
+approved list anyway — while the document cost 240–536 lines of drafting and an approval round.
+The task breakdown is now agreed in conversation at `/router:go`, once, for the whole feature.
+The one part that had no replacement, the **verification matrix**, is the Design's last section:
+every acceptance criterion mapped to where it is actually proven, with `unverified` kept visible
+instead of papered over by a test that does not test it.
 
-The task contract carries **both** the work plan and the Design, verbatim with their sha256s.
-They answer different questions: the plan says what to do and in what order, the Design says why
-it is built this way and which invariants may not break — and the second is what an executor can
+The task contract carries the Design verbatim with its sha256, under a compact header. The header
+says what to build, where it may write and how it is verified; the Design says why it is built
+this way and which invariants may not break — and the second is what an executor can
 never recover by reading code. `BRAINSTORM.md` is deliberately excluded: it records the
 counter-evidence and the rejected directions, so handing it over would hand the executor a pile
 of ideas that were decided against.
@@ -310,11 +313,10 @@ go to lint/CI, not to the LLM.
 
 | command | what it does |
 |---|---|
-| `/router:go` | **top-level** — execute the plan you just agreed on (or an approved `WORKPLAN.md`, verbatim). One package, one pinned executor, on a `router/<task>` branch in your own checkout; runs detached, statusline shows live phase and activity, the session is woken at terminal states |
+| `/router:go` | **top-level** — execute the plan you just agreed on (against an approved `DESIGN.md` when there is one). One package, one pinned executor, on a `router/<task>` branch in your own checkout; runs detached, statusline shows live phase and activity, the session is woken at terminal states |
 | `/router:brainstorm` | question an idea before designing it — compare it with how others solve it, argue the case against, propose the option you were not offered |
 | `/router:design` | opt-in for large features — clarify, research, draft a `DESIGN.md` you approve section by section |
 | `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied. Also reports where an outside reader could not follow the document |
-| `/router:workplan` | turn the approved Design into `WORKPLAN.md` — steps, task breakdown, verification; you approve |
 | `/router:explain [scope]` | explain implemented code as a standalone page with a concise verdict and one complete design diagram; accepts a commit, range, or `--working-tree` |
 | `/router:review` | strict, independent two-lens review of the landed code |
 | `/router:resume <id>` | send a failure back to that task's own executor session |

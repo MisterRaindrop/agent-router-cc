@@ -71,7 +71,8 @@ if (parts.length === 1 && (isMarkdown || ROOT_EDITABLE.has(base))) process.exit(
 if (parts.length === 3 && parts[0] === 'tasks' && (base === 'task.yaml' || isMarkdown)) {
   process.exit(0);
 }
-// Plan artifacts: PLAN.md, each round's critique, the decision record.
+// Plan artifacts: DESIGN.md, each round's critique, the decision record (and the legacy
+// PLAN.md / WORKPLAN.md of plan directories written before the work-plan stage was removed).
 if (parts.length >= 3 && parts[0] === 'plans' && isMarkdown) process.exit(0);
 // Feature explanations are authored by /router:explain. They describe code for a human and are
 // never an input to a gate, land decision, or CLI result, so allowing HTML or Markdown here cannot

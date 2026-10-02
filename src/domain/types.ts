@@ -77,7 +77,11 @@ export interface TaskYaml {
   id: string;
   /** Dispatch-plan identifier; absent for tasks created before plan grouping. */
   plan_id?: string;
-  /** Revision of the frozen plan this contract belongs to. */
+  /**
+   * Revision of the frozen document this contract belongs to -- `DESIGN.md` since 0.14.0, a
+   * `WORKPLAN.md`/`PLAN.md` for tasks dispatched before that. The name predates the change and
+   * is kept because the records carrying it are append-only.
+   */
   plan_revision?: string;
   /** Task ids that must land before this task may run. */
   depends_on?: string[];
@@ -331,7 +335,7 @@ export interface MetricRecord {
   task_id: string;
   /** Dispatch-plan identifier; absent on metrics recorded before plan grouping. */
   plan_id?: string;
-  /** Revision of the frozen plan associated with this task. */
+  /** Revision of the frozen document associated with this task; see `TaskYaml.plan_revision`. */
   plan_revision?: string;
   task_context_present?: boolean;
   task_context_chars?: number;

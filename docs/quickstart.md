@@ -25,11 +25,12 @@ Plan the change with Opus in normal conversation, then:
 design flow first: `/router:brainstorm` questions the idea itself when the goal is not settled
 yet — comparing it with how other products solve the same problem, arguing the case against
 building it, and proposing the option you did not offer; `/router:design` clarifies and
-researches, producing a `DESIGN.md` you approve section by section; `/router:design-review`
-optionally gets an independent adversarial second opinion where you adjudicate every objection;
-`/router:workplan` turns the approved Design into a `WORKPLAN.md` with the task breakdown, which
-`/router:go` then executes verbatim. Whether a change deserves that is your call — router never
-judges task size.)
+researches, producing a `DESIGN.md` you approve section by section — the last section maps every
+acceptance criterion to where it will actually be proven; `/router:design-review` optionally gets
+an independent adversarial second opinion where you adjudicate every objection; then
+`/router:go` executes against the approved Design, showing you the whole feature's intended
+slicing once before the first dispatch. Whether a change deserves that is your call — router
+never judges task size.)
 
 (**One run, one package, one executor** — Opus by default, explicitly overridable — while your
 session stays free: dispatch runs detached in the background, the statusline shows live

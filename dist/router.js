@@ -9749,7 +9749,7 @@ var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 // src/domain/constants.ts
-var VERSION = true ? "0.13.0" : "0.0.0-dev";
+var VERSION = true ? "0.14.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/clock.ts
@@ -10176,7 +10176,6 @@ function routerPaths(routerDir) {
       const workplan = join2(root, "plans", planId, "WORKPLAN.md");
       return existsSync(workplan) ? workplan : join2(root, "plans", planId, "PLAN.md");
     },
-    workplanMd: (planId) => join2(root, "plans", planId, "WORKPLAN.md"),
     specCritique: (planId, round) => join2(root, "plans", planId, `critique-${round}.md`),
     specDecisions: (planId) => join2(root, "plans", planId, "DECISIONS.md"),
     specLock: (planId) => join2(root, "plans", planId, "spec.lock"),
@@ -15801,8 +15800,13 @@ ${leftover} task branch(es) still present. \`router land <id>\` merges and delet
 };
 var DOCUMENT_FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 var BRAINSTORM_STATUSES = /* @__PURE__ */ new Set(["brainstorming", "converged", "rejected"]);
-var DESIGN_STATUSES = /* @__PURE__ */ new Set(["design_draft", "design_approved", "design_abandoned"]);
-var PLAN_STATUSES = /* @__PURE__ */ new Set(["plan_draft", "plan_approved", "executing", "done"]);
+var DESIGN_STATUSES = /* @__PURE__ */ new Set([
+  "design_draft",
+  "design_approved",
+  "design_implemented",
+  "design_abandoned"
+]);
+var LEGACY_PLAN_STATUSES = /* @__PURE__ */ new Set(["plan_draft", "plan_approved", "executing", "done"]);
 function documentFrontmatter(text2) {
   const match = DOCUMENT_FRONTMATTER_RE.exec(text2);
   if (match === null) return null;
@@ -15872,7 +15876,7 @@ var plans = (ctx) => {
     } catch (error) {
       if (error.code === "ENOENT") hasPlan = false;
     }
-    let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
+    let stage = hasPlan ? documentStage(planFrontmatter, LEGACY_PLAN_STATUSES) : null;
     let designRevision = null;
     let designFrontmatter = null;
     let hasDesign = true;
@@ -15884,7 +15888,7 @@ var plans = (ctx) => {
     }
     const declared = (frontmatter, allowed) => frontmatter === null ? UNREADABLE_DOCUMENT : documentStage(frontmatter, allowed) ?? unrecognizedStage(frontmatter, allowed);
     if (hasPlan) {
-      stage ??= declared(planFrontmatter, PLAN_STATUSES);
+      stage ??= declared(planFrontmatter, LEGACY_PLAN_STATUSES);
     } else if (hasDesign) {
       stage = declared(designFrontmatter, DESIGN_STATUSES);
     } else {
@@ -15911,18 +15915,18 @@ var plans = (ctx) => {
     const cell = frontmatterCell;
     const width = (header, floor, values) => Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
     const idWidth = width("id", 24, rows.map((r) => printable(r.id)));
-    const revisionWidth = width("revision", 12, rows.map((r) => cell(r.plan_revision ?? "unknown")));
+    const revisionWidth = width("workplan", 12, rows.map((r) => cell(r.plan_revision ?? "-")));
     const designWidth = width("design", 8, rows.map((r) => cell(r.design_revision ?? "-")));
     const stageWidth = width("stage", 8, rows.map((r) => cell(r.stage ?? "-")));
     const critiqueWidth = width("critique", 10, rows.map((r) => r.critique_round === null ? "-" : String(r.critique_round)));
     const decisionsWidth = width("decisions", 12, rows.map((r) => r.decisions ? "yes" : "-"));
     const lines = [
       `Plans (${rows.length}):`,
-      pad2("id", idWidth) + pad2("design", designWidth) + pad2("revision", revisionWidth) + pad2("stage", stageWidth) + pad2("critique", critiqueWidth) + pad2("decisions", decisionsWidth) + "locked"
+      pad2("id", idWidth) + pad2("design", designWidth) + pad2("workplan", revisionWidth) + pad2("stage", stageWidth) + pad2("critique", critiqueWidth) + pad2("decisions", decisionsWidth) + "locked"
     ];
     for (const r of rows)
       lines.push(
-        pad2(printable(r.id), idWidth) + pad2(cell(r.design_revision ?? "-"), designWidth) + pad2(cell(r.plan_revision ?? "unknown"), revisionWidth) + pad2(cell(r.stage ?? "-"), stageWidth) + pad2(r.critique_round === null ? "-" : String(r.critique_round), critiqueWidth) + pad2(r.decisions ? "yes" : "-", decisionsWidth) + (r.locked ? "yes" : "-")
+        pad2(printable(r.id), idWidth) + pad2(cell(r.design_revision ?? "-"), designWidth) + pad2(cell(r.plan_revision ?? "-"), revisionWidth) + pad2(cell(r.stage ?? "-"), stageWidth) + pad2(r.critique_round === null ? "-" : String(r.critique_round), critiqueWidth) + pad2(r.decisions ? "yes" : "-", decisionsWidth) + (r.locked ? "yes" : "-")
       );
     return lines.join("\n");
   });

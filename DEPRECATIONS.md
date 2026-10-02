@@ -9,9 +9,12 @@ message is today.
 
 ## Removal window
 
-Current version: **0.9.x**. Everything below is removed in **0.11.0**.
+Current version: **0.14.x**.
 
-It goes early if either is true:
+The window below was written at 0.9.x and both of its conditions have since passed -- 2026-10-01
+is behind us and the branch execution model has run far more than ten consecutive tasks without a
+fallback. The worktree and `run`-dimension entries are kept as a record of what the names used to
+mean, not as a schedule:
 
 - **Ten consecutive real tasks** complete on the branch execution model with no fallback used.
 - **2026-10-01** passes.
@@ -99,4 +102,42 @@ reasonable judgement later reads as an oversight. It also breaks one acceptance 
 design/plan-flow plan (`/router:spec` must return a deprecation pointer); that plan's closeout
 notes the supersession.
 
-**Fallback:** none. Use `/router:design` and `/router:workplan`.
+**Fallback:** none. Use `/router:design`.
+
+## The work-plan stage: `/router:workplan`, `/router:plan` and `WORKPLAN.md`
+
+**Removed** in 0.14.0, with no stub.
+
+**Replaced by:** nothing, for the breakdown -- it is agreed in conversation at `/router:go`,
+once per feature, and never written to disk. The verification matrix moved into `DESIGN.md` as
+its last section.
+
+**Why:** measured over the five plans that used the stage, the document's core deliverable --
+the approved package list -- did not survive contact with execution. 28 of 35 listed "work
+packages" were main-session steps, which a package contract (`allowed_globs`, line caps, stop
+conditions) does not constrain at all; and of 17 real dispatches, 10 were authored outside the
+approved list during review rounds and retro-fitted into the document afterwards. The premise
+`go` relied on -- "the list was approved at workplan, so skip Touchpoint 1" -- held for under
+half the work, while the document itself cost 240-536 lines of main-session drafting plus an
+approval round, and carried a four-state machine and a revision binding that had already rotted
+(`done` was a status no stage could write until `b616f2f`; the page still pointed at the
+`/router:gate` command removed in 0.10.0).
+
+The token argument that first motivated this is **not** among the reasons, because it did not
+survive checking: the contract carried the whole work plan verbatim, but at ~21k tokens against
+a 3.76M median dispatch input that is 0.6%. Merging dispatches to save cold starts was measured
+too and is not established either -- burn rate rises with run length (median 3,172 tok/s under 5
+minutes, 4,516 over 10), so a saved cold start trades against a fatter context. **Dispatch
+granularity is deliberately unchanged.**
+
+| Item | State |
+|---|---|
+| `/router:workplan`, `/router:plan` | **gone**, no stub. `plan` was already three versions past its own removal date |
+| `WORKPLAN.md` / `PLAN.md` | nothing writes one. `paths.planMd` still **reads** one, so historical plan directories keep reporting the stage they finished in |
+| `plan_draft` / `plan_approved` / `executing` / `done` | legacy vocabulary, read-only, in `LEGACY_PLAN_STATUSES` |
+| `design_implemented` | **new** terminal design status, written only by `/router:review` -- it replaces `done` |
+| `router plans` `revision` column | renamed `workplan`, renders `-` when there is no work plan (now the normal case) |
+| `plan_revision` (task.yaml, contract header, delivery header, metrics) | **kept, and keeps its name**: it now pins a task to the `DESIGN.md` revision it was dispatched against. Delivery headers and `metrics.jsonl` are append-only, and a field meaning one thing in old rows and another in new ones is harder to read than a name that is merely imprecise -- the same reasoning that kept `run_id` and `t_worktree` |
+
+**Fallback:** none. An existing `WORKPLAN.md` is no longer read by `/router:go`; the Design is
+the bar, and anything the work plan still said that the Design does not must move into it.
