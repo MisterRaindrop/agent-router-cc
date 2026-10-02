@@ -30,6 +30,19 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
   over 10), so a saved cold start trades against a fatter context. **Dispatch granularity is
   deliberately unchanged**; changing it needs its own measurement, not this one.
 
+- **Six slash commands that added no capability: `/router:init`, `/router:list`,
+  `/router:result`, `/router:usage`, `/router:models`, `/router:setup-statusline`.** `init` did
+  nothing at all -- its handler printed "optional; router auto-creates this on first use", and the
+  README already said there is no init step. The other five only shelled out to the CLI verb of
+  the same name and summarized its output. The verbs are untouched: `router list`, `router result`,
+  `router usage`, `router models` and `router setup-statusline` work exactly as before, and
+  `setup-statusline` needs no arguments (`--statusline` already defaulted to the bundled script).
+  The command menu drops from 14 entries to 8.
+
+  One cost, recorded rather than hidden: a plugin-only install does not put `router` on `PATH`,
+  and the bundle sits under a version-named directory in the plugin cache. `docs/quickstart.md`
+  gives an alias that resolves the newest version; asking Opus in the session works too.
+
 ### Added
 
 - **Touchpoint 1 now covers the whole feature and is asked once.** Before the first dispatch,

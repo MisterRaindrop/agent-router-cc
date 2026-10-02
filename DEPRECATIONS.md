@@ -141,3 +141,23 @@ granularity is deliberately unchanged.**
 
 **Fallback:** none. An existing `WORKPLAN.md` is no longer read by `/router:go`; the Design is
 the bar, and anything the work plan still said that the Design does not must move into it.
+
+## Thin CLI wrappers: `/router:init`, `/router:list`, `/router:result`, `/router:usage`, `/router:models`, `/router:setup-statusline`
+
+**Removed** in 0.14.0, with no stub.
+
+**Replaced by:** the CLI verbs of the same name, which are unchanged -- `router list`,
+`router result <id>`, `router usage`, `router models`, `router setup-statusline`. `init` has no
+replacement because it never did anything: `.router/` is created on first use by every verb.
+
+**Why:** each one took a slot in the command menu without adding a capability. Five ran one CLI
+verb and summarized its output; the sixth printed that it was optional. Eight commands remain,
+and each of them does something only a command file can -- drive a multi-step flow, or carry
+instructions the main session must follow.
+
+**Fallback:** the plugin does not put `router` on `PATH`. Resolve the bundle in the plugin
+cache (its directory is named after the version, so it moves on every update):
+
+```bash
+alias router='node "$(ls -d ~/.claude/plugins/cache/agent-router-cc/router/*/ | sort -V | tail -1)dist/router.js"'
+```

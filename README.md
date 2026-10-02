@@ -320,12 +320,14 @@ go to lint/CI, not to the LLM.
 | `/router:explain [scope]` | explain implemented code as a standalone page with a concise verdict and one complete design diagram; accepts a commit, range, or `--working-tree` |
 | `/router:review` | strict, independent two-lens review of the landed code |
 | `/router:resume <id>` | send a failure back to that task's own executor session |
-| `/router:result <id>` | per-check verifier report and log tail for a run |
-| `/router:list` | tasks with their last status and whether the task branch is still there |
-| `/router:models` | the resolved model-tier table (bundled default + overrides) |
-| `/router:usage` | cost vs an all-strongest-model baseline; `--routing` for routing evidence |
 | `/router:symbol` | out-of-context symbol index — locate code without reading whole files |
-| `/router:setup-statusline` | wire claude-side quota reads into Claude Code's statusLine |
+
+Looking things up is the CLI's job, not the command menu's: `router list` (tasks and whether
+their branch remains), `router result <id>` (per-check verifier report and log tail),
+`router usage` (cost vs an all-strongest-model baseline), `router models` (the resolved tier
+table) and `router setup-statusline` (wire claude-side quota reads into the statusLine, once).
+The plugin does not put `router` on your `PATH` — [docs/quickstart.md](docs/quickstart.md#the-primitives)
+has the one-line alias, or just ask Opus to run it.
 
 **[docs/workflow.md](docs/workflow.md)** is the whole protocol end to end — work packages,
 tiers and risk, both gate modes, what the executor owes back, and when to resume a

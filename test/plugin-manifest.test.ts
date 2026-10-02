@@ -54,10 +54,15 @@ test('every command has a description in its frontmatter', () => {
   }
 });
 
-test('init keeps router runtime state gitignored and does not mention removed policy flow', () => {
-  const body = read('../commands/init.md');
-  assert.match(body, /do NOT stage or commit/i);
-  assert.doesNotMatch(body, /committed base_sha|default policy|policy works/i);
+// Removed in 0.14.0. `init` did nothing -- its handler printed "optional; router auto-creates this
+// on first use" -- and the other five only shelled out to a CLI verb. Each took a slot in the
+// command menu without adding a capability; the verbs themselves remain on the CLI.
+test('the thin CLI wrappers are not slash commands', () => {
+  const dir = new URL('../commands/', import.meta.url);
+  const present = new Set(readdirSync(dir));
+  for (const gone of ['init', 'list', 'result', 'usage', 'models', 'setup-statusline']) {
+    assert.ok(!present.has(`${gone}.md`), `/router:${gone} was removed; use \`router ${gone}\``);
+  }
 });
 
 test('every agent declares name + model', () => {

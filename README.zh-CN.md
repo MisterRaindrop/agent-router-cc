@@ -270,12 +270,13 @@ Router 会在 `.router/explanations/` 下生成一份可以直接打开的设计
 | `/router:explain [范围]` | 用简短结论和一张完整设计图解释已经完成的代码；生成可直接打开的页面，接受 commit、Git 范围或 `--working-tree` |
 | `/router:review` | 对落地代码的独立、严格的双镜头复审 |
 | `/router:resume <id>` | 把失败原因送回该任务自己的执行器会话 |
-| `/router:result <id>` | 某次运行的逐项校验报告和日志末尾 |
-| `/router:list` | 各任务的最近状态,以及任务分支是否还在 |
-| `/router:models` | 解析后的模型档位表(内置默认 + 覆盖) |
-| `/router:usage` | 相对"全用最强模型"基线的花费;`--routing` 输出路由证据 |
 | `/router:symbol` | 上下文外的符号索引 —— 不读整个文件也能定位代码 |
-| `/router:setup-statusline` | 把 claude 侧配额读取接入 Claude Code 的 statusLine |
+
+查看类的操作交给 CLI,不占命令菜单:`router list`(各任务状态、任务分支是否还在)、
+`router result <id>`(逐项校验报告和日志末尾)、`router usage`(相对"全用最强模型"基线的
+花费)、`router models`(解析后的模型档位表)、`router setup-statusline`(把 claude 侧配额
+读取接入 statusLine,配一次即可)。插件不会把 `router` 放进 `PATH` —— 一行 alias 见
+[docs/quickstart.md](docs/quickstart.md#the-primitives),或者直接让 Opus 帮你跑。
 
 **[docs/workflow.md](docs/workflow.md)** 是完整的端到端协议 —— 工作包、档位与风险、两种
 门禁模式、执行器必须交回什么、什么时候该续会话。另见 **[docs/quickstart.md](docs/quickstart.md)**
