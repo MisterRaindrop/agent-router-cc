@@ -47,25 +47,24 @@ codex is unavailable or out of quota, fall to the next same-strength entry (e.g.
 model for adversarial review.
 
 **Run each reviewer in the background through `router supervise`**, so a review that takes
-minutes is visible while it runs instead of being a silent process:
+minutes runs under a watchdog instead of as a bare process that can hang forever:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" supervise \
-  --label review:<lens> --log .router/plans/<plan_id>/review-<lens>.md \
+  --log .router/plans/<plan_id>/review-<lens>.md \
   -- codex exec -m <model> -c model_reasoning_effort=<effort> ... < /dev/null
 ```
 
-`supervise` publishes an activity record with a cross-process heartbeat (the statusline then
-shows `review:<lens>` with a spinner while it is alive, and `已失联` if it dies), writes the
-child's stdout **and stderr** to `--log` byte-for-byte as `> file 2>&1` would, and passes the
-child's exit code through unchanged. It deliberately does **not** take `gate.lock`, so a review
-and a dispatch can run at the same time and two lenses never queue behind each other.
+`supervise` runs the lens under the same watchdog the codex writer uses -- a wall ceiling, a
+stall timeout, the whole process group killed on exit -- writes the child's stdout **and stderr**
+to `--log` byte-for-byte as `> file 2>&1` would, and passes the child's exit code through
+unchanged. It takes no lock, so two lenses never queue behind each other. Run it in the
+background; Claude Code wakes the session when it ends.
 
-`supervise` landed in 0.12.0. If the installed plugin is older -- run it once with `--help` and
-look, do not assume -- fall back to plain redirection (`codex exec ... > <file> 2>&1 < /dev/null`)
-for this round and say the review is running without a visible liveness line. Silently getting
-`unknown command 'supervise'` and reporting "review started" is the exact failure shape this
-whole plan exists to remove.
+If the installed plugin is older than `supervise` -- run it once with `--help` and look, do not
+assume -- fall back to plain redirection (`codex exec ... > <file> 2>&1 < /dev/null`) for this
+round. Silently getting `unknown command 'supervise'` and reporting "review started" is the
+exact failure shape to avoid.
 
 Then tell the user (e.g. "code review running in the background (<model>, effort <effort>);
 I'll surface the critique when it lands"). `max` effort is opt-in, used only when the user
@@ -137,49 +136,31 @@ it before assuming a flag carries over.
 
 Before reviewing, establish what you are reviewing (see the Preflight section of
 `${CLAUDE_PLUGIN_ROOT}/references/report-template.md`): the `base_sha`/`head_sha` of the
-landed diff; whether the diff is within the declared scope; whether the bar this change is
+change (`<base>..HEAD`); whether the diff is within the declared scope; whether the bar this change is
 judged against was approved by the user (the `DESIGN.md` for work that went through the
 design flow, the package agreed at `/router:go` otherwise); and whether the code changed again
 after the last verification run (if so, prior evidence is stale). **If scope drifted or the
 bar was never approved, stop and return to `/router:design`** -- do not review against a bar
 that no longer matches the code.
 
-**Start from router's own record rather than from scratch.** For each package `/router:go`
-landed, `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" result <id> --json` returns the run
-record. Read these fields first -- they say what is already proven, what is only claimed, and
-where this review must start:
+**Start from what is on disk rather than from memory.** `git log --oneline <base>..HEAD` is the
+change, one functional unit per commit; review it commit by commit. For any part a codex writer
+did, `.router/writes/<id>/` holds two more things worth reading first:
 
-- **`delivery.header`** -- the executor's own report (`gate_ran`, `scope_drift`,
-  `escalate_review`), with the prose at `delivery.path`. `escalate_review: true` forces the full
-  two-lens pass whatever the tier says: the executor is telling you something in there needs
-  judgment. `scope_drift: true` is a Phase 1 finding, not a Phase 2 one. A missing or unparsed
-  header (`delivery_header: missing`, `delivery.header_error`) is a **contract violation** --
-  investigate that before the code, and never read it as "probably fine".
-- **`risk` and `risk_raised_by`** -- the *effective* risk after the CLI's one-way escalation.
-  Review at that level or higher and **never below it**; the tier the plan declared is a floor, not a
-  ceiling. `risk_raised_by` names the deterministic signal that lifted it (changed-line count, a
-  diff touching a path the contract declared invariant, a change spread across several top-level
-  directories). Treat a named signal as a **lead to check**, never as a finding on its own.
-- **`verifier.checks`** -- which environment-free gates ran (`diff_applies`, `scope`,
-  `secret_scan`, `exec_bit`, `verify`) and their per-check result. `verifier: null` means no gate
-  ran at all (contract conflict, timeout, stall) -- that is `unverified`, not a defect in the
-  code, and it makes this stage the first real verification.
-- **`gate`** -- the queue verdict when the project verifies in its own checkout, with `log` as a
-  **path**. `gate_failed_pre_existing` means the same gate also failed on the pre-merge baseline:
-  the failure belongs to the project, not to this change -- and it is equally not evidence *for*
-  this change.
-- **`base_sha` and `merge_commit`** -- the version binding. `land` deletes the run branch, so
-  `git diff <merge_commit>^1 <merge_commit>` is the durable way to see exactly what one package
-  changed.
+- **`BRIEF.md`** -- exactly what the writer was asked to do. Drift is judged against this and the
+  Design, not against your impression of the scope.
+- **`record.json`** -- the model it ran as, its `base_sha`, its `commits`, anything it left
+  `uncommitted` (unfinished work, a Phase 1 finding), `resume_session_mismatch` (a "resume" that
+  was really a fresh run), and its `final_message`. The final message is what it **claims**; it is
+  never an evidence row.
 
-Judge drift against the contract's declared **`invariants`** in `.router/tasks/<id>/task.yaml`
-and its `TASK_CONTRACT.md`, not against your impression of the scope -- "it changed something it
-was told not to" is only checkable because the contract said so. **Cite log paths; never paste
-build output into the report.**
+Judge drift against the Design's **Must NOT** and against what `/router:go`'s Touchpoint 1 said
+each unit would touch -- "it changed something it was told not to" is only checkable because
+someone said so in advance. **Cite log paths; never paste build output into the report.**
 
 ## Phase 2 -- Independent semantic review
 
-Review the change (`git diff` of what `/router:go` landed) from **two lenses** -- run them as two passes (ideally two models for
+Review the change (`git diff <base>..HEAD` of what `/router:go` built) from **two lenses** -- run them as two passes (ideally two models for
 extra independence):
 
 **Architect lens (holistic / functional):** read end-to-end, not just the diff.
@@ -230,13 +211,12 @@ tool that will not run here (e.g. C++ coverage/mutation needing a Docker-only co
 `unverified`, never a faked `pass`; obey the anti-gaming contract. Tooling-dependent matrix
 rows that cannot run become Known Limits, not silent passes.
 
-**A package the gate never ran on is unproven, and this stage is where that shows.** When
-Phase 1 turned up `gate_ran: false`, `verifier: null`, or a queue verdict that never reached a
-pass, the matrix rows whose only evidence would have been that gate are `unverified` until you
-run them here -- run the real gate yourself (`/router:gate <id>` on a queue project, the
-project's own command otherwise) and read the whole output, or record them as Known Limits.
-Do not carry the executor's word across from the delivery report: the report is what it
-*claims*, the gate record is what *ran*, and a claim is not an evidence row.
+**Work whose build never ran is unproven, and this stage is where that shows.** When `/router:go`
+reported "this was never compiled", or a writer's report says a test passed that nobody else ran,
+the matrix rows whose only evidence would have been that run are `unverified` until you run them
+here -- run the project's own command yourself and read the whole output, or record them as Known
+Limits. Do not carry a writer's word across from its report: the report is what it *claims*,
+your run is what *ran*, and a claim is not an evidence row.
 
 ## Phase 4 -- Evidence audit & verdict (print verbatim for the user)
 
@@ -285,8 +265,8 @@ found" is not "proven" -- a required check left `unverified` means `assurance` i
 ## Judge and close the loop
 
 Print all findings verbatim; **the user decides** which are valid (the reviewer errs and
-misses things too). Fix the accepted **blocking** findings (yourself, or dispatch a focused
-task via `/router:go`), then re-run the relevant tests, then a **fresh run of the full
+misses things too). Fix the accepted **blocking** findings (yourself, or -- when the user
+names it -- through the codex writer that did the work, with one complete `router resume`), then re-run the relevant tests, then a **fresh run of the full
 Verification Matrix against the final code** (prior evidence is now stale), then **resume
 the same reviewer session** to confirm each blocking finding is genuinely resolved --
 verify against the new code, never on a "fixed it" claim.

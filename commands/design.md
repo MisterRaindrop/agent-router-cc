@@ -55,9 +55,9 @@ shipped one for months.
 
 Approval is an explicit user action and **always the last action of the stage**. Any edit
 after approval bumps `revision`, requires re-approval, and is recorded in a Revision Log
-section -- a changed bar must be visible, never silent. A dispatched task is pinned to the
-revision it was dispatched against (`plan_revision` in its `task.yaml`), so work already
-running is refused rather than quietly landing against a new bar.
+section -- a changed bar must be visible, never silent. `/router:go` notes the revision it
+builds against and stops when it moves, so work already under way is not quietly held to a new
+bar.
 
 ## Interaction discipline (hard rules, shared with the whole flow)
 

@@ -75,11 +75,11 @@ test('every agent declares name + model', () => {
   }
 });
 
-test('hooks.json wires the PreToolUse guard and the guard script exists', () => {
-  const h = JSON.parse(read('../hooks/hooks.json'));
-  assert.ok(h.hooks.PreToolUse);
-  assert.match(JSON.stringify(h), /guard-router-state\.mjs/);
-  assert.ok(existsSync(fileURLToPath(new URL('../hooks/guard-router-state.mjs', import.meta.url))));
+// The PreToolUse guard protected an executor's run records from being forged. Those records went
+// with the executor in 0.15.0, and a guard left behind would block the main session from writing a
+// codex brief under .router/writes/ -- which go.md tells it to do.
+test('no hook is shipped: nothing under .router is an input to a decision any more', () => {
+  assert.equal(existsSync(fileURLToPath(new URL('../hooks/', import.meta.url))), false);
   void root;
 });
 
@@ -150,13 +150,14 @@ test('no command file still advertises a removed mechanism', () => {
   for (const file of commandFiles()) {
     const body = readFileSync(new URL(file, COMMANDS), 'utf8');
     const description = frontmatter(body).description ?? '';
-    for (const gone of [/worktree/i, /concurrent/i, /in parallel/i, /--max-parallel/]) {
+    for (const gone of [/worktree/i, /concurrent/i, /in parallel/i, /--max-parallel/, /executor/i, /dispatch/i, /quota/i]) {
       assert.doesNotMatch(description, gone, `${file} description: ${description}`);
     }
   }
-  // go.md may still SAY "worktree" -- it explains why there isn't one -- but only in the body.
+  // The main session writes by default, and delegating is the user's call, never the model's.
   const go = readFileSync(new URL('go.md', COMMANDS), 'utf8');
-  assert.match(go, /does not get a\nseparate worktree, because/);
+  assert.match(go, /\*\*You write the code, in this session\.\*\*/);
+  assert.match(go, /Never choose that yourself\./);
 });
 
 test('the five flow commands all exist', () => {
@@ -248,36 +249,14 @@ test('the work-plan stage is gone from the command surface', () => {
   assert.match(design, /`unverified`/);
 });
 
-// go.md was 379 lines with a single `##` heading, 64 of them describing concurrent dispatch.
-// Both are gone: the concurrency because the feature is, the bulk because contract-authoring
-// detail moved to references/ where it can be read when it is needed.
-test('go.md carries the flow, not the contract-authoring detail', () => {
+// go.md was 379 lines with a single `##` heading, then 279 once dispatch was one package at a
+// time. The flow stays here; how to brief a codex writer lives one reference away.
+test('go.md carries the flow, not the brief-authoring detail', () => {
   const body = readFileSync(new URL('go.md', COMMANDS), 'utf8');
-  assert.doesNotMatch(body, /--max-parallel/);
-  assert.doesNotMatch(body, /CONCURRENTLY/);
-  assert.doesNotMatch(body, /run independent packages/i);
-  // The detail it used to inline now lives one reference away.
-  assert.match(body, /references\/task-contract\.md/);
-  assert.doesNotMatch(body, /allowed_globs`: the smallest scope/);
-  assert.ok(body.split('\n').length < 280, `go.md is ${body.split('\n').length} lines`);
-});
-
-// The three-way contradiction the design review found: go.md said TASK_CONTEXT.md is not
-// written, go.md also said to write it, and work-package.md said by default. One answer now.
-test('TASK_CONTEXT.md has one answer across the whole repository', () => {
-  const files = [
-    readFileSync(new URL('go.md', COMMANDS), 'utf8'),
-    readFileSync(new URL('../references/task-contract.md', import.meta.url), 'utf8'),
-    readFileSync(new URL('../references/work-package.md', import.meta.url), 'utf8'),
-  ];
-  for (const body of files) {
-    for (const line of body.split('\n')) {
-      if (!line.includes('TASK_CONTEXT')) continue;
-      assert.doesNotMatch(line, /written \*\*by default\*\*|Also write `TASK_CONTEXT/, line);
-    }
-  }
-  const combined = files.join('\n');
-  assert.match(combined, /`TASK_CONTEXT\.md` is \*\*not\*\* written|`TASK_CONTEXT\.md` is not written/);
+  assert.doesNotMatch(body, /router\.js" (dispatch|land|gate|result|list|usage|orchestrator-usage)\b/);
+  assert.match(body, /references\/codex-writer\.md/);
+  assert.ok(existsSync(fileURLToPath(new URL('../references/codex-writer.md', import.meta.url))));
+  assert.ok(body.split('\n').length < 200, `go.md is ${body.split('\n').length} lines`);
 });
 
 test('design-review asks its reviewer what it could not follow', () => {
@@ -332,18 +311,18 @@ test('the writing skill loads in two levels and declares no mechanical lint', ()
 // The glossary is the source rule 6 points at, and the two ambiguous words are the reason it
 // exists: an ambiguous term is worse than an undefined one, because the reader does not know they
 // have misunderstood.
-test('the glossary splits the two words that were doing several jobs', () => {
+test('the glossary defines the words a newcomer cannot guess, and retires the dead ones', () => {
   const g = readFileSync(new URL('../references/glossary.md', import.meta.url), 'utf8');
-  for (const name of ['environment-free gate', 'scope gate', 'project gate']) {
-    assert.match(g, new RegExp(name.replace(/[-]/g, '.')), `glossary must name "${name}"`);
-  }
   assert.match(g, /detached process/);
   assert.match(g, /detached HEAD/);
   // The reviewer's confusion list, and the words that no longer name anything.
-  for (const term of ['work package', 'functional unit', 'base_sha', 'rescue commit', 'probe', 'floor check', 'slug']) {
+  for (const term of ['main session', 'codex writer', 'brief', 'functional unit', 'base_sha', 'probe', 'floor check', 'slug']) {
     assert.match(g, new RegExp(term.replace(/[_]/g, '.')), `glossary must define "${term}"`);
   }
   assert.match(g, /## Retired words/);
+  for (const retired of ['executor', 'tier', 'quota balancing', 'land', 'work plan']) {
+    assert.match(g, new RegExp(`\\*\\*${retired}`), `retired words must list "${retired}"`);
+  }
 });
 
 // `done` was a legal work-plan status from the day the flow was written and nothing ever set it:

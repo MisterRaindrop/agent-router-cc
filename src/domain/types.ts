@@ -4,7 +4,8 @@
 // Central domain types. Leaf module: imports nothing, imported by every ring.
 
 // -- Worker exit taxonomy ----------------------------------------------------
-// env_error is special: it does NOT count as a real attempt.
+// env_error is special: the environment was wrong (codex missing, not logged in), so the run
+// says nothing about the work.
 export type ExitClass =
   | 'ok'
   | 'contract_conflict'
@@ -13,26 +14,19 @@ export type ExitClass =
   | 'stalled'
   | 'killed'
   | 'worker_crash'
-  | 'env_error'
-  | 'quota_exhausted'; // provider rate-limit/quota hit; does NOT count as an attempt
+  | 'env_error';
 
-export type WorkerKind = 'codex' | 'claude'; // both are plan-auth CLIs; more can be added
+/** `codex` writes code when the user names a model; `claude` remains a reviewer kind. */
+export type WorkerKind = 'codex' | 'claude';
 
-/** An executor pin: which CLI runs the task, and (optionally) which model slug. */
+/** A model pin: which CLI, which slug, which reasoning effort. */
 export interface WorkerPolicy {
   kind: WorkerKind;
-  api_key_env?: string; // env var to whitelist into the worker (plan-auth CLIs need none)
-  model?: string; // pinned model slug passed to the worker (-m / --model); recorded in runs
-  effort?: string; // reasoning-effort level (codex -c model_reasoning_effort= ; claude --effort)
-  max_wall_minutes_default?: number;
-  stall_minutes?: number;
+  model?: string; // pinned model slug passed to the CLI (-m / --model)
+  effort?: string; // reasoning-effort level (codex -c model_reasoning_effort=)
 }
 
-// -- Tiered model routing (config-driven; see app/modelConfig.ts) ---------------
-// Opus judges each dispatch task's difficulty and tags a tier; the config maps
-// tier -> {model, effort} per executor, and router still picks the executor by
-// quota. spec/review always use the strongest, independent reviewer (config.review).
-export type ModelTier = 'weak' | 'strong' | 'critical';
+// -- Model choices (config-driven; see app/modelConfig.ts) ----------------------
 
 /** One model choice: a slug plus an optional reasoning-effort level. */
 export interface ModelSpec {
@@ -40,347 +34,43 @@ export interface ModelSpec {
   effort?: string;
 }
 
-/** The model menu: per-executor tier slugs + the ordered reviewer chain. */
-export interface ModelTierConfig {
-  codex: { weak: ModelSpec; strong: ModelSpec; critical: ModelSpec };
-  claude: { weak: ModelSpec; strong: ModelSpec; critical: ModelSpec };
-  /** spec/review reviewer candidates, strongest first (kind + model + effort). */
+/** The models router launches: the external codex writer, and the ordered reviewer chain. */
+export interface ModelConfig {
+  /** `router write` default when no model is named. Always a codex slug. */
+  writer: ModelSpec;
+  /** design-review / review candidates, strongest first (kind + model + effort). */
   review: WorkerPolicy[];
 }
 
-// -- Real verification gate (config-driven; see app/gateConfig.ts) ------------
-export type GateMode = 'worktree' | 'queue';
+// -- External writer runs (see app/write.ts) -----------------------------------
 
-export interface GateConfig {
-  mode: GateMode;
-  /** Branch the queue owns and merges verified commits into. Required when mode is 'queue'. */
-  integration_branch?: string;
-  /** The real gate, as argv arrays, run in the borrowed checkout. Required when 'queue'. */
-  gate?: string[][];
-  /** Optional: a heavier gate for changes an incremental build cannot be trusted for. */
-  clean_gate?: string[][];
-  /** Optional: globs that force `clean_gate` (build files, generators). A deletion also does. */
-  clean_triggers?: string[];
-  /** Optional: run before every gate to reset business state (never compile caches). */
-  reset?: string[][];
-  /** How long to wait for the lock before giving up. Default 60. */
-  lock_wait_minutes?: number;
-  /** Additional parent-environment variable names explicitly exposed to the gate. */
-  env?: string[];
-  /** Hard wall-clock limit for each reset/gate command. Default 180. */
-  gate_wall_minutes?: number;
-}
-
-// -- task.yaml (machine contract; schema-validated) ----------------------------
-export interface TaskYaml {
-  schema_version: 1;
+/** What one `router write` / `router resume` did, recorded at `.router/writes/<id>/record.json`. */
+export interface WriteRecord {
   id: string;
-  /** Dispatch-plan identifier; absent for tasks created before plan grouping. */
-  plan_id?: string;
-  /**
-   * Revision of the frozen document this contract belongs to -- `DESIGN.md` since 0.14.0, a
-   * `WORKPLAN.md`/`PLAN.md` for tasks dispatched before that. The name predates the change and
-   * is kept because the records carrying it are append-only.
-   */
-  plan_revision?: string;
-  /** Task ids that must land before this task may run. */
-  depends_on?: string[];
-  /** Constraints the task may not change, used by reviewers to judge drift. */
-  invariants?: string[];
-  /** Assurance risk using the shared low/normal/high vocabulary. */
-  risk?: 'low' | 'normal' | 'high';
-  /** Contract intent; probe is reserved for a future read-only pre-check. */
-  mode?: 'implement' | 'probe';
-  title: string;
-  base_sha: string | null; // null until a diff is produced against a base commit (40-hex)
-  max_wall_minutes: number;
-  allowed_globs: string[];
-  forbidden_globs?: string[];
-  max_changed_lines?: number;
-  /** The mechanical verify command(s) run on the diff (argv arrays; [] = none). */
-  verify?: string[][];
-  /** Difficulty tier Opus assigns; resolves to per-executor model+effort via config. */
-  tier?: ModelTier;
-  /** Explicit executor pin (kind + optional model); overrides `tier` when set. */
-  worker?: WorkerPolicy;
-}
-
-// -- Effective scope (task-derived, precomputed by the app layer) --------------
-// core/scope.ts consumes this so it stays pure and free of merge policy.
-export interface EffectiveScope {
-  allowed_globs: string[];
-  forbidden_globs: string[];
-  test_globs: string[];
-  max_changed_lines: number;
-}
-
-// -- Parsed git diff entry (produced by io/git, consumed by core/scope) --------
-export type DiffStatus = 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U' | 'X';
-
-export interface DiffEntry {
-  status: DiffStatus;
-  path: string; // new path (or the path for A/M/D)
-  oldPath?: string; // set for renames/copies
-  added: number;
-  deleted: number;
-  binary: boolean;
-  newMode?: string; // git file mode of the new blob, e.g. '100644' / '100755'
-}
-
-export type ScopeViolationKind =
-  | 'not_allowed'
-  | 'forbidden'
-  | 'test_deletion'
-  | 'max_lines'
-  | 'empty_diff';
-
-export interface ScopeViolation {
-  kind: ScopeViolationKind;
-  path?: string;
-  detail: string;
-}
-
-export interface ScopeVerdict {
-  ok: boolean;
-  changedLines: number;
-  violations: ScopeViolation[];
-}
-
-// -- Verifier report -----------------------------------------------------------
-export interface VerifierCheck {
-  id: string;
-  ok: boolean;
-  detail?: string;
-  rc?: number;
-}
-
-export interface VerifierReport {
-  result: 'PASSED' | 'FAILED';
-  checks: VerifierCheck[];
-  changed_lines?: number;
-  /**
-   * A verify command hit the hard timeout. Still a FAILED report -- nothing may land on it --
-   * but the distinction matters when reporting: a timeout proves nothing about the change,
-   * so it is `unverified` in assurance terms, not evidence that the code is broken.
-   */
-  timed_out?: boolean;
-  /**
-   * A gate or verify command left a process group that outlived SIGKILL. Like `timed_out` this is
-   * `unverified` rather than a defect in the change -- but it is worse in one way the caller has to
-   * act on: something is still able to write this checkout, so the lock may not be released.
-   */
-  group_survived?: boolean;
-}
-
-// -- Run result + metrics ------------------------------------------------------
-export interface GateResult {
-  ok: boolean;
-  reason?: string;
-  level?: 'task' | 'clean';
-  integration_branch?: string;
-  base_sha?: string;
-  head_sha?: string;
-  log?: string;
-  holder?: {
-    pid: number;
-    startedAtMs: number;
-    beatAtMs: number;
-    label?: string;
-  } | null;
-  /** The tracked modifications that made the checkout unborrowable (capped for display). */
-  dirty?: string[];
-  /** Why a coded `reason` happened, when the code alone does not say enough to act on. */
-  detail?: string;
-  /** Output of the failing `reset` command, when a reset is what stopped the gate. */
-  reset_log?: string;
-  rc?: number | null;
-}
-
-export interface DeliveryHeader {
-  task: string;
-  plan_revision?: string;
-  gate_ran: boolean;
-  scope_drift: boolean;
-  escalate_review: boolean;
-}
-
-export interface RunResult {
-  task_id: string;
-  attempt_number: number;
+  model: string;
+  effort?: string;
+  /** The branch the writer worked on. A resume refuses to run anywhere else. */
+  branch: string;
+  /** HEAD when the first write started: every commit the writer made is `base_sha..HEAD`. */
+  base_sha: string;
+  /** codex's own session id; what `router resume` re-attaches to. */
+  session_id: string | null;
   exit_class: ExitClass;
   rc: number | null;
-  timed_out: boolean;
-  stalled: boolean;
-  env_error: boolean;
   started_at: string;
   ended_at: string;
-  wall_seconds: number;
-  worker: { kind: WorkerKind; model?: string; effort?: string };
-  executor_switches?: number; // times we fell back to the next executor (quota/env)
-  model_mismatch?: boolean; // executor rejected the configured slug -> config likely stale
-  context_oversize?: boolean; // optional task context exceeded its soft character limit
-  conflict?: boolean; // executor found that the code contradicts the frozen contract
-  risk?: 'low' | 'normal' | 'high'; // effective risk after deterministic escalation
-  risk_raised_by?: string[];
-  commands_run?: number; // executor command_execution events (codex; absent when unavailable)
-  tokens?: { input: number; output: number };
-  cost_usd?: number;
-  verifier?: VerifierReport;
-  gate?: GateResult;
-  diff_sha?: string;
-  /**
-   * The exact commit the verifier judged.
-   *
-   * A PASSED record used to authorize the task BRANCH, not a commit -- so anything appended to
-   * that branch afterwards (a resume, or the user by hand) was merged by `land` on the strength
-   * of a verdict that had never seen it. Recorded whenever a verifier ran; `land` refuses a
-   * branch whose tip has moved past it.
-   */
-  verified_head?: string;
-  session_id?: string | null; // executor session/thread id, for a later `router resume`
-  resumed?: boolean; // this run continued a prior executor session
-  resume_session_mismatch?: boolean; // resume did NOT re-attach to the prior session (fail-loud)
-  /** What the resumed run actually reported: another id, or `null` for none at all. */
-  resume_reported_session?: string | null;
-  base_sha?: string; // commit the task branch was created from (diff base; used by resume)
-  /** The task branch this run developed on. The final report has to name it: the user is left
-   *  standing on it, and router never merges or switches back for them. */
-  branch?: string;
-  /** Step 4: the user's own uncommitted work, committed onto their branch before anything moved.
-   *  Present only when there was something to rescue -- a clean tree gets no empty commit. */
-  rescue_sha?: string;
-  /** Commits made solely so a destructive reset could not lose them. Unreachable after the
-   *  reset, recoverable by sha -- which is the whole reason they are reported. */
-  discarded_shas?: string[];
-  /** Step 9, the closing invariant, checked before verification and reported either way.
-   *  A run that fails it is not verified and does not claim completion. */
-  closeout?: { ok: true } | { ok: false; reason: string; files: string[] };
-  /**
-   * Orchestration state under `.router/` that the executor changed and had no business changing.
-   * Present only when something was detected; its presence fails the run.
-   */
-  state_tampering?: string[];
-  /**
-   * Concurrent orchestration-state changes that were observed but cannot alter this run's
-   * frozen contract or verdict. Unlike state_tampering, these do not fail the run.
-   */
-  state_changes?: string[];
-  /**
-   * Something in the executor's process group outlived SIGKILL and can still write the checkout.
-   * The run is failed rather than verified: every later step would be racing that writer.
-   */
-  executor_group_survived?: boolean;
-  /** Submodule content dirt seen in the checkout. Not the user's work and not rescuable (it
-   *  lives in another repository), so it is reported rather than acted on. */
-  dirty_submodules?: string[];
-  // The run ended non-ok, so nothing was committed -- but the worktree still holds changes.
-  // Set so a caller can recover work from a run that was killed after it had finished.
-  uncommitted_changes?: boolean;
-  delivery?: {
-    path: string;
-    header: DeliveryHeader | null;
-    header_error?: string;
-  };
-  // `land` merges the run branch with --no-ff and then deletes it, so this merge
-  // commit is the only durable handle on what the task changed:
-  // `git show <merge_commit>` / `git diff <merge_commit>^1 <merge_commit>`.
-  merge_commit?: string;
-}
-
-export type RunPhase = 'queued' | 'worktree' | 'executor_starting' | 'executor_working' | 'gating' | 'verify';
-
-export type RunTerminalState = 'succeeded' | 'failed' | 'stalled' | 'timed_out' | 'cancelled';
-
-export interface RunStatus {
-  phase: RunPhase;
-  terminal_state?: RunTerminalState;
-  started_at: string;
-  phase_started_at: string;
-  budget_minutes: number;
-  last_output_at: string | null;
-  stall_deadline: string | null;
-  recent_action?: string;
-}
-
-// -- Router-managed activity -------------------------------------------------
-// A display-only liveness record. It must never authorize a state transition: task/result files
-// remain the source of truth for dispatch, land, queue admission, and every other decision path.
-export type ActivityOutcome = 'ok' | 'failed' | 'timed_out' | 'stalled';
-
-export interface ActivityRecord {
-  label: string;
-  /** Unique authority for the heartbeat; labels, pids, and timestamps are not ownership. */
-  owner_token: string;
-  /** The router process that owns the whole activity, not a worker it may have launched. */
-  pid: number;
-  started_at: string;
-  /** Refreshed by an out-of-process heartbeat so spawnSync cannot freeze it. */
-  beat_at: string;
-  ended_at?: string;
-  outcome?: ActivityOutcome;
-  /** Optional richer status document, e.g. tasks/<id>/status.json for a dispatch. */
-  status_path?: string;
-}
-
-export interface RunPhaseTimings {
-  t_worktree: number;
-  t_launch: number;
-  t_exec: number;
-  t_gate: number;
-  t_verify: number;
-}
-
-export interface MetricRecord {
-  ts: string;
-  task_id: string;
-  /** Dispatch-plan identifier; absent on metrics recorded before plan grouping. */
-  plan_id?: string;
-  /** Revision of the frozen document associated with this task; see `TaskYaml.plan_revision`. */
-  plan_revision?: string;
-  task_context_present?: boolean;
-  task_context_chars?: number;
-  task_context_sha256?: string;
-  context_base_sha?: string;
-  /** Whether this metric is for the main model or an executor. */
-  role?: 'executor' | 'orchestrator';
-  /**
-   * Legacy label: `'orchestrator'` for a main-model row, `'run-001'` for an executor one.
-   *
-   * Kept, unlike RunResult's, because metrics.jsonl is append-only history: a field that means
-   * one thing in the old rows and another in the new ones is worse to read than a constant.
-   * Nothing branches on it.
-   */
-  run_id: string;
-  attempt_number: number;
-  model: string | null;
-  executor?: WorkerKind | null; // which executor produced this run
-  tier?: ModelTier;
-  effort?: string;
-  risk?: 'low' | 'normal' | 'high';
-  conflict?: boolean;
-  commands_run?: number;
-  exit_class: ExitClass;
-  verifier_result: 'PASSED' | 'FAILED' | null;
-  first_pass: boolean;
-  tokens_input: number | null;
-  tokens_output: number | null;
-  cost_usd: number | null;
-  wall_seconds: number;
-  t_worktree?: number;
-  t_launch?: number;
-  t_exec?: number;
-  t_gate?: number;
-  t_verify?: number;
-  escalated: boolean;
-  env_error: boolean;
-}
-
-/** Real remaining-quota snapshot for one executor, read from its local usage source. */
-export interface ExecutorQuota {
-  kind: WorkerKind;
-  used_percent: number; // 0..100 of the most-binding window (higher = less headroom)
-  resets_at: number | null; // unix seconds when the binding window resets, if known
-  available: boolean; // false when a hard limit was hit (reactive 429 / reached_type)
+  /** How many times this session has been resumed. */
+  resumes: number;
+  /** `git log --oneline base_sha..HEAD` after the run. */
+  commits: string[];
+  /** Files the writer left modified or untracked -- work it did not commit. */
+  uncommitted: string[];
+  /** The writer's last message, verbatim. */
+  final_message?: string;
+  /** Set when a resume reported a different session (or none): the run is not a continuation. */
+  resume_session_mismatch?: boolean;
+  /** Set when the CLI rejected the configured model slug. */
+  model_mismatch?: boolean;
 }
 
 // -- code intelligence: symbol index (P1) --

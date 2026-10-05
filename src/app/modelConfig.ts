@@ -4,47 +4,27 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { load, JSON_SCHEMA } from 'js-yaml';
-import type { ModelSpec, ModelTier, ModelTierConfig, WorkerPolicy } from '../domain/types.ts';
+import type { ModelConfig, ModelSpec, WorkerPolicy } from '../domain/types.ts';
 import type { RouterPaths } from '../io/paths.ts';
 
-// The model menu for tiered routing. A bundled default ships in this file so the
-// config always exists (routing never needs a hand-written file to work). A repo
-// may override it with `.router/models.yaml`; overrides are shallow-merged per
-// (executor, tier) slot, and `review` replaces the whole chain if present.
+// The models router launches. A bundled default ships in this file so the config always exists;
+// a repo may override it with `.router/models.yaml`. Nothing here is ever auto-modified.
 //
-// Slugs are the standard codex/claude subscription models. They may go stale as a
-// provider updates its lineup; a dispatch that a CLI rejects surfaces a warning
-// (see core/exitTaxonomy.detectModelMismatch) telling the user to edit models.yaml.
-// Nothing here is ever auto-modified.
-
-// Reasoning effort is matched to the work, because effort buys latency: an executor
-// runs on the critical path of `go`, and a measured plan of five dispatches spent
-// 766s of executor wall time at `xhigh`/`max` on work whose contract already said
-// what to do. Effort is not free capability -- on a task specified down to the
-// signature, deeper deduction mostly re-derives the contract. So: `medium` for
-// mechanical implementation (weak), `high` for a task that needs real capability
-// (strong), and `xhigh` for critical work. `critical` means security, concurrency,
-// or an architectural invariant is at stake -- not merely "this feels big".
-// Escalate per task with an explicit `worker` pin, or per repo in
-// `.router/models.yaml`; nothing here is ever auto-modified.
-export const DEFAULT_MODEL_CONFIG: ModelTierConfig = {
-  codex: {
-    weak: { model: 'gpt-5.6-terra', effort: 'medium' },
-    strong: { model: 'gpt-5.6-sol', effort: 'high' },
-    critical: { model: 'gpt-5.6-sol', effort: 'xhigh' },
-  },
-  claude: {
-    weak: { model: 'haiku', effort: 'medium' },
-    strong: { model: 'sonnet', effort: 'high' },
-    critical: { model: 'opus', effort: 'xhigh' },
-  },
-  // spec/review: strongest + independent (non-Claude first); fall to a same-strength
-  // Claude reviewer if codex is unavailable/out of quota. Review runs in the
-  // background, so its effort buys judgment rather than blocking the human -- but a
-  // reviewer that thinks for fifteen minutes also slows the round trip it exists to
-  // serve, and plan/code review rewards breadth over deep single-chain deduction.
-  // `high` is the default; `xhigh` or `max` is an explicit opt-in for a rare final
-  // high-stakes pass, set in `.router/models.yaml`.
+// There used to be a weak / strong / critical tier per executor, and a quota balancer choosing
+// between codex and claude for each dispatch. Both went with the executor model in 0.15.0: the
+// main session writes the code, and codex is launched only when the user names it. What is left
+// is one default for that writer and the reviewer chain.
+//
+// The writer defaults to what dispatch had converged on by the end: the codex `critical` row,
+// `gpt-5.6-sol` at `xhigh`. The pin always carries the effort explicitly, because an omitted
+// effort silently falls back to the provider default.
+export const DEFAULT_MODEL_CONFIG: ModelConfig = {
+  writer: { model: 'gpt-5.6-sol', effort: 'xhigh' },
+  // design-review / review: strongest + independent (non-Claude first); fall to a same-strength
+  // Claude reviewer if codex is unavailable. Review runs in the background, so its effort buys
+  // judgment rather than blocking the human -- but a reviewer that thinks for fifteen minutes
+  // also slows the round trip it exists to serve, and review rewards breadth over deep
+  // single-chain deduction. `high` is the default; `xhigh` or `max` is an explicit opt-in.
   review: [
     { kind: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { kind: 'claude', model: 'opus', effort: 'high' },
@@ -60,53 +40,38 @@ function isSpec(v: unknown): v is ModelSpec {
   return typeof v === 'object' && v !== null && typeof (v as ModelSpec).model === 'string';
 }
 
-/** Deep-clone the default so callers never mutate the shared constant. */
-function cloneDefault(): ModelTierConfig {
-  return JSON.parse(JSON.stringify(DEFAULT_MODEL_CONFIG)) as ModelTierConfig;
+function spec(v: ModelSpec): ModelSpec {
+  return { model: v.model, ...(v.effort ? { effort: v.effort } : {}) };
 }
 
 /**
- * The resolved model config = bundled default, overlaid with `.router/models.yaml`
- * if present. Missing file or unreadable/partial override falls back to the default
- * (per slot), so routing always has a complete config to work from.
+ * The resolved config = bundled default, overlaid with `.router/models.yaml` if present. A
+ * missing or unreadable file falls back to the default, so launching never needs a hand-written
+ * file to work.
+ *
+ * A models.yaml written for the tiered config is still honoured where it can be: with no
+ * `writer:` key, its `codex.critical` row is the writer, since that is the row dispatch used.
  */
-export function loadModelConfig(paths: RouterPaths): ModelTierConfig {
-  const cfg = cloneDefault();
+export function loadModelConfig(paths: RouterPaths): ModelConfig {
+  const cfg: ModelConfig = JSON.parse(JSON.stringify(DEFAULT_MODEL_CONFIG)) as ModelConfig;
   let raw: unknown;
   try {
     raw = load(readFileSync(modelsYamlPath(paths), 'utf8'), { schema: JSON_SCHEMA });
   } catch {
-    return cfg; // no file (or parse error) -> bundled default
+    return cfg;
   }
   if (typeof raw !== 'object' || raw === null) return cfg;
   const o = raw as Record<string, unknown>;
 
-  for (const kind of ['codex', 'claude'] as const) {
-    const section = o[kind];
-    if (typeof section === 'object' && section !== null) {
-      for (const tier of ['weak', 'strong', 'critical'] as const) {
-        const spec = (section as Record<string, unknown>)[tier];
-        if (isSpec(spec)) cfg[kind][tier] = { model: spec.model, ...(spec.effort ? { effort: spec.effort } : {}) };
-      }
-    }
-  }
+  const legacy = (o.codex as Record<string, unknown> | undefined)?.critical;
+  if (isSpec(o.writer)) cfg.writer = spec(o.writer);
+  else if (isSpec(legacy)) cfg.writer = spec(legacy);
+
   if (Array.isArray(o.review)) {
     const chain = o.review.filter(
-      (r): r is WorkerPolicy =>
-        typeof r === 'object' && r !== null && (r as WorkerPolicy).kind !== undefined,
+      (r): r is WorkerPolicy => typeof r === 'object' && r !== null && (r as WorkerPolicy).kind !== undefined,
     );
     if (chain.length > 0) cfg.review = chain;
   }
   return cfg;
-}
-
-/**
- * Candidate executors for a dispatch task at a given tier: one per executor,
- * each carrying that tier's model + effort. Router then picks by quota.
- */
-export function tierWorkers(cfg: ModelTierConfig, tier: ModelTier): WorkerPolicy[] {
-  return (['codex', 'claude'] as const).map((kind) => {
-    const spec = cfg[kind][tier];
-    return { kind, model: spec.model, ...(spec.effort ? { effort: spec.effort } : {}) };
-  });
 }

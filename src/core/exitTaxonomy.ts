@@ -3,9 +3,9 @@
 
 import type { ExitClass } from '../domain/types.ts';
 
-// Classify how a worker run ended. env_error is deliberately its own class: it
-// means the environment was wrong (codex missing, auth absent) rather than the
-// task failing, and the escalation ladder must NOT count it as an attempt. PURE.
+// Classify how a writer run ended. env_error is deliberately its own class: it means the
+// environment was wrong (codex missing, auth absent) rather than the work failing, so the run
+// says nothing about the code. PURE.
 
 export interface SupervisionObservation {
   spawnError: boolean; // the worker binary couldn't be launched
@@ -24,11 +24,6 @@ export function classifyExit(o: SupervisionObservation): ExitClass {
   if (o.signal !== null) return 'worker_crash';
   if (o.exitCode === 0) return 'ok';
   return 'task_failed';
-}
-
-/** Setup/quota failures and a correct contract refusal do not burn a task attempt. */
-export function countsAsAttempt(exitClass: ExitClass): boolean {
-  return exitClass !== 'env_error' && exitClass !== 'quota_exhausted' && exitClass !== 'contract_conflict';
 }
 
 /**
@@ -51,17 +46,17 @@ export function detectContractConflict(finalMessage: string | null | undefined):
 /**
  * The worker log is not all *about* the worker: it relays whole command transcripts and file
  * contents from the work the executor did. Classifying on that text is unsound -- this
- * project's own sources and test names contain "quota" and "unknown model", so an executor
- * that merely ran the test suite and then failed would be reclassified as a provider quota
- * hit or a stale model config. (Both were observed on a real run.)
+ * project's own sources and test names contain "not logged in" and "unknown model", so an
+ * executor that merely ran the test suite and then failed would be reclassified as an
+ * authentication failure or a stale model config. (Both were observed on a real run.)
  *
  * So keep only what the executor said about *itself*: raw non-JSON diagnostic lines, plus
  * JSON events that are not relayed content. A provider failure arrives as a raw `ERROR: {...}`
  * line (observed) and therefore survives this filter, while codex `item.*` events and claude
  * `assistant`/`user` events -- command output, file diffs, tool results, model prose -- do not.
  *
- * Erring this way is the safe direction: missing a real quota hit costs one re-dispatch,
- * whereas inventing one silently switches executors and does not count as an attempt. PURE.
+ * Erring this way is the safe direction: missing a real provider failure costs one rerun, whereas
+ * inventing one misreports why the work stopped. PURE.
  */
 export function executorDiagnostics(logText: string): string {
   const kept: string[] = [];
@@ -85,26 +80,6 @@ export function executorDiagnostics(logText: string): string {
     kept.push(line);
   }
   return kept.join('\n');
-}
-
-// Default signatures for a provider rate-limit / quota exhaustion in the worker log.
-// Conservative so ordinary failures (a failing test, `exit 1`) are NOT reclassified.
-export const DEFAULT_QUOTA_PATTERN =
-  '\\b(rate.?limit|rate_limited|usage limit|usage_limit_reached|quota|insufficient_quota|too many requests|429)\\b';
-
-/**
- * A worker that "failed" may actually have hit the provider's quota/rate limit.
- * If the exit looks like a plain failure/crash AND the log matches the quota
- * pattern, reclassify as quota_exhausted (so it triggers fallback, not an attempt).
- * PURE.
- */
-export function reclassifyQuota(
-  exitClass: ExitClass,
-  logText: string,
-  pattern: string = DEFAULT_QUOTA_PATTERN,
-): ExitClass {
-  if (exitClass !== 'task_failed' && exitClass !== 'worker_crash') return exitClass;
-  return new RegExp(pattern, 'i').test(executorDiagnostics(logText)) ? 'quota_exhausted' : exitClass;
 }
 
 // Provider authentication failures are environment/setup failures, not evidence

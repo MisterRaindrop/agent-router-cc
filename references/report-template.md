@@ -8,23 +8,20 @@ State up front:
 - `base_sha` / `head_sha` under review (the diff `/router:go` landed), and each package's
   `merge_commit` when there was more than one.
 - Is the diff within the declared scope? (note any drift)
-- Was the bar approved by the user (the Design/Plan, or the plan agreed at `/router:go`)?
+- Was the bar approved by the user (the Design, or the slicing agreed at `/router:go`)?
 - Did the code change again after the last verification run? (if yes, prior evidence is stale)
 
-Then, per landed package, from `router result <id> --json` — what is already established
-before this review spends anything:
+Then, from what is on disk — what is already established before this review spends anything:
 
 ```
-package:        <task id>            (plan_id / plan_revision)
-effective risk: low | normal | high  (+ risk_raised_by, when the CLI escalated)
-delivery:       gate_ran / scope_drift / escalate_review   (or "header missing")
-gates:          <which verifier checks ran, and their results>
-real gate:      pass | fail | pre-existing failure | never ran   -> <log path>
+change:         <base>..HEAD, N commits       (plan_id + DESIGN.md revision, when there is one)
+written by:     main session | codex write <id> (model, session, resumes)
+left behind:    uncommitted files from a writer's record, or "none"
+real gate:      ran and passed | failed | never ran   -> <log path>
 ```
 
-`escalate_review: true` or an effective risk above the declared tier **raises** the depth of this
-review; nothing lowers it. A missing delivery header, `scope_drift: true`, or a package the gate
-never ran on is a Phase 1 finding in its own right.
+Uncommitted work a writer left behind, a resume that did not re-attach, or a build that never ran
+is a Phase 1 finding in its own right.
 
 If scope drifted or the bar was never approved, stop and return to `/router:design` rather
 than reviewing against a bar that no longer matches the code.

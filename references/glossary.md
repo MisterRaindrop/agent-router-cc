@@ -5,32 +5,14 @@ reviewer reading a design document reported not being able to follow it. That is
 file is written against: **not "is the word defined somewhere", but "would a reader who has never
 seen this project understand the sentence".**
 
-Two entries are split into several, because one word was doing several jobs. That is the more
-useful half of this file: an ambiguous term is worse than an undefined one, since the reader does
-not know they have misunderstood.
-
-## The two words that had to be split
-
-### "gate" -- three different things
-
-Never write "the gate" unqualified. Say which:
-
-| Name to use | What it is | Where |
-|---|---|---|
-| **environment-free gate** | Checks needing nothing but the diff: does the patch apply onto `base_sha`, does it stay inside `allowed_globs`, does it leak a secret, does a new script carry the executable bit. Fast, deterministic, no build. | `app/verifier.ts` |
-| **scope gate** | One of those: the `allowed_globs` / forbidden-globs / line-cap / don't-delete-tests check. A pure function over an already-parsed diff. | `core/scope.ts` |
-| **project gate** | The project's own build-and-test command -- `npm run check`, `make test`. Answers "did it run and pass", never "is it right". Configured as `verify` on a task or `gate` / `clean_gate` in `.router/gate.yaml`. | `.router/gate.yaml`, `task.yaml` |
-
-There is also the historical **queue gate**: verifying in the project's own checkout under an
-exclusive lock, once a separate `/router:gate` command. Its mechanisms are now part of the normal
-dispatch flow, so the phrase should not appear in new writing.
+## The word that had to be split
 
 ### "detached" -- two unrelated meanings
 
 | Name to use | What it means |
 |---|---|
-| **detached process** | A child process started as leader of its own process group (`spawn(..., {detached: true})`), so it survives its parent and can be killed as a group. Used for the executor and for the lock heartbeat. |
-| **detached HEAD** | A Git working tree checked out at a commit rather than a branch. Router refuses to run a task from one -- task identity requires a branch. |
+| **detached process** | A child process started as leader of its own process group (`spawn(..., {detached: true})`), so it survives its parent and can be killed as a group. Used for heartbeat children. |
+| **detached HEAD** | A Git working tree checked out at a commit rather than a branch. `router write` refuses to start from one -- the writer needs a branch to commit on. |
 
 Write the whole phrase both times. "Detached" alone has caused real confusion.
 
@@ -40,77 +22,60 @@ Write the whole phrase both times. "Detached" alone has caused real confusion.
 
 - a **slash command** (`/router:go`) is a Markdown instruction file in `commands/`. It is read by
   the model driving *your* session; there is no program behind it. It decides things.
-- a **CLI subcommand** (`router dispatch`, `router list`) is a Node program, the single bundled
-  `dist/router.js`. It does mechanical, deterministic work and owns all state under `.router/`.
-  It decides nothing.
+- a **CLI subcommand** (`router write`, `router plans`) is a Node program, the single bundled
+  `dist/router.js`. It does mechanical work: launching codex, listing plans, the symbol index. It
+  decides nothing.
 
 The split is the whole design: judgment in the slash command, mechanism in the CLI. When a
 document says "router does X", it should say which half.
 
-**orchestrator** -- the model in your session, the one reading the slash command. Also called
-"the main session" or "the main model". It plans, reviews, and owns the pass/fail verdict.
+**main session** -- the model in your session, the one reading the slash command. It writes the
+code, reviews it, and owns the pass/fail verdict. (Older documents call it "the orchestrator".)
 
-**executor** -- the model dispatched to write the code (`claude` or `codex`, run headless). It
-gets a contract and the repository, and it is not trusted with the verdict on its own work.
+**codex writer** -- codex, launched by `router write` to write part of the work when the user
+names it. It gets a brief and the repository, commits on your branch, and is not trusted with the
+verdict on its own work.
 
-**work package** -- what one executor does in one session: the largest coherent chunk it can
-finish from its contract alone. One `/router:go` run dispatches one package.
+**brief** -- what a codex writer is given: six faces (goal, invariants, frozen interfaces,
+definition of done, blast radius, stop conditions) plus the approved `DESIGN.md` verbatim. See
+`codex-writer.md`.
 
 **functional unit** -- what one *commit* contains: one thing a human can review at a time, with
-its tests. Deliberately a different size from a work package. Adding a storage access method is
-file IO, then the storage format, then the storage architecture -- three functional units, one
-package. Neither "the whole task in one commit" nor "a commit per edit".
+its tests. Adding a storage access method is file IO, then the storage format, then the storage
+architecture -- three functional units. Neither "the whole task in one commit" nor "a commit per
+edit".
 
-**task branch** -- `router/<task-id>`, the branch a dispatch creates and develops on in your own
-checkout. The run ends with you standing on it; router never merges and never switches back.
+**base** / **base_sha** -- the commit a piece of work started from. Its diff is `base..HEAD`, so it
+is what "what this changed" means. `router write` records it and prints it.
 
-**base_sha** -- the commit the task branch was cut from. Every diff, every scope check and every
-gate is computed over `base_sha..HEAD`, so it is what "what this task changed" means.
+**write id** -- the name of one codex writer run, `.router/writes/<id>/`: its brief, its log and
+its record. `router resume <id>` continues that run's codex session.
 
-**rescue commit** -- a commit router makes of *your* uncommitted work before it moves anything,
-reporting the sha. It exists so that nothing router does later can lose work you had not
-committed. Undo with `git reset --soft <sha>~1`. Not a `git stash`: a stash is detached from the
-branch, and a conflicting pop on a failure path leaves your changes somewhere you have to be told
-about.
-
-**closing invariant** -- the assertion before verification: we are on the task branch, `base_sha`
-is an ancestor of `HEAD`, and **nothing is uncommitted**. The last part matters because a file the
-executor forgot never enters `base_sha..HEAD`, so every gate would pass without ever seeing it.
-
-**probe** -- a read-only investigation task: dispatched to answer one question, and **required to
-produce no diff at all**. Used when a design has an open question too big to guess at.
-
-**tier** -- how much *capability* a task needs: `weak`, `strong`, `critical`. Router picks the
-executor by real quota within the tier. Not the same question as risk.
+**probe** -- a read-only investigation: answering one question and producing no diff at all. Used
+when a design has an open question too big to guess at.
 
 **risk** -- how much it costs to be wrong: `low`, `normal`, `high`. Decides how much independent
-review the change earns. A mechanical change on an authentication path is `weak` tier and `high`
-risk.
+review the change earns. See `assurance-core.md`.
 
-**effort** -- the reasoning budget passed to the executor (`medium`, `high`, `xhigh`, `max`).
-Omitting it silently falls back to the provider default, which on the codex side is a real
-capability downgrade -- so a pin always states it.
+**effort** -- the reasoning budget passed to codex (`medium`, `high`, `xhigh`, `max`). Omitting it
+silently falls back to the provider default, which is a real capability downgrade -- so a pin
+always states it.
 
 **floor check** -- the mandatory verification at the end of `/router:go`: green in the real
-environment plus the orchestrator's own review. It answers "is this broken". `/router:review` is
-the separate, stricter stage that answers "is this right".
+environment plus the main session's own review of the whole diff. It answers "is this broken".
+`/router:review` is the separate, stricter stage that answers "is this right".
 
-**blast radius** -- one of a contract's seven faces: what else this change can affect if it is
-wrong. Prefer the plain phrasing ("what else this can break") in new writing.
+**blast radius** -- one of a brief's six faces: what else this change can affect if it is wrong.
+Prefer the plain phrasing ("what else this can break") in new writing.
 
 **unverified** -- a check that genuinely could not run here. A required and honest outcome, and
 explicitly **not** to be dressed up as a pass, nor turned into one by inventing a hollow test.
-See `assurance-core.md`.
 
 **slug** -- a short kebab-case identifier for a plan (`2026-08-21-router-v2-commands`). It is the
-directory name under `.router/plans/` and the `plan_id` on every task of that plan; one
-identifier, no mapping layer.
-
-**WIP** -- "work in progress". Prefer writing it out.
+directory name under `.router/plans/` and the `plan_id`; one identifier, no mapping layer.
 
 **sha / sha256** -- a **sha** (bare) is a Git commit id, the 40-hex string `git log` shows. A
-**sha256** in this project is a content hash of a *document*, used to prove a dispatched contract
-quotes the exact approved revision. Different things; say which.
+**sha256** is a content hash of a document. Different things; say which.
 
 **green** -- the build and tests passed. Common in conversation; in a document, say what passed.
 
@@ -121,10 +86,14 @@ looking for them.
 
 | Word | Was | Now |
 |---|---|---|
-| **worktree** (per task) | a separate checkout for each task | the executor works in your checkout on a task branch. `worktree` still legitimately names the verifier's throwaway patch-check checkout |
-| **run** / `run-001` | a numbered attempt inside a task | dispatch is one attempt per task; artifacts sit directly in `.router/tasks/<id>/` |
-| **dispatch** (slash command) | `/router:dispatch` | `router dispatch`, the CLI subcommand, driven by `/router:go` |
-| **land** (slash command) | `/router:land` | `router land`, the CLI subcommand |
-| **spec** | the single document that preceded design + plan | `/router:design`, and only that: the plan stage that followed it is gone too |
-| **work plan** (the document) | `PLAN.md`, then `WORKPLAN.md` | nothing. `DESIGN.md` is the only document a plan has; how the work is sliced into packages is settled in conversation at `/router:go` and never written down |
-| **plan** (slash command) | `/router:plan`, then a stub pointing at `/router:workplan` | removed. Both the command and the stage it named are gone |
+| **executor** / **dispatch** | a model dispatched to write each work package, under a lock, on its own task branch | the main session writes; `router write` launches codex only when the user names it. Removed in 0.15.0 |
+| **work package** / **task** / **`task.yaml`** / **contract** | the unit one executor did, and the files that described it | a functional unit (a commit); for codex, a brief |
+| **tier** (`weak` / `strong` / `critical`) | how much capability a package needed, used to pick a model | gone with quota routing. `router models` has one `writer:` default |
+| **quota balancing** | picking codex or claude per dispatch by remaining plan quota | removed in 0.15.0 |
+| **environment-free gate** / **scope gate** / **queue gate** | mechanical checks on an executor's diff, and a verification queue in the user's checkout | removed in 0.15.0. The main session reads the diff and runs the project's own build |
+| **task branch** / **rescue commit** / **closing invariant** | `router/<id>`, the commit of the user's uncommitted work, the "nothing uncommitted" assertion | the writer commits on your branch and refuses to start over uncommitted work |
+| **land** | merging a task branch | merging is the user's, with git |
+| **worktree** (per task) | a separate checkout for each task | nothing. Work happens in your checkout |
+| **spec** | the single document that preceded design + plan | `/router:design` |
+| **work plan** (the document) | `PLAN.md`, then `WORKPLAN.md` | nothing. `DESIGN.md` is the only document a plan has; the slicing is agreed at `/router:go` |
+| **plan** (slash command) | `/router:plan`, then a stub pointing at `/router:workplan` | removed |

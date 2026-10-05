@@ -18,12 +18,12 @@ like the idea survived scrutiny.
 
 ## DESIGN.md
 
-**Reader:** an independent reviewer attacking the approach, and later an executor that only gets
-this and the code.
+**Reader:** an independent reviewer attacking the approach, then the main session building
+against it -- and, when the user names one, a codex writer that only gets this and the code.
 
-Seven sections, each a few hundred words: background and goals; scope (in *and* explicitly out);
+Eight sections, each a few hundred words: background and goals; scope (in *and* explicitly out);
 current state with `file:line` evidence; approach with alternatives considered; risks and
-invariants; acceptance criteria; open questions.
+invariants; acceptance criteria; open questions; verification matrix.
 
 - **Current state cites lines.** A claim about the code without a `file:line` is a guess, and
   reviewers spot-check them.
@@ -40,9 +40,8 @@ invariants; acceptance criteria; open questions.
   open question with no disposition is an unowned decision.
 
 There is no second document. A work plan used to follow this one and carry the task breakdown;
-it was removed because the breakdown it froze was mostly main-session work that no package
-contract constrains, and most real dispatches were authored outside it anyway. How the work is
-sliced is now agreed in conversation at `/router:go`, once, and never written down.
+it was removed in 0.14.0. How the work is sliced is now agreed in conversation at `/router:go`,
+once, and never written down.
 
 ## Commit messages
 

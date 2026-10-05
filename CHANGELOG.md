@@ -8,6 +8,64 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-05
+
+router is now a discipline for writing code, not a router of work to cheaper models. The name
+stays for now; a rename is expected before 1.0.
+
+### Removed
+
+- **The executor model.** `/router:go` no longer dispatches packages to a separate executor. The
+  main session writes the code itself, one functional unit per commit, verifies it in the real
+  environment, and hands it back before merge. Why: this project's own records showed every
+  defect that was actually caught was caught by the main session reading the whole diff, running
+  the real build, or an independent review -- none of it depended on a different process writing
+  the code -- while the dispatch machinery was the largest and most bug-prone part of the
+  repository. `src/` went from about 11,000 lines to about 3,100.
+- **Quota balancing, model tiers, cost reports and `metrics.jsonl`.** Dispatches had already
+  drifted to the strongest model (cheap-tier runs: 5 in July, 1 in August, 0 in September), so the
+  balancer served a goal the tool no longer pursued. Measurement is deliberately not replaced
+  until there is a question about "better code" worth recording data for (see `ROADMAP.md`).
+- **The environment-free gates, the project gate runner and the queue gate**, the checkout lock,
+  rescue commits, task branches and `task.yaml`. The main session reads the diff and runs the
+  project's own build; `/router:go` lists what to look for that no test sees.
+- **The statusline**, both halves: the quota snapshot and the background-activity display.
+  Claude Code wakes the session when a background command ends, and the supervisor's watchdog
+  kills one that stalls. If you configured it, see `DEPRECATIONS.md` for the one-line cleanup.
+- **The PreToolUse guard hook**, which protected executor run records that no longer exist.
+- **CLI verbs:** `new`, `dispatch`, `land`, `gate`, `result`, `list`, `usage`,
+  `orchestrator-usage`, `setup-statusline`, `init`. Remaining: `write`, `resume`, `plans`,
+  `models`, `symbol`, `doctor`, `supervise`.
+
+### Added
+
+- **`router write <id> --brief <file>`** launches codex as an external writer when the user names
+  it: on the current branch, under codex's `workspace-write` sandbox, with a minimal environment.
+  It refuses a dirty tree, a detached HEAD and a reused id, and records the brief, the log and what
+  it did (session, base, commits, anything left uncommitted, its final message) under
+  `.router/writes/<id>/`. Verified against the real codex CLI, not only the fakes.
+- **`router resume <id> --feedback "..."`** continues that write's same codex session. It refuses
+  on a different branch or a dirty tree, and a resume that reports a different session -- or none
+  -- is flagged `RESUME DID NOT RE-ATTACH` rather than trusted. Also verified against the real CLI,
+  which matters here: an earlier resume path passed every fake and failed the real CLI on `-C`.
+- **`references/codex-writer.md`**: what a brief must contain (six faces plus the approved
+  `DESIGN.md` verbatim) and the measured resume rules -- one complete round, at most two, trivial
+  edits by hand.
+
+### Changed
+
+- **`/router:go`** is rewritten for the main session writing (279 lines to 139). Touchpoint 1 still
+  agrees the slicing once for the whole feature; the stage gate is the main session's own full
+  diff read and real-environment build.
+- **`/router:resume`** resumes a codex write, and runs in the background instead of blocking the
+  command expansion.
+- **`router models`** shows `writer:` and the reviewer chain. A `models.yaml` written for the
+  tiered config still sets the writer from its `codex.critical` row.
+- **`router supervise`** keeps its watchdog, log and exit-code semantics but publishes no activity
+  record; `--label` is accepted and ignored.
+- README, workflow, quickstart, glossary, security policy, roadmap and the example are rewritten
+  around the new identity.
+
 ## [0.14.0] - 2026-10-02
 
 ### Removed
