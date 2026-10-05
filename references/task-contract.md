@@ -97,23 +97,24 @@ the user pins codex, rather than letting them wonder why the statusline is less 
 
 **The contract is a copy, not a composition.**
 
-- **An approved work plan exists** -> verify its frontmatter says `status: plan_approved`
+- **An approved design exists** -> verify its frontmatter says `status: design_approved`
   (refuse otherwise), then build `TASK_CONTRACT.md` as a compact YAML header (globs, `verify`,
-  worker pin, budgets, `plan_id`, `plan_revision`, `plan_sha256`, `design_sha256`) followed by
-  the **entire `WORKPLAN.md` verbatim and then the entire `DESIGN.md` verbatim**, via shell
-  concatenation. Zero re-authoring -- byte-identical is the test -- so the contract is an
-  immutable snapshot of the approved revision, and later edits cannot reach a dispatched
-  contract.
+  worker pin, budgets, `plan_id`, `plan_revision`, `design_sha256`) followed by the **entire
+  `DESIGN.md` verbatim**, via shell concatenation. Zero re-authoring -- byte-identical is the
+  test -- so the contract is an immutable snapshot of the approved revision, and later edits
+  cannot reach a dispatched contract.
 
-  Both documents, because they answer different questions. The work plan says what to do, in
-  what order, and how it will be verified. The design says **why it is built this way, where the
-  boundaries are, and which invariants may not break** -- and that is the part an executor can
-  never recover by reading code. `BRAINSTORM.md` is deliberately NOT included: it records
+  The header carries this package: what to build, where it may write, how it will be verified.
+  The design carries what the header cannot -- **why it is built this way, where the boundaries
+  are, and which invariants may not break** -- and that is the part an executor can never
+  recover by reading code. There is no second document to concatenate: the work-plan stage was
+  removed in 0.14.0, and the slicing it used to freeze is settled in conversation at
+  `/router:go` instead. `BRAINSTORM.md` is deliberately NOT included: it records
   counter-evidence and rejected directions, so handing it over means handing the executor a pile
   of ideas that were decided against.
 
-- **No plan** (an everyday task) -> the compact template: the **seven faces** at 1-3 lines each,
-  roughly 40 lines. The executor is a strong model; precision beats prose.
+- **No design** (an everyday task) -> the compact template: the **seven faces** at 1-3 lines
+  each, roughly 40 lines. The executor is a strong model; precision beats prose.
 
 The seven faces: goal; invariants; frozen interfaces and dependencies; definition of done
 **including its own tests**; blast radius; stop conditions; version binding. **If you cannot

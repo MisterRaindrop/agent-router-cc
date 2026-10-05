@@ -254,11 +254,17 @@ function buildPrompt(ctx: WorkerContext): string {
         `reports and fix until it passes`
       : `note that NO gate runs here -- the orchestrator runs the real build and tests later in ` +
         `its own environment, so write the tests but do not try to build this project`;
-  // `plan_revision` is the version of the frozen plan, NOT the plan's identity: `plan_id`
+  // `plan_revision` is the version of the frozen document, NOT the plan's identity: `plan_id`
   // groups a plan's tasks, `plan_revision` says which revision of it this contract was
   // written against, so a stale contract can be told apart from a current one. Reporting
   // the id here made every delivery report echo the group name and made the cross-check
   // compare a field against itself.
+  //
+  // The name is kept though the document it names changed. Since 0.14.0 the frozen document is
+  // `DESIGN.md` -- the work-plan stage is gone -- but delivery headers and `metrics.jsonl` are
+  // append-only history, and a field that means one thing in old rows and another in new ones is
+  // harder to read than a name that is merely imprecise. Same reasoning as `run_id` and
+  // `t_worktree`; see DEPRECATIONS.md.
   const planRevision = ctx.task.plan_revision ?? 'none';
   const taskContext =
     ctx.taskContext == null

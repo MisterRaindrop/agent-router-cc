@@ -34,7 +34,7 @@
 | **改动范围**   | 只受提示词约束              | 在 diff 上强制:允许的 glob + 改动行数上限                     |
 | **正确性**     | 你手动检查                  | CLI 对 diff 把关(范围 + 密钥 + 可执行位);Opus 在你真实环境跑 build/测试 |
 | **……以及偷懒** | 只能相信模型的说辞          | ……**再加上**主会话复审 diff,识别偷懒 / 错误的工作            |
-| **改动落在哪** | 立即写进你的工作区          | 隔离 worktree;只有 `land` 时才动你的工作区                    |
+| **改动落在哪** | 立即写进你的工作区          | 你自己 checkout 里的 `router/<task>` 分支;只有 `land` 时才动你的分支 |
 | **配额 / 限流**| 运行卡住                    | 按真实剩余配额在 codex 与 claude 间均衡;429 自动切换          |
 
 router **从不自动合并**。各道关卡决定 PASS/FAIL;是否 land 由你决定。
@@ -110,22 +110,25 @@ CLI bundle 不用 —— `dist/router.js` 每次调用都是新起进程。
                                复审、land           严格复审
 
 大型功能(opt-in,由你判断,router 从不猜任务大小):
-  /router:design      →  /router:design-review(可选)  →  /router:plan     →  /router:go
-  澄清 + 代码调研;        独立模型对抗审核;                怎么做:步骤、      逐字执行
-  DESIGN.md 逐节           每条意见由你裁决,               任务拆分、验证;    已批准的计划
-  经你确认后批准           绝不自动采纳                     摘要经你批准
+  /router:brainstorm  →  /router:design  →  /router:design-review(可选)  →  /router:go
+  目标还没定时先质疑;     澄清 + 代码调研;    独立模型对抗审核;               按已批准的
+  比较别人怎么解、        一份 DESIGN.md      每条意见由你裁决,              DESIGN.md 执行
+  论证不该做、            逐节经你确认        绝不自动采纳
+  提出你没被给过的选项
 ```
 
-`/router:go` 只在**三个节点**暂停 —— 没有你,什么都不会发生(执行经 design 流程批准的
-Plan 时跳过第 1 个节点:任务清单你已在 `/router:plan` 批准过,不问第二遍):
+`/router:go` 只在**三个节点**暂停 —— 没有你,什么都不会发生:
 
-1. **确认任务分解。**每个工作包的文件范围和目标模型,在任何东西运行前先展示给你。
+1. **确认任务分解**,整个功能只问一次。你打算派发的每个工作包、各自的文件范围和目标模型,
+   在任何东西运行前一次性展示给你;之后的派发不再逐包追问,除非拆法本身变了。这是一次
+   **对话**:不写盘、不批准进文档、不动任何状态。
 2. **不清晰的任务留给你。**需要真正判断或设计的部分,Opus 和你一起做,不丢给便宜模型。
 3. **合并前先经你批准。**没有你的同意,任何东西都不会 land 进你的分支。
 
-中间每个**明确**的工作包,在隔离 worktree 里由按配额挑选的执行器运行 —— 相互独立的包
-**并发**跑,墙钟取最慢的那个而不是求和(实测:26s + 31s 的批次 32s 跑完;234s + 244s 的
-批次 244s 跑完)。最后 Opus 做**强制验收**:在你的真实环境跑全链路 CI、自己读完整输出,
+中间每个工作包由按配额挑选的执行器运行,**一次一个**,就在你自己的 checkout 里、
+`router/<task-id>` 分支上 —— 不开独立 worktree:新 worktree 没有依赖、没有编译产物、
+没有 configure 输出,真实项目在里面根本编不起来。整段运行持有一把排他锁,你未提交的工作
+先被救成一个提交。最后 Opus 做**强制验收**:在你的真实环境跑全链路 CI、自己读完整输出,
 通过后才报"完成"。
 
 ## 🗂️ 任务契约:tier 和 risk 是两个不同的问题
@@ -186,19 +189,30 @@ depends_on: []
 
 `verify` 只回答机械问题 —— **跑了没有、过了没有** —— 从不回答"做对了没有"。
 
-**真实门禁**是项目的属性,在 `.router/gate.yaml` 里声明一次:
+**真实门禁**是项目的属性,在 `.router/gate.yaml` 里声明一次。执行器现在就在你自己的
+checkout 里干活,构建环境和你的完全一样 —— 依赖是热的、编译产物是热的、configure 结果是
+真的 —— 门禁就在那里跑,用的是这次运行已经持有的那把排他锁:
 
-- **`mode: worktree`** —— build 和测试在各自的 run worktree 里跑;实现与验证都全并行。
-- **`mode: queue`** —— 面向环境**只有一份**的项目(单一构建目录、绑定固定宿主路径的容
-  器):执行器并行写代码但**不编译**;`router gate` 拿独占锁把 commit 逐个送进**你自己的
-  checkout** —— 有未提交的被跟踪改动就直接拒绝、始终在当前集成分支头上验证、保住构建缓存
-  (**绝不 `git clean`**)、最后还原你的分支。门禁失败还会在合并前的头上重跑一次基线,
-  本来就红的项目不会被算到这次改动头上。
+| 键 | 作用 |
+|---|---|
+| `gate` | 增量构建与测试命令 |
+| `clean_gate` | 全量重建命令 |
+| `clean_triggers` | 一旦改动就强制走 `clean_gate` 的 glob。**和 gitignore 不同,锚定在仓库根**:`CMakeLists.txt` 只指根目录那一个,要覆盖整棵树得写 `**/CMakeLists.txt` |
+| `reset` | 验证前先跑,清掉上一次构建留下的状态 |
+| `lock_wait_minutes` | 另一次运行占着 checkout 时等多久 |
+
+diff 里任何**删除或重命名**都会无视触发器强制走 `clean_gate`:增量构建会留着一个已经不
+存在的源文件的旧目标文件,而没有任何东西会告诉它该丢掉。
+
+`mode: queue` 保留给在集成分支上验证的项目 —— `router gate` 拿独占锁把 commit 逐个送进
+**你自己的 checkout**:有未提交的被跟踪改动就直接拒绝、始终在当前集成分支头上验证、保住
+构建缓存(**绝不 `git clean`**)、最后还原你的分支。门禁失败还会在合并前的头上重跑一次
+基线,本来就红的项目不会被算到这次改动头上。
 
 ## ⚔️ design 流程 —— 两份文档,依次批准
 
-大型功能 —— 跨模块、有真正的方案取舍 —— 由你主动敲 `/router:design` 进入。只有
-**两份文档**,每份都由你批准:
+大型功能 —— 跨模块、有真正的方案取舍 —— 由你主动敲 `/router:design` 进入。
+**只有一份文档**,由你批准:
 
 - **`/router:design` → `DESIGN.md`**(为什么做 / 做什么 / 不做什么 / 方案选择 / 风险 /
   验收标准)。一次只问一个问题,与**代码调研**交错(符号索引、`file:line` 证据);给出
@@ -209,9 +223,16 @@ depends_on: []
   形式提出,且 reviewer 必读"备选方案"一节 —— 已被你否掉的路不会被当作新建议再端上来。
   **每条意见由你裁决**(接受 / 拒绝 / 讨论),记入 `DECISIONS.md`;你裁决之前,文档一个
   字都不会被改。后台运行、防截断、跨轮 resume 同一会话。
-- **`/router:plan` → `PLAN.md`**(怎么做:步骤、任务拆分、依赖、验证矩阵、发布)——
-  只能从已批准的 Design 派生,并绑定其 revision:Design 一改版,Plan 自动降回草稿。
-  你批准摘要后,`/router:go` **逐字执行**。日常小任务跳过这一切,直接 `/router:go`。
+原先 Design 后面还有一个 `/router:plan` / `/router:workplan` 阶段,产出 `WORKPLAN.md`
+冻结任务拆分 —— **0.14.0 已删除**。实测用过它的五个计划:35 个"工作包"里 28 个是主会话
+自己做的步骤,而工作包契约对主会话一条约束都加不上;真实发生的 17 次派发里有 10 次是在
+清单之外临时开的。而这份文档本身要花 240–536 行起草外加一轮批准。任务拆分改为在
+`/router:go` 的对话里一次性商定,不落盘。
+
+它唯一没有替代品的部分 —— **验证矩阵** —— 并进了 `DESIGN.md` 的最后一节:每条验收标准
+映射到它究竟在哪被证明,`unverified` 保持可见,而不是拿一个证明不了它的测试糊过去。
+
+日常小任务跳过这一切,直接 `/router:go`。
 
 ## 🗺️ `/router:explain` —— 用系统视角阅读已经完成的功能
 
@@ -242,23 +263,20 @@ Router 会在 `.router/explanations/` 下生成一份可以直接打开的设计
 
 | 命令 | 作用 |
 |---|---|
-| `/router:go` | **上层命令** —— 执行你们刚商定的方案(或逐字执行已批准的 `PLAN.md`),替你驱动下面的一切 |
-| `/router:go single` | 单个钉死的执行器整体承接 feature —— **两侧都支持**(claude/opus 或 codex/gpt-5.6-sol),默认取该侧 `critical` 档能力,除你显式指定外绝不降档;detached 后台执行,statusline 实时显示阶段/活性,终态才唤醒会话 |
+| `/router:go` | **上层命令** —— 执行你们刚商定的方案(有已批准的 `DESIGN.md` 时按它执行)。一个工作包、一个钉死的执行器,在你自己 checkout 的 `router/<task>` 分支上;detached 后台执行,statusline 实时显示阶段/活性,终态才唤醒会话 |
+| `/router:brainstorm` | 设计之前先质疑这个想法 —— 比较别人怎么解、论证不该做、提出你没被给过的选项 |
 | `/router:design` | 大型功能的 opt-in 入口 —— 澄清、调研、逐节起草并批准 `DESIGN.md` |
 | `/router:design-review` | 对 Design 的对抗式第二意见 —— 每条意见由你裁决,绝不自动采纳 |
-| `/router:plan` | 把已批准的 Design 变成 `PLAN.md` —— 步骤、任务拆分、验证;经你批准 |
 | `/router:explain [范围]` | 用简短结论和一张完整设计图解释已经完成的代码；生成可直接打开的页面，接受 commit、Git 范围或 `--working-tree` |
 | `/router:review` | 对落地代码的独立、严格的双镜头复审 |
-| `/router:dispatch <id...>` | 用按配额挑选的执行器并发运行任务,产出已把关的 diff |
 | `/router:resume <id>` | 把失败原因送回该任务自己的执行器会话 |
-| `/router:land <id...>` | 把 PASSED 的 diff 合并进你的工作分支 |
-| `/router:gate <id...>` | 在你自己的 checkout 里逐个验证 commit(queue 模式) |
-| `/router:result <id>` | 某次运行的逐项校验报告和日志末尾 |
-| `/router:list` | 各任务的最近状态,以及是否还留有 worktree |
-| `/router:models` | 解析后的模型档位表(内置默认 + 覆盖) |
-| `/router:usage` | 相对"全用最强模型"基线的花费;`--routing` 输出路由证据 |
 | `/router:symbol` | 上下文外的符号索引 —— 不读整个文件也能定位代码 |
-| `/router:setup-statusline` | 把 claude 侧配额读取接入 Claude Code 的 statusLine |
+
+查看类的操作交给 CLI,不占命令菜单:`router list`(各任务状态、任务分支是否还在)、
+`router result <id>`(逐项校验报告和日志末尾)、`router usage`(相对"全用最强模型"基线的
+花费)、`router models`(解析后的模型档位表)、`router setup-statusline`(把 claude 侧配额
+读取接入 statusLine,配一次即可)。插件不会把 `router` 放进 `PATH` —— 一行 alias 见
+[docs/quickstart.md](docs/quickstart.md#the-primitives),或者直接让 Opus 帮你跑。
 
 **[docs/workflow.md](docs/workflow.md)** 是完整的端到端协议 —— 工作包、档位与风险、两种
 门禁模式、执行器必须交回什么、什么时候该续会话。另见 **[docs/quickstart.md](docs/quickstart.md)**
@@ -266,8 +284,9 @@ Router 会在 `.router/explanations/` 下生成一份可以直接打开的设计
 
 ## 🔒 隔离与凭据
 
-- 执行器在 `.router/` 下全新的 `git worktree` 中运行,受墙钟超时和停滞看门狗监督;它的
-  输出永不进入编排器的上下文,也不继承你会话里的任何 MCP 服务器。
+- 执行器在你自己的 checkout、`router/<task-id>` 分支上运行,整段运行持有一把排他锁,受
+  墙钟超时和停滞看门狗监督;它的输出永不进入编排器的上下文,也不继承你会话里的任何
+  MCP 服务器。
 - Codex 使用其 `workspace-write` 沙箱。Claude 运行在普通 `acceptEdits` 模式(绝不用
   `bypassPermissions`),**只有**任务声明了 `verify` 命令才拿到 `Bash` —— 授权是那条
   命令本身加它的"程序 + 子命令"前缀,不是一个 shell。

@@ -106,19 +106,20 @@ test('plans shows current and legacy revisions plus the furthest recognized docu
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    // `design` is a separate column from `revision`, because they are separate documents with
-    // separate revisions. Without it a design at revision 3 with no plan yet reported
-    // "unknown" -- see plan-d, where the design revision is the only revision that exists.
-    assert.match(text.out, /id\s+design\s+revision\s+stage\s+critique\s+decisions\s+locked/);
+    // `design` is a separate column from `workplan`, because they were separate documents with
+    // separate revisions. Nothing writes a work plan since 0.14.0, so that column is `-` for every
+    // current plan and carries only what historical plan directories still declare -- which is why
+    // it renders `-` rather than `unknown`: an absent stage is not a damaged one.
+    assert.match(text.out, /id\s+design\s+workplan\s+stage\s+critique\s+decisions\s+locked/);
     assert.match(text.out, /plan-a\s+-\s+rev-1\s+plan_approved\s+2\s+yes\s+-/);
     assert.match(text.out, /plan-b\s+-\s+rev-9\s+executing\s+1\s+-\s+yes/);
     // plan-c's PLAN.md declares `unexpected`, which is a status nothing recognizes -- marked, not
     // reported as though the directory had no document in it.
-    assert.match(text.out, /plan-c\s+-\s+unknown\s+\?unexpected\s+-\s+-\s+-/);
-    assert.match(text.out, /plan-d\s+3\s+unknown\s+design_approved\s+-\s+-\s+-/);
+    assert.match(text.out, /plan-c\s+-\s+-\s+\?unexpected\s+-\s+-\s+-/);
+    assert.match(text.out, /plan-d\s+3\s+-\s+design_approved\s+-\s+-\s+-/);
     // plan-e has an unparsable PLAN.md over a design at revision 2: the design revision is
-    // still reported, and the plan's is still `unknown` rather than borrowing the design's.
-    assert.match(text.out, /plan-e\s+2\s+unknown\s+!unreadable\s+-\s+-\s+-/);
+    // still reported, and the work plan's stays empty rather than borrowing the design's.
+    assert.match(text.out, /plan-e\s+2\s+-\s+!unreadable\s+-\s+-\s+-/);
 
     const json = router(dir, ['plans', '--json']);
     assert.equal(json.code, 0, json.out);
@@ -147,7 +148,7 @@ test('plans sizes columns from their longest values so a long id cannot swallow 
     const header = lines[1]!;
     const row = lines[2]!;
     for (const [heading, value] of [
-      ['revision', 'revision-with-a-long-value'],
+      ['workplan', 'revision-with-a-long-value'],
       ['stage', 'done'],
       ['critique', '-'],
       ['decisions', '-'],
@@ -176,13 +177,13 @@ test('plans reports the brainstorm stage when it is the only document', () => {
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /bs-open\s+-\s+unknown\s+brainstorming/);
-    assert.match(text.out, /bs-done\s+-\s+unknown\s+converged/);
-    assert.match(text.out, /bs-no\s+-\s+unknown\s+rejected/);
+    assert.match(text.out, /bs-open\s+-\s+-\s+brainstorming/);
+    assert.match(text.out, /bs-done\s+-\s+-\s+converged/);
+    assert.match(text.out, /bs-no\s+-\s+-\s+rejected/);
     // A status no vocabulary recognizes is its own fact and is marked rather than flattened into
     // `-`, which now means only "no document, or no status declared". Neutralization of what the
     // marker carries is pinned by its own test below.
-    assert.match(text.out, /bs-bad\s+-\s+unknown\s+\?daydreaming\s/);
+    assert.match(text.out, /bs-bad\s+-\s+-\s+\?daydreaming\s/);
   } finally {
     fx.cleanup(dir);
   }
@@ -198,10 +199,10 @@ test('a design the user stopped part-way reports a terminal stage, not a draft',
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /d-stopped\s+-\s+unknown\s+design_abandoned/);
+    assert.match(text.out, /d-stopped\s+-\s+-\s+design_abandoned/);
     // The draft state still exists and still reads as unfinished -- the new status is an addition,
     // not a rename of the old one.
-    assert.match(text.out, /d-open\s+-\s+unknown\s+design_draft/);
+    assert.match(text.out, /d-open\s+-\s+-\s+design_draft/);
   } finally {
     fx.cleanup(dir);
   }
@@ -225,12 +226,12 @@ test('plans marks an unrecognized status instead of reporting it as no document'
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
     assert.match(text.out, /p-typo\s+-\s+4\s+\?exceuting\s+-\s+-\s+-/);
-    assert.match(text.out, /d-typo\s+2\s+unknown\s+\?desgin_approved\s+-\s+-\s+-/);
-    assert.match(text.out, /b-typo\s+-\s+unknown\s+\?daydreaming\s+-\s+-\s+-/);
+    assert.match(text.out, /d-typo\s+2\s+-\s+\?desgin_approved\s+-\s+-\s+-/);
+    assert.match(text.out, /b-typo\s+-\s+-\s+\?daydreaming\s+-\s+-\s+-/);
     assert.match(text.out, /p-ok\s+-\s+7\s+done\s+-\s+-\s+-/);
-    assert.match(text.out, /d-ok\s+1\s+unknown\s+design_draft\s+-\s+-\s+-/);
-    assert.match(text.out, /b-ok\s+-\s+unknown\s+converged\s+-\s+-\s+-/);
-    assert.match(text.out, /a-bare\s+-\s+unknown\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /d-ok\s+1\s+-\s+design_draft\s+-\s+-\s+-/);
+    assert.match(text.out, /b-ok\s+-\s+-\s+converged\s+-\s+-\s+-/);
+    assert.match(text.out, /a-bare\s+-\s+-\s+-\s+-\s+-\s+-/);
 
     const json = router(dir, ['plans', '--json']);
     assert.equal(json.code, 0, json.out);
@@ -266,7 +267,7 @@ test('a status carrying an escape sequence and control characters is neutralized
     assert.equal(text.out.includes(bel), false, 'no C0 control character may reach the terminal');
     assert.equal(text.out.includes('\r'), false, 'no carriage return may reach the terminal');
     // Every neutralized byte becomes one `.`, so the declared status stays identifiable.
-    assert.match(text.out, /nasty\s+-\s+unknown\s+\?danger\.\[31m\.red\.more\.line\s/);
+    assert.match(text.out, /nasty\s+-\s+-\s+\?danger\.\[31m\.red\.more\.line\s/);
     const lines = text.out.trimEnd().split('\n');
     assert.equal(lines.length, 4, `header plus two rows, with no smuggled newline: ${JSON.stringify(text.out)}`);
     // The widened stage column is measured like every other one, so the table still lines up.
@@ -302,12 +303,12 @@ test('a status whose value is empty or blank is not a declared status', () => {
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /b-bare-value\s+-\s+unknown\s+-\s+-\s+-\s+-/);
-    assert.match(text.out, /b-blank\s+-\s+unknown\s+-\s+-\s+-\s+-/);
-    assert.match(text.out, /b-control\s+-\s+unknown\s+\?\.\.\s+-\s+-\s+-/);
-    assert.match(text.out, /b-empty\s+-\s+unknown\s+-\s+-\s+-\s+-/);
-    assert.match(text.out, /b-padded\s+-\s+unknown\s+\?daydreaming\.\s+-\s+-\s+-/);
-    assert.match(text.out, /b-padded-known\s+-\s+unknown\s+\?converged\s+-\s+-\s+-/);
+    assert.match(text.out, /b-bare-value\s+-\s+-\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /b-blank\s+-\s+-\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /b-control\s+-\s+-\s+\?\.\.\s+-\s+-\s+-/);
+    assert.match(text.out, /b-empty\s+-\s+-\s+-\s+-\s+-\s+-/);
+    assert.match(text.out, /b-padded\s+-\s+-\s+\?daydreaming\.\s+-\s+-\s+-/);
+    assert.match(text.out, /b-padded-known\s+-\s+-\s+\?converged\s+-\s+-\s+-/);
     assert.equal(
       text.out.includes(String.fromCharCode(27)),
       false,
@@ -345,7 +346,7 @@ test('every text column is sanitized, not only the one a defect was found in', (
     assert.equal(text.out.includes(esc), false, `no escape byte may reach the terminal: ${JSON.stringify(text.out)}`);
     // The neutralized value is still identifiable, so the reader can see what the file holds.
     assert.match(text.out, /p-rev\s+-\s+r\.\[31mRED\s+done/);
-    assert.match(text.out, /d-rev\s+d\.\[32mGRN\s+unknown\s+design_draft/);
+    assert.match(text.out, /d-rev\s+d\.\[32mGRN\s+-\s+design_draft/);
   } finally {
     fx.cleanup(dir);
   }
@@ -365,7 +366,7 @@ test('a huge value is bounded in the table and kept whole in --json', () => {
     for (const line of text.out.split('\n')) {
       assert.ok(line.length < 200, `a row grew without bound: ${line.length} chars`);
     }
-    assert.match(text.out, /huge\s+-\s+unknown\s+\?x+\.\.\.\s/);
+    assert.match(text.out, /huge\s+-\s+-\s+\?x+\.\.\.\s/);
     assert.match(text.out, /huge-rev\s+-\s+y+\.\.\.\s+done/);
 
     // The full value is still available where a caller can ask for it deliberately.
@@ -399,10 +400,10 @@ test('a control-character status is declared; only plain spaces are not', () => 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
     for (const id of ['a-tab-cr', 'b-lf', 'c-vt-ff', 'd-nbsp', 'e-bom', 'f-linesep']) {
-      assert.match(text.out, new RegExp(`${id}\\s+-\\s+unknown\\s+\\?\\.`), `${id} must read as declared`);
+      assert.match(text.out, new RegExp(`${id}\\s+-\\s+-\\s+\\?\\.`), `${id} must read as declared`);
     }
     for (const id of ['g-empty', 'h-spaces', 'i-null']) {
-      assert.match(text.out, new RegExp(`${id}\\s+-\\s+unknown\\s+-\\s`), `${id} must read as nothing declared`);
+      assert.match(text.out, new RegExp(`${id}\\s+-\\s+-\\s+-\\s`), `${id} must read as nothing declared`);
     }
     // Whatever those bytes were, none of them reached the terminal.
     assert.doesNotMatch(text.out, /[^\x20-\x7e\n]/, 'a row carried a byte outside printable ASCII');
@@ -429,13 +430,13 @@ test('non-string and non-ASCII statuses render predictably', () => {
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /a-number\s+-\s+unknown\s+\?123\s/);
-    assert.match(text.out, /b-bool\s+-\s+unknown\s+\?true\s/);
-    assert.match(text.out, /c-mapping\s+-\s+unknown\s+-\s/);
-    assert.match(text.out, /d-sequence\s+-\s+unknown\s+-\s/);
-    assert.match(text.out, /e-del-c1\s+-\s+unknown\s+\?x\.y\.z\s/);
-    assert.match(text.out, /f-wide\s+-\s+unknown\s+\?\.\.\s/);
-    assert.match(text.out, /g-no-key\s+-\s+unknown\s+-\s/);
+    assert.match(text.out, /a-number\s+-\s+-\s+\?123\s/);
+    assert.match(text.out, /b-bool\s+-\s+-\s+\?true\s/);
+    assert.match(text.out, /c-mapping\s+-\s+-\s+-\s/);
+    assert.match(text.out, /d-sequence\s+-\s+-\s+-\s/);
+    assert.match(text.out, /e-del-c1\s+-\s+-\s+\?x\.y\.z\s/);
+    assert.match(text.out, /f-wide\s+-\s+-\s+\?\.\.\s/);
+    assert.match(text.out, /g-no-key\s+-\s+-\s+-\s/);
   } finally {
     fx.cleanup(dir);
   }
@@ -454,7 +455,7 @@ test('with every level unrecognized, the marked stage follows the same order as 
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /two-typos\s+4\s+unknown\s+\?dz_typo\s/);
+    assert.match(text.out, /two-typos\s+4\s+-\s+\?dz_typo\s/);
     assert.match(text.out, /three-typos\s+4\s+9\s+\?pl_typo\s/);
   } finally {
     fx.cleanup(dir);
@@ -482,12 +483,12 @@ test('a document that exists and cannot be read says so, rather than reporting n
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /a-bad-yaml\s+-\s+unknown\s+!unreadable\s/);
-    assert.match(text.out, /b-no-frontmatter\s+-\s+unknown\s+!unreadable\s/);
-    assert.match(text.out, /c-empty-file\s+-\s+unknown\s+!unreadable\s/);
-    assert.match(text.out, /d-no-documents\s+-\s+unknown\s+-\s/);
-    assert.match(text.out, /e-no-status\s+3\s+unknown\s+-\s/);
-    assert.match(text.out, /f-says-unreadable\s+-\s+unknown\s+\?unreadable\s/);
+    assert.match(text.out, /a-bad-yaml\s+-\s+-\s+!unreadable\s/);
+    assert.match(text.out, /b-no-frontmatter\s+-\s+-\s+!unreadable\s/);
+    assert.match(text.out, /c-empty-file\s+-\s+-\s+!unreadable\s/);
+    assert.match(text.out, /d-no-documents\s+-\s+-\s+-\s/);
+    assert.match(text.out, /e-no-status\s+3\s+-\s+-\s/);
+    assert.match(text.out, /f-says-unreadable\s+-\s+-\s+\?unreadable\s/);
 
     const json = router(dir, ['plans', '--json']);
     const rows = (JSON.parse(json.out) as { plans: { id: string; stage: string | null }[] }).plans;
@@ -523,9 +524,9 @@ test('a later document outranks the brainstorm, and a broken plan does not fall 
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /has-design\s+2\s+unknown\s+design_approved/);
+    assert.match(text.out, /has-design\s+2\s+-\s+design_approved/);
     assert.match(text.out, /has-plan\s+1\s+4\s+executing/);
-    assert.match(text.out, /broken-plan\s+-\s+unknown\s+!unreadable/);
+    assert.match(text.out, /broken-plan\s+-\s+-\s+!unreadable/);
   } finally {
     fx.cleanup(dir);
   }
@@ -554,10 +555,10 @@ test('the document that exists owns the stage, even when its status is not recog
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /a-design-typo\s+3\s+unknown\s+\?desgin_draft\s/);
+    assert.match(text.out, /a-design-typo\s+3\s+-\s+\?desgin_draft\s/);
     assert.match(text.out, /b-plan-typo\s+2\s+7\s+\?pl_typo\s/);
-    assert.match(text.out, /c-design-broken\s+-\s+unknown\s+!unreadable\s/);
-    assert.match(text.out, /d-brainstorm-only\s+-\s+unknown\s+converged\s/);
+    assert.match(text.out, /c-design-broken\s+-\s+-\s+!unreadable\s/);
+    assert.match(text.out, /d-brainstorm-only\s+-\s+-\s+converged\s/);
   } finally {
     fx.cleanup(dir);
   }
@@ -584,9 +585,9 @@ test('the mark reports the owning document and does not move ownership', () => {
 
     const text = router(dir, ['plans']);
     assert.equal(text.code, 0, text.out);
-    assert.match(text.out, /typo-brainstorm\s+1\s+unknown\s+design_approved\s/);
+    assert.match(text.out, /typo-brainstorm\s+1\s+-\s+design_approved\s/);
     assert.match(text.out, /typo-plan\s+2\s+5\s+\?plan_aproved\s/);
-    assert.match(text.out, /typo-design\s+3\s+unknown\s+\?desgin_draft\s/);
+    assert.match(text.out, /typo-design\s+3\s+-\s+\?desgin_draft\s/);
   } finally {
     fx.cleanup(dir);
   }

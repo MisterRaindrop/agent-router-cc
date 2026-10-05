@@ -8,14 +8,17 @@ or anything where guessing un-discussed details would be expensive. Small change
 entirely: talk them through and run `/router:go` as before. Do not judge task size yourself
 and do not suggest this flow for every task.
 
-The flow separates what the old `/router:spec` mixed together. Exactly **two documents**,
-in order, each approved by the user before the next stage may start:
+**Exactly one document.** `DESIGN.md` -- why do it, what to do, what NOT to do, the chosen
+approach and its rejected alternatives, risks and invariants, acceptance criteria, and where
+each criterion will be proven. The user approves it; `/router:go` then executes against it.
 
-- **`DESIGN.md`** (this command) -- why do it, what to do, what NOT to do, the chosen
-  approach and its rejected alternatives, risks and invariants, acceptance criteria.
-- **`WORKPLAN.md`** (`/router:workplan`) -- how: implementation steps, task breakdown, dependencies,
-  verification, rollout. Only an approved Design may enter it; only an approved Plan may be
-  executed by `/router:go`.
+There is no separate work plan. A task breakdown written here would be a document the
+executor never reads and the dispatch never follows: measured over five plans, 28 of 35
+"work packages" were things the main session did itself, where a package contract constrains
+nothing, and 10 of 17 real dispatches were authored outside the approved list anyway. What
+replaced it is cheaper and happens at the right moment -- `/router:go` puts the whole
+feature's intended slicing in front of the user once, in conversation, before the first
+dispatch.
 
 ## Files and state
 
@@ -31,19 +34,30 @@ name: `router plans` reads that filename). If another session holds it, say so a
 ```yaml
 plan_id: <id>
 revision: 0            # frozen (bumped) at each approval
-status: design_draft   # design_draft | design_approved | design_abandoned
+status: design_draft   # design_draft | design_approved | design_implemented | design_abandoned
 approved: null         # { revision, by, date } once approved
 ```
 
-`design_abandoned` is the terminal state for a design the user stops part-way -- "just build the
-whole thing, skip the design". Set it, keep the document as the archive of what *was* confirmed, and
-say in it why the flow stopped. Without it such a design sits on `design_draft` forever and
-`router plans` lists finished work as the one unfinished plan.
+Two terminal states, so that a design which is over stops looking like one still running:
+
+- **`design_implemented`** -- the work is built, reviewed and accepted. `/router:review` sets it
+  when the user accepts the finished work; nothing else writes it. Without it an approved design
+  stays on `design_approved` forever and `router plans` cannot tell "approved but not started"
+  from "done".
+- **`design_abandoned`** -- the user stopped the flow part-way: "just build the whole thing, skip
+  the design". Set it, keep the document as the archive of what *was* confirmed, and say in it
+  why the flow stopped.
+
+Every status has exactly one stage that writes it: `design_draft` and `design_approved` here,
+`design_implemented` at `/router:review`, `design_abandoned` here or wherever the user stops. A
+state the schema allows and no stage can reach is worse than no state -- the old work plan
+shipped one for months.
 
 Approval is an explicit user action and **always the last action of the stage**. Any edit
-after approval bumps `revision`, requires re-approval, drops an existing `WORKPLAN.md` back to
-`plan_draft`, and is recorded in a Revision Log section -- a changed bar must be visible,
-never silent.
+after approval bumps `revision`, requires re-approval, and is recorded in a Revision Log
+section -- a changed bar must be visible, never silent. A dispatched task is pinned to the
+revision it was dispatched against (`plan_revision` in its `task.yaml`), so work already
+running is refused rather than quietly landing against a new bar.
 
 ## Interaction discipline (hard rules, shared with the whole flow)
 
@@ -72,9 +86,9 @@ road already closed is never re-proposed as a fresh idea.
 
 ## Phase 3 -- Write section by section
 
-Seven sections, each a few hundred words, drafted **one at a time**. After each section:
+Eight sections, each a few hundred words, drafted **one at a time**. After each section:
 stop, show that section, and ask for an explicit verdict (approve / revise) before writing
-the next. Track progress in a header note (`n/7 confirmed`).
+the next. Track progress in a header note (`n/8 confirmed`).
 
 1. **Background & goals** -- why; success criteria.
 2. **Scope** -- what is in; what is explicitly out (non-goals).
@@ -84,17 +98,32 @@ the next. Track progress in a header note (`n/7 confirmed`).
    each was rejected.
 5. **Risks & invariants** -- risk tier (the vocabulary of `references/assurance-core.md`);
    Must NOT / behavior that may not break.
-6. **Acceptance criteria** -- behavior-level definition of done. *How* each criterion is
-   proven (which gate, which check) belongs to the Plan, not here.
+6. **Acceptance criteria** -- behavior-level definition of done, at the level of observable
+   behavior. *Where* each one is proven is section 8, drafted right after it and against it.
 7. **Open questions** -- key unknowns. Small ones are marked as `mode: probe` candidates and
    stay in this list; only research too large for a probe is proposed as its own task. There
-   is no third document type.
+   is no second document type.
+8. **Verification matrix** -- every criterion in section 6 mapped to where it is actually
+   proven. One row per criterion, and the row names a real place: an environment-free gate
+   (scope / secrets / exec bit / patch applies), the project's own build gate, a test the work
+   must add, the main session's own run in the real environment, or **`unverified`**.
+
+   **`unverified` is a legal answer and must stay visible.** It is the whole reason this
+   section exists: a criterion with no honest place to be proven is recorded as unproven, not
+   papered over with a test that does not test it. Measured on this repository, four fixes in
+   one plan were correct while their tests proved nothing -- that is only catchable if the
+   document says in advance where proof was supposed to come from.
+
+   Written before implementation, so it is a commitment, not a report. `/router:review` reads
+   it to judge whether what was promised was proven; `references/assurance-core.md` has the
+   shared vocabulary.
 
 ## Phase 4 -- Approval
 
 When all sections are confirmed, ask for approval of the whole document as an explicit
 action. On approval: set `status: design_approved`, freeze the bumped `revision`, record
-`approved`. Then the user may run `/router:workplan`.
+`approved`. Then the user may run `/router:go`, which puts the intended slicing of the whole
+feature in front of them once before the first dispatch.
 
 An optional adversarial pass -- `/router:design-review`, an independent model attacking the
 draft, every objection adjudicated by the user -- can run before approval, as many rounds as

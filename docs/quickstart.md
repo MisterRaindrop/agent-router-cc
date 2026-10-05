@@ -25,11 +25,12 @@ Plan the change with Opus in normal conversation, then:
 design flow first: `/router:brainstorm` questions the idea itself when the goal is not settled
 yet — comparing it with how other products solve the same problem, arguing the case against
 building it, and proposing the option you did not offer; `/router:design` clarifies and
-researches, producing a `DESIGN.md` you approve section by section; `/router:design-review`
-optionally gets an independent adversarial second opinion where you adjudicate every objection;
-`/router:workplan` turns the approved Design into a `WORKPLAN.md` with the task breakdown, which
-`/router:go` then executes verbatim. Whether a change deserves that is your call — router never
-judges task size.)
+researches, producing a `DESIGN.md` you approve section by section — the last section maps every
+acceptance criterion to where it will actually be proven; `/router:design-review` optionally gets
+an independent adversarial second opinion where you adjudicate every objection; then
+`/router:go` executes against the approved Design, showing you the whole feature's intended
+slicing once before the first dispatch. Whether a change deserves that is your call — router
+never judges task size.)
 
 (**One run, one package, one executor** — Opus by default, explicitly overridable — while your
 session stays free: dispatch runs detached in the background, the statusline shows live
@@ -54,16 +55,33 @@ points:
 
 ## The primitives
 
-`/router:go` drives these; you can also call them directly:
+`/router:go` drives these; you can also call them directly. Only `resume` is a slash command:
 
 ```
-/router:result <id>      # the per-check verifier report + log tail
 /router:resume <id>      # send a failure back to that task's own executor session
-/router:list             # tasks, their last status, and whether the task branch is still there
 ```
 
-`dispatch`, `land` and `gate` are CLI subcommands rather than slash commands — `/router:go`
-drives them. From a shell: `router dispatch <id>`, `router land <id>`, `router gate <id>`.
+Everything else is a CLI subcommand -- `/router:go` drives the ones it needs, and the rest are
+for you to run when you want to look:
+
+```
+router list                    # tasks, their last status, and whether the task branch is still there
+router result <id>             # the per-check verifier report + log tail
+router usage [--all]           # token/cost per dispatch vs an all-strongest-model baseline
+router models                  # the resolved model-tier table (bundled default + .router/models.yaml)
+router setup-statusline        # wire claude-side quota reads into Claude Code's statusLine
+router dispatch|land|gate <id> # what /router:go runs for you
+```
+
+**Finding `router` when you installed only the plugin.** The plugin does not put it on your
+`PATH`; the bundle lives in the plugin cache, under a directory named after the version, so the
+path moves on every update. Resolve the newest one instead of hard-coding it:
+
+```bash
+alias router='node "$(ls -d ~/.claude/plugins/cache/agent-router-cc/router/*/ | sort -V | tail -1)dist/router.js"'
+```
+
+Or ask Opus in the session to run one -- it will locate the bundle the same way.
 
 Claude executors get `Read`/`Edit`/`Write` plus a **`Bash` allowlist, not a shell**: the task's
 own `verify` command and a narrow set of git subcommands (`add`, `commit`, `status`, `diff`,
@@ -130,7 +148,7 @@ own pass/fail. **[docs/workflow.md](workflow.md)** has the whole protocol.
 ## Real-quota routing
 
 router routes each task to the executor with more remaining quota. codex usage is read
-from `~/.codex/sessions`; for claude, run `/router:setup-statusline` once -- it wires
+from `~/.codex/sessions`; for claude, run `router setup-statusline` once -- it wires
 `statusline/router-usage.mjs` into your `~/.claude/settings.json` (snapshotting usage to
 `.router/usage.json`) and chains any existing statusline via `ROUTER_INNER_STATUSLINE`,
 so your current HUD keeps rendering. This is the same mechanism claude-hud uses; restart

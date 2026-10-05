@@ -8,6 +8,80 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-02
+
+### Removed
+
+- **The work-plan stage is gone: `/router:workplan`, `/router:plan` and `WORKPLAN.md`.** Its core
+  deliverable -- an approved package list `/router:go` would execute verbatim -- did not survive
+  contact with execution. Measured over the five plans that used it: 28 of 35 listed "work
+  packages" were main-session steps, which a package contract (`allowed_globs`, line caps, stop
+  conditions) does not constrain at all; and of 17 real dispatches, 10 were authored outside the
+  approved list during review rounds and written back into the document afterwards. The premise
+  `go` relied on -- "approved at workplan, so skip Touchpoint 1" -- held for under half the work,
+  while the document cost 240-536 lines of main-session drafting plus an approval round and
+  carried a four-state machine that had already rotted (`done` was unreachable until `b616f2f`;
+  the page still pointed at the `/router:gate` command deleted in 0.10.0).
+
+  Not among the reasons: token cost. It was the first motivation and it did not survive checking.
+  The contract carried the whole work plan verbatim, but ~21k tokens against a 3.76M median
+  dispatch input is 0.6%. Merging dispatches to save cold starts was measured too and is not
+  established either -- burn rate rises with run length (median 3,172 tok/s under 5 minutes, 4,516
+  over 10), so a saved cold start trades against a fatter context. **Dispatch granularity is
+  deliberately unchanged**; changing it needs its own measurement, not this one.
+
+- **Six slash commands that added no capability: `/router:init`, `/router:list`,
+  `/router:result`, `/router:usage`, `/router:models`, `/router:setup-statusline`.** `init` did
+  nothing at all -- its handler printed "optional; router auto-creates this on first use", and the
+  README already said there is no init step. The other five only shelled out to the CLI verb of
+  the same name and summarized its output. The verbs are untouched: `router list`, `router result`,
+  `router usage`, `router models` and `router setup-statusline` work exactly as before, and
+  `setup-statusline` needs no arguments (`--statusline` already defaulted to the bundled script).
+  The command menu drops from 14 entries to 8.
+
+  One cost, recorded rather than hidden: a plugin-only install does not put `router` on `PATH`,
+  and the bundle sits under a version-named directory in the plugin cache. `docs/quickstart.md`
+  gives an alias that resolves the newest version; asking Opus in the session works too.
+
+### Added
+
+- **Touchpoint 1 now covers the whole feature and is asked once.** Before the first dispatch,
+  `/router:go` shows every package it intends to dispatch -- what each touches, roughly in what
+  order, how each is verified -- and the dispatches that follow do not re-ask unless the slicing
+  itself changes. It is a conversation: nothing is written to `.router/`, no status moves. This is
+  what replaced the work plan, and it is the control the work plan was supposed to provide.
+- **`DESIGN.md` gained a Verification matrix as its eighth and last section.** The one part of the
+  work plan with no replacement: every acceptance criterion mapped to where it is actually proven,
+  with `unverified` kept visible rather than papered over by a test that does not test it. Written
+  before implementation, so it is a commitment rather than a report.
+- **`design_implemented`, the terminal design status**, written only by `/router:review` when the
+  user accepts the finished work. It replaces the work plan's `done`; without it an approved
+  design would stay `design_approved` forever and `router plans` could not tell "approved, not
+  started" from "built and accepted" -- the exact defect `done` had.
+
+### Changed
+
+- **The task contract is the compact header plus `DESIGN.md` verbatim**, not two documents
+  concatenated. `plan_revision` keeps its name and now pins a task to the `DESIGN.md` revision it
+  was dispatched against: delivery headers and `metrics.jsonl` are append-only, and a field
+  meaning one thing in old rows and another in new ones is harder to read than a name that is
+  merely imprecise -- the same reasoning that kept `run_id` and `t_worktree`.
+- **`router plans`: the `revision` column is now `workplan`** and renders `-` rather than
+  `unknown` when there is no work plan, which is the normal case from here on. Historical plan
+  directories still report the stage they finished in: `paths.planMd` keeps reading a legacy
+  `WORKPLAN.md`/`PLAN.md`, because dropping it would make every finished plan fall through to its
+  `design_approved` design and read as not started.
+
+### Fixed
+
+- **`README.zh-CN.md` had drifted a full era behind.** It still documented `/router:plan`,
+  `/router:dispatch`, `/router:land` and `/router:gate` -- all deleted in 0.10.0 -- along with
+  `/router:go single`, per-task worktrees and concurrent package execution, and it never mentioned
+  `/router:brainstorm`. A Chinese reader following it got "command not found" four times. The
+  command table, the run-shape diagram, the gate section and the isolation section now match the
+  English README. The marketplace blurb advertised the same removed mechanisms and was corrected
+  with them.
+
 ## [0.13.0] - 2026-09-15
 
 ### Added

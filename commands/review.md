@@ -138,11 +138,11 @@ it before assuming a flag carries over.
 Before reviewing, establish what you are reviewing (see the Preflight section of
 `${CLAUDE_PLUGIN_ROOT}/references/report-template.md`): the `base_sha`/`head_sha` of the
 landed diff; whether the diff is within the declared scope; whether the bar this change is
-judged against was approved by the user (the Design/Plan for work that went through the
-design flow, the plan agreed at `/router:go` otherwise); and whether the code changed again
+judged against was approved by the user (the `DESIGN.md` for work that went through the
+design flow, the package agreed at `/router:go` otherwise); and whether the code changed again
 after the last verification run (if so, prior evidence is stale). **If scope drifted or the
-bar was never approved, stop and return to `/router:design` / `/router:workplan`** -- do not
-review against a bar that no longer matches the code.
+bar was never approved, stop and return to `/router:design`** -- do not review against a bar
+that no longer matches the code.
 
 **Start from router's own record rather than from scratch.** For each package `/router:go`
 landed, `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" result <id> --json` returns the run
@@ -345,21 +345,23 @@ of every hit whether it needed the same change.
 
 ## Close the plan
 
-When the user accepts the review and the work is finished, set the work plan's frontmatter to
-`status: done`.
+When the user accepts the review and the work is finished, set the Design's frontmatter to
+`status: design_implemented`.
 
-This is the only place that writes it. `done` was a legal status from the day the flow was
-written and **nothing ever set it**: `/router:go` moves a plan to `executing` and no stage moved
-it on, so `router plans` showed finished work as still running -- two plans sat that way for
+This is the only place that writes it. Its predecessor, `done` on the work plan, was a legal
+status from the day the flow was written and **nothing ever set it**: `/router:go` moved a plan
+to `executing` and no stage moved it on, so `router plans` showed finished work as still running
+-- two plans sat that way for
 nearly two weeks. A state the schema allows and the flow cannot reach is worse than no state, and
 it fails the way everything in this project fails: silently, still looking fine.
 
-If the user is not finished -- findings deferred, a follow-up expected -- leave it `executing` and
-say so. `done` means the plan is closed, not that this review round ended.
+If the user is not finished -- findings deferred, a follow-up expected -- leave it
+`design_approved` and say so. `design_implemented` means the work is closed, not that this
+review round ended.
 
-If a finding is `level: spec` (the bar itself is wrong -- e.g. a Design acceptance
-criterion is incorrect, or a Plan verification row proves the wrong thing), **do not
-quietly change the bar in review**: stop, return to `/router:design` (or `/router:workplan`
-when only the how is wrong), record the revision in the document's Revision Log -- a bumped
-Design revision drops the Plan back to draft -- have the user re-approve, then re-implement
-and re-review. The acceptance criteria are never weakened inside review to make a change pass.
+If a finding is `level: spec` (the bar itself is wrong -- e.g. an acceptance criterion is
+incorrect, or a verification-matrix row proves the wrong thing), **do not quietly change the
+bar in review**: stop, return to `/router:design`, record the revision in the document's
+Revision Log -- a bumped Design revision makes every package pinned to the old one refuse --
+have the user re-approve, then re-implement and re-review. The acceptance criteria are never
+weakened inside review to make a change pass.

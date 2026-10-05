@@ -54,10 +54,15 @@ test('every command has a description in its frontmatter', () => {
   }
 });
 
-test('init keeps router runtime state gitignored and does not mention removed policy flow', () => {
-  const body = read('../commands/init.md');
-  assert.match(body, /do NOT stage or commit/i);
-  assert.doesNotMatch(body, /committed base_sha|default policy|policy works/i);
+// Removed in 0.14.0. `init` did nothing -- its handler printed "optional; router auto-creates this
+// on first use" -- and the other five only shelled out to a CLI verb. Each took a slot in the
+// command menu without adding a capability; the verbs themselves remain on the CLI.
+test('the thin CLI wrappers are not slash commands', () => {
+  const dir = new URL('../commands/', import.meta.url);
+  const present = new Set(readdirSync(dir));
+  for (const gone of ['init', 'list', 'result', 'usage', 'models', 'setup-statusline']) {
+    assert.ok(!present.has(`${gone}.md`), `/router:${gone} was removed; use \`router ${gone}\``);
+  }
 });
 
 test('every agent declares name + model', () => {
@@ -154,9 +159,9 @@ test('no command file still advertises a removed mechanism', () => {
   assert.match(go, /does not get a\nseparate worktree, because/);
 });
 
-test('the six flow commands all exist', () => {
+test('the five flow commands all exist', () => {
   const present = new Set(commandFiles());
-  for (const stage of ['brainstorm', 'design', 'design-review', 'workplan', 'go', 'review']) {
+  for (const stage of ['brainstorm', 'design', 'design-review', 'go', 'review']) {
     assert.ok(present.has(`${stage}.md`), `missing /router:${stage}`);
   }
 });
@@ -229,16 +234,18 @@ test('dispatch, gate, land and spec are no longer slash commands', () => {
   }
 });
 
-test('plan is a stub that names its replacement, and workplan carries the content', () => {
-  const stub = readFileSync(new URL('plan.md', COMMANDS), 'utf8');
-  assert.match(stub, /\/router:workplan/);
-  assert.match(frontmatter(stub).description ?? '', /renamed/i);
-  // Short enough that nobody mistakes it for the real thing.
-  assert.ok(stub.split('\n').length < 15, 'the alias should be a stub, not a copy');
+// The work-plan stage was removed in 0.14.0 and neither command may come back as a stub: a stub
+// that still appears in the menu is indistinguishable from a stage that still exists, and this one
+// had already outlived its own removal date by three versions.
+test('the work-plan stage is gone from the command surface', () => {
+  const present = new Set(commandFiles());
+  assert.ok(!present.has('workplan.md'), '/router:workplan was removed');
+  assert.ok(!present.has('plan.md'), '/router:plan was removed with it, not left as a stub');
 
-  const real = readFileSync(new URL('workplan.md', COMMANDS), 'utf8');
-  assert.match(real, /WORKPLAN\.md/);
-  assert.match(real, /Verification matrix/i);
+  // Its one irreplaceable part had to land somewhere, and the design is where it went.
+  const design = readFileSync(new URL('design.md', COMMANDS), 'utf8');
+  assert.match(design, /Verification matrix/i);
+  assert.match(design, /`unverified`/);
 });
 
 // go.md was 379 lines with a single `##` heading, 64 of them describing concurrent dispatch.
@@ -340,22 +347,21 @@ test('the glossary splits the two words that were doing several jobs', () => {
 });
 
 // `done` was a legal work-plan status from the day the flow was written and nothing ever set it:
-// go moves a plan to `executing`, no stage moved it on, so finished work showed as still running.
-// A state the schema allows and the flow cannot reach is worse than no state.
-test('every work-plan status has a stage that writes it', () => {
+// go moved a plan to `executing`, no stage moved it on, so finished work showed as still running.
+// A state the schema allows and the flow cannot reach is worse than no state. The work plan is
+// gone; the same assertion now guards the design's statuses, which inherited the problem.
+test('every design status has a stage that writes it', () => {
   const read = (f: string): string => readFileSync(new URL(f, COMMANDS), 'utf8');
-  const workplan = read('workplan.md');
-  const go = read('go.md');
+  const design = read('design.md');
   const review = read('review.md');
 
-  assert.match(workplan, /status: plan_draft/);
-  assert.match(workplan, /set `status: plan_approved`/);
-  assert.match(go, /`status: executing`/);
-  // The one that was missing.
-  assert.match(review, /set the work plan's frontmatter to\n`status: done`/);
+  assert.match(design, /status: design_draft/);
+  assert.match(design, /set `status: design_approved`/);
+  // The one that would otherwise be orphaned again: nothing in the design flow can close a design.
+  assert.match(review, /set the Design's frontmatter to\n`status: design_implemented`/);
   // ...and the lifecycle is written down in one place, so the next added state cannot be orphaned.
-  assert.match(workplan, /Who writes each status/);
-  for (const status of ['plan_draft', 'plan_approved', 'executing', 'done']) {
-    assert.match(workplan, new RegExp(`\`${status}\``), `lifecycle note omits ${status}`);
+  assert.match(design, /Every status has exactly one stage that writes it/);
+  for (const status of ['design_draft', 'design_approved', 'design_implemented', 'design_abandoned']) {
+    assert.match(design, new RegExp(`\`${status}\``), `lifecycle note omits ${status}`);
   }
 });

@@ -31,24 +31,18 @@ invariants; acceptance criteria; open questions.
   to read it so a closed road is not re-proposed as a fresh idea.
 - **Must NOT is a list of behaviours, not intentions.** "Never lose the user's uncommitted work"
   is checkable. "Be careful with git" is not.
-- **Acceptance criteria are behaviour**, not implementation. How each is *proven* belongs to the
-  work plan.
+- **Acceptance criteria are behaviour**, not implementation. *Where* each is proven is the
+  verification matrix, the document's last section.
+- **The verification matrix maps every acceptance criterion to where it is actually proven** — and
+  keeps `unverified` visible rather than papering it over with a test that does not test it. It is
+  written before implementation, so it is a commitment rather than a report.
 - **Open questions get a type**: probe candidate, needs the user, or deferred with a trigger. An
   open question with no disposition is an unowned decision.
 
-## WORKPLAN.md
-
-**Reader:** whoever executes it, possibly not you, working from this alone.
-
-Implementation overview; task breakdown; verification matrix; rollout.
-
-- **Each package states all seven faces** (goal, invariants, frozen interfaces, definition of
-  done including tests, file scope, stop conditions, tier and risk). Work that cannot state seven
-  is not a package — it is a decision, and it stays with the user.
-- **The verification matrix maps every acceptance criterion to where it is actually proven** — and
-  keeps `unverified` visible rather than papering it over with a test that does not test it.
-- **Say what you decided that the design did not settle.** Those are exactly the choices the user
-  needs to see, and burying them in prose is how a plan smuggles in a design change.
+There is no second document. A work plan used to follow this one and carry the task breakdown;
+it was removed because the breakdown it froze was mostly main-session work that no package
+contract constrains, and most real dispatches were authored outside it anyway. How the work is
+sliced is now agreed in conversation at `/router:go`, once, and never written down.
 
 ## Commit messages
 

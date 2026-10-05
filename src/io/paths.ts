@@ -28,16 +28,19 @@ export interface RouterPaths {
    * path-safe shape for exactly this reason. */
   planDir(planId: string): string;
   /**
-   * The work plan: `WORKPLAN.md`, or `PLAN.md` when that is the one on disk.
+   * A legacy work plan: `WORKPLAN.md`, or `PLAN.md` when that is the one on disk.
    *
-   * The document was renamed because "plan" and "design" both described planning and neither
-   * name said which. Resolution is by existence rather than by a version flag: a plan written
-   * before the rename must stay readable to `router plans` and to the go gate, and a machine
-   * whose plugin build is a day behind must not see the work vanish.
+   * READ-ONLY, and nothing writes one any more. The work-plan stage was removed in 0.14.0 --
+   * `DESIGN.md` is the only document a plan has now, and how the work is sliced into packages
+   * is settled in conversation at `/router:go` instead. This accessor survives because plan
+   * directories written before that still exist on disk, and they are the only record that
+   * finished work finished: `router plans` reads their declared stage, which would otherwise
+   * fall back to their `design_approved` DESIGN.md and report completed plans as not started.
+   *
+   * Resolution is by existence rather than by a version flag, covering both the pre-rename
+   * `PLAN.md` and the post-rename `WORKPLAN.md`.
    */
   planMd(planId: string): string;
-  /** Where a new work plan is written, regardless of what is already on disk. */
-  workplanMd(planId: string): string;
   specCritique(planId: string, round: number): string;
   specDecisions(planId: string): string;
   specLock(planId: string): string;
@@ -117,7 +120,6 @@ export function routerPaths(routerDir: string): RouterPaths {
       const workplan = join(root, 'plans', planId, 'WORKPLAN.md');
       return existsSync(workplan) ? workplan : join(root, 'plans', planId, 'PLAN.md');
     },
-    workplanMd: (planId) => join(root, 'plans', planId, 'WORKPLAN.md'),
     specCritique: (planId, round) => join(root, 'plans', planId, `critique-${round}.md`),
     specDecisions: (planId) => join(root, 'plans', planId, 'DECISIONS.md'),
     specLock: (planId) => join(root, 'plans', planId, 'spec.lock'),

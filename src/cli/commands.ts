@@ -575,8 +575,23 @@ const BRAINSTORM_STATUSES = new Set(['brainstorming', 'converged', 'rejected']);
 // document on `design_draft` forever, so `router plans` listed finished work as the only unfinished
 // plan and every review of what was outstanding had to explain it again. Brainstorm has `rejected`
 // for the same situation; design had nothing.
-const DESIGN_STATUSES = new Set(['design_draft', 'design_approved', 'design_abandoned']);
-const PLAN_STATUSES = new Set(['plan_draft', 'plan_approved', 'executing', 'done']);
+// `design_implemented` is the other terminal state, and it replaced the work plan's `done` when
+// the work-plan stage was removed in 0.14.0. The design is now the only document a plan has, so
+// without a terminal status of its own an approved design stayed `design_approved` forever and
+// this listing could not tell "approved, not started" from "built and accepted". `/router:review`
+// is the only stage that writes it.
+const DESIGN_STATUSES = new Set([
+  'design_draft',
+  'design_approved',
+  'design_implemented',
+  'design_abandoned',
+]);
+// LEGACY. Nothing writes a work plan any more (removed in 0.14.0), but plan directories written
+// before that still declare these statuses, and they are the only record that the work finished.
+// Dropping this vocabulary would make every historical plan fall through to its `design_approved`
+// DESIGN.md and report finished work as not started -- the exact regression `design_implemented`
+// exists to prevent.
+const LEGACY_PLAN_STATUSES = new Set(['plan_draft', 'plan_approved', 'executing', 'done']);
 
 function documentFrontmatter(text: string): Record<string, unknown> | null {
   const match = DOCUMENT_FRONTMATTER_RE.exec(text);
@@ -595,8 +610,10 @@ function scalarText(value: unknown): string | null {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
 }
 
-// Current plans declare `revision`; `plan_revision` remains readable for artifacts frozen
-// by the legacy flow. Malformed or missing frontmatter degrades only this row.
+// Legacy work plans declare `revision`; `plan_revision` remains readable for artifacts frozen by
+// the flow before that. Malformed or missing frontmatter degrades only this row. Current plans
+// have no work plan at all, so this reads null for them and the column renders `-`; their revision
+// is the design's, in its own column.
 //
 // KNOWN LIMIT, reported 2026-09-01 and deliberately not fixed: this conflates "absent" with
 // "invalid", which is the same blind spot the stage column was just fixed for. `scalarText` returns
@@ -724,8 +741,9 @@ function highestCritiqueRound(entries: string[]): number | null {
   return max;
 }
 
-// List plan artifacts under .router/plans -- document stage, PLAN.md's declared revision,
-// the highest critique round, decisions, and lock state. This handler deliberately avoids
+// List plan artifacts under .router/plans -- document stage, a legacy work plan's declared
+// revision where one exists, the design's revision, the highest critique round, decisions, and
+// lock state. This handler deliberately avoids
 // depsFor(): browsing plans must never scaffold or otherwise write under .router/.
 const plans: Handler = (ctx) => {
   const explicit = flagStr(ctx.args.flags, 'router-dir');
@@ -745,11 +763,11 @@ const plans: Handler = (ctx) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') hasPlan = false;
       /* an unreadable existing PLAN.md still owns the stage, which therefore stays unknown */
     }
-    let stage = hasPlan ? documentStage(planFrontmatter, PLAN_STATUSES) : null;
-    // The design's own revision, read separately from the plan's. Without this the design stage
-    // was unobservable from the tooling: `revision` reads PLAN.md, so a design at revision 3
-    // with no plan yet showed as "unknown" -- while /router:design is required to freeze a
-    // bumped revision at every approval. Two documents, two revisions, two columns.
+    let stage = hasPlan ? documentStage(planFrontmatter, LEGACY_PLAN_STATUSES) : null;
+    // The design's own revision. For every plan written since 0.14.0 this is THE revision: there
+    // is no work plan, so the other column is `-`. The two columns stay separate because the
+    // historical plans on disk have both, and conflating them would reattribute one document's
+    // revision to the other.
     let designRevision: string | null = null;
     let designFrontmatter: Record<string, unknown> | null = null;
     // Existence is tracked separately from readability, exactly as `hasPlan` is: a DESIGN.md that
@@ -790,7 +808,7 @@ const plans: Handler = (ctx) => {
         : documentStage(frontmatter, allowed) ?? unrecognizedStage(frontmatter, allowed);
 
     if (hasPlan) {
-      stage ??= declared(planFrontmatter, PLAN_STATUSES);
+      stage ??= declared(planFrontmatter, LEGACY_PLAN_STATUSES);
     } else if (hasDesign) {
       stage = declared(designFrontmatter, DESIGN_STATUSES);
     } else {
@@ -831,20 +849,22 @@ const plans: Handler = (ctx) => {
     const width = (header: string, floor: number, values: string[]): number =>
       Math.max(floor, header.length + 1, ...values.map((value) => value.length + 1));
     const idWidth = width('id', 24, rows.map((r) => printable(r.id)));
-    const revisionWidth = width('revision', 12, rows.map((r) => cell(r.plan_revision ?? 'unknown')));
+    // `-`, not `unknown`: since 0.14.0 the absence of a work plan is the normal state, and
+    // `unknown` in every row of a column reads as damage rather than as "that stage is gone".
+    const revisionWidth = width('workplan', 12, rows.map((r) => cell(r.plan_revision ?? '-')));
     const designWidth = width('design', 8, rows.map((r) => cell(r.design_revision ?? '-')));
     const stageWidth = width('stage', 8, rows.map((r) => cell(r.stage ?? '-')));
     const critiqueWidth = width('critique', 10, rows.map((r) => r.critique_round === null ? '-' : String(r.critique_round)));
     const decisionsWidth = width('decisions', 12, rows.map((r) => r.decisions ? 'yes' : '-'));
     const lines = [
       `Plans (${rows.length}):`,
-      pad('id', idWidth) + pad('design', designWidth) + pad('revision', revisionWidth) + pad('stage', stageWidth) + pad('critique', critiqueWidth) + pad('decisions', decisionsWidth) + 'locked',
+      pad('id', idWidth) + pad('design', designWidth) + pad('workplan', revisionWidth) + pad('stage', stageWidth) + pad('critique', critiqueWidth) + pad('decisions', decisionsWidth) + 'locked',
     ];
     for (const r of rows)
       lines.push(
         pad(printable(r.id), idWidth) +
           pad(cell(r.design_revision ?? '-'), designWidth) +
-          pad(cell(r.plan_revision ?? 'unknown'), revisionWidth) +
+          pad(cell(r.plan_revision ?? '-'), revisionWidth) +
           pad(cell(r.stage ?? '-'), stageWidth) +
           pad(r.critique_round === null ? '-' : String(r.critique_round), critiqueWidth) +
           pad(r.decisions ? 'yes' : '-', decisionsWidth) +

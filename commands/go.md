@@ -19,26 +19,29 @@ Contract-authoring detail lives in `${CLAUDE_PLUGIN_ROOT}/references/task-contra
 `task.yaml` fields, executor pinning, the seven faces, the gate, budgets, the delivery report,
 session policy. Read it when authoring; this page is the flow.
 
-## Entry: is there an approved work plan?
+## Entry: is there an approved design?
 
-Check FIRST. If this feature went through the design flow (`/router:design` ->
-`/router:workplan`), `.router/plans/<plan_id>/WORKPLAN.md` exists. Read its frontmatter:
+Check FIRST. If this feature went through `/router:design`, `.router/plans/<plan_id>/DESIGN.md`
+exists. Read its frontmatter:
 
-- **`status: plan_approved`** -> execute it verbatim. The breakdown was reviewed and approved at
-  `/router:workplan`, so author the package exactly as the plan lists it -- fill in only the
-  numeric caps it marked "set at dispatch" (recording them in `task.yaml`), carry the plan's
-  revision binding onto the package, and **skip Touchpoint 1**: the list was approved there, and
-  asking again is a wasted pause. Set the plan's frontmatter to `status: executing`.
-- **Any other status** (`plan_draft`, or a `design_revision` older than the Design's current
-  revision) -> refuse, and name the stage that must finish first.
-- **No work plan** -> proceed below. YOU author the package. This is the normal path for everyday
+- **`status: design_approved`** -> execute against it. Author each package yourself from the
+  Design's scope, invariants, acceptance criteria and verification matrix; there is no approved
+  package list to copy, because there is no work plan. Pin every package to the revision you read
+  (`plan_revision` in its `task.yaml`), so an edit to the Design after dispatch is refused instead
+  of quietly moving the bar.
+- **`status: design_draft`** -> refuse, and say the Design has not been approved yet.
+- **`status: design_implemented`** -> the work was already built and accepted. Say so and ask:
+  this is new work under a new `plan_id`, or a revision bump on this one.
+- **`status: design_abandoned`** -> the user already chose to skip the flow. Proceed as if there
+  were no design, and say that is what you are doing.
+- **No design** -> proceed below. YOU author the package. This is the normal path for everyday
   tasks that never needed a Design; whether a change deserves the design flow is the user's call,
   never router's.
 
 If mid-run the code contradicts the **Design** -- a `CONTRACT_CONFLICT` whose evidence reaches
 past the contract into the approach -- stop and take it back to `/router:design`. A bumped design
-revision drops the plan to draft, and packages bound to the old revision are refused by the
-existing `plan_revision` machinery.
+revision makes every package pinned to the old one refuse, via the existing `plan_revision`
+machinery, rather than letting them land against a bar nobody approved.
 
 ## Plan-mode gate (check this second)
 
@@ -49,6 +52,20 @@ existing `plan_revision` machinery.
   authorizes execution, so it **IS Touchpoint 1**; do not ask again. Only after it exits do you
   run `router new`, edit `task.yaml`, and dispatch.
 - **Not in plan mode:** Touchpoint 1 is a plain confirmation.
+
+## Touchpoint 1 covers the whole feature, and is asked once
+
+A feature that takes several packages gets **one** confirmation, before the first dispatch --
+not one per `go`. Show the whole intended slicing: how many packages, what each touches, roughly
+in what order, and how each is verified. `references/work-package.md` sizes them: prefer few large
+packages, because five micro-tasks cost five executor cold starts re-reading the same repository.
+Then dispatch them one at a time without asking again,
+unless the slicing itself changes -- a package you did not show, a scope that grew past what the
+user saw, or a dependency that reorders the rest -- a new confirmation, not a footnote.
+
+**It is a conversation, not a document**: nothing is written to `.router/`, no status moves. It
+replaced the work-plan stage, which froze the same list at far higher cost (`DEPRECATIONS.md` has
+the measurements). With no Design this is usually one package, and reads as it always did.
 
 ## Division of labor
 
@@ -71,8 +88,8 @@ pass/fail verdict stay with you: never with the executor, never compressed.
 
 Per `references/task-contract.md`. Then **Touchpoint 1:** show the user the package -- scope,
 tier, risk, whether it carries a deterministic `verify`, and the note that it carries its own
-tests -- plus any work you judge unclear. Wait for their go-ahead. (Skip entirely when executing
-an approved work plan; in plan mode the `ExitPlanMode` approval is this touchpoint.)
+tests -- plus any work you judge unclear. Wait for their go-ahead. (Asked once per feature, not
+once per package -- see above; in plan mode the `ExitPlanMode` approval is this touchpoint.)
 
 ## 2. Dispatch, and know what the twelve steps do
 
@@ -90,7 +107,7 @@ its report, so this is what it does:
  3  reap         lock reclaimed from a dead holder -> kill its orphan executor group first
  4  rescue       your uncommitted work -> one commit, file list and sha reported
  5  branch       create router/<task-id>. Name already taken -> FAIL, never reuse
- 6  contract     WORKPLAN.md + DESIGN.md concatenated verbatim, each with its sha256
+ 6  contract     the compact header, plus DESIGN.md verbatim with its sha256 when one exists
  7  dispatch     launch the executor detached, cwd = repository root
 --- executing (lock held; heartbeat runs in its own process) -------------
  8  work         the executor commits one functional unit at a time
@@ -256,5 +273,6 @@ an optimization no test could see. The floor catches "is it broken"; the strict 
 Optional first bookend for a large feature: `/router:brainstorm` (question the idea, compare it
 against how others solve it, produce counter-evidence), `/router:design` (clarify, research,
 draft the Design section by section), `/router:design-review` (independent adversarial pass,
-every objection adjudicated by the user), then `/router:workplan` (the work plan and task
-breakdown) -- fixing the approach AND the package list before `go` ever runs.
+every objection adjudicated by the user) -- fixing the approach, the invariants and where each
+acceptance criterion gets proven before `go` ever runs. The package list is not a document: it
+is Touchpoint 1, once, in conversation.

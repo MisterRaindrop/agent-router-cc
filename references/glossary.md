@@ -125,5 +125,6 @@ looking for them.
 | **run** / `run-001` | a numbered attempt inside a task | dispatch is one attempt per task; artifacts sit directly in `.router/tasks/<id>/` |
 | **dispatch** (slash command) | `/router:dispatch` | `router dispatch`, the CLI subcommand, driven by `/router:go` |
 | **land** (slash command) | `/router:land` | `router land`, the CLI subcommand |
-| **spec** | the single document that preceded design + plan | `/router:design` then `/router:workplan` |
-| **plan** (the document) | `PLAN.md` | `WORKPLAN.md`; `/router:plan` is a stub pointing at `/router:workplan` |
+| **spec** | the single document that preceded design + plan | `/router:design`, and only that: the plan stage that followed it is gone too |
+| **work plan** (the document) | `PLAN.md`, then `WORKPLAN.md` | nothing. `DESIGN.md` is the only document a plan has; how the work is sliced into packages is settled in conversation at `/router:go` and never written down |
+| **plan** (slash command) | `/router:plan`, then a stub pointing at `/router:workplan` | removed. Both the command and the stage it named are gone |
