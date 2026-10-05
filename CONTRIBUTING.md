@@ -19,23 +19,25 @@ Development requires **Node.js 22+** (the test suite runs TypeScript directly vi
 ```
 src/          domain -> core -> io -> app -> cli   (layered; lower layers never import higher)
   core/       PURE: no fs, child_process, process, clock, or randomness
-              (enforced by `npm run check:deps`) — this keeps gate logic
-              deterministic and unit-testable
+              (enforced by `npm run check:deps`) — this keeps exit classification and
+              the symbol index deterministic and unit-testable
 dist/         the committed, dependency-free bundle (`npm run build`)
-commands/     the Claude Code slash-command playbooks (the "intelligence" lives here)
-docs/         quickstart, the full workflow protocol, design notes
-references/   documents the orchestrator itself reads at run time
-schema/       JSON schema for task contracts
+commands/     the Claude Code slash-command playbooks (the judgment lives here)
+skills/       portable skills the commands load (writing discipline, feature explanation)
+references/   documents the main session reads at run time (assurance rules, the codex brief)
+docs/         quickstart and the full workflow protocol
 test/         node --test suites
-testkit/      fixtures and helpers
+testkit/      fixtures and helpers, including the fake codex binaries
 ```
 
 Two design rules shape every change:
 
-1. **The CLI owns mechanism, never judgment.** Worktree isolation, supervision,
-   concurrency, locks, and environment-free gates live in code; anything that decides
-   "is this right" belongs in the command playbooks (`commands/*.md`) and ultimately
-   with the human.
+1. **The CLI owns mechanism, never judgment.** Launching and supervising codex, the
+   symbol index and listing plans live in code; anything that decides "is this right"
+   belongs in the command playbooks (`commands/*.md`) and ultimately with the human.
+   Since 0.15.0 the main session writes the code itself, so the CLI is small on purpose —
+   a change that grows it back toward an orchestrator needs a reason the main session
+   cannot do the job.
 2. **`core/` stays pure.** If your change needs fs/process/clock access, it goes in
    `io/` (or `app/`), and `core/` receives values, not effects.
 
@@ -63,8 +65,9 @@ Measured numbers beat adjectives.
 
 ## Reporting bugs
 
-Use the bug-report issue template. The most useful thing you can attach is the run
-record: `router result <id> --json` plus the log paths it names.
+Use the bug-report issue template. For a codex write, the most useful thing you can
+attach is its record: `.router/writes/<id>/record.json` plus the tail of `codex.log` next
+to it.
 
 ## Security issues
 
