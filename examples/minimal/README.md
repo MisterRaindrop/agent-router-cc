@@ -1,37 +1,32 @@
-# Minimal example: implement `slugify()`
+# Minimal example: let codex implement `slugify()`
 
-A dependency-free task you can run end to end. The project ships an unimplemented
-`slugify()` and a passing-once-fixed test suite; router dispatches an executor to make
-the tests pass, verifies the diff mechanically, and lets you merge it.
+A dependency-free piece of work you can run end to end. The project ships an unimplemented
+`slugify()` and a test suite that passes once it is implemented; `router write` hands it to codex
+with a brief, and you review what it committed.
 
 ```
 examples/minimal/
-  src/slugify.mjs        # unimplemented (the executor fills this in)
-  test/slugify.test.mjs  # the mechanical gate (executor may NOT edit it -- out of scope)
-  task.yaml              # the task contract (scope + verify) -> .router/tasks/slugify/
-  TASK_CONTRACT.md       # the goal handed to the executor
+  src/slugify.mjs        # unimplemented (the writer fills this in)
+  test/slugify.test.mjs  # the specification (the brief says not to edit it)
+  BRIEF.md               # what the writer is asked to do
 ```
 
 ## Run it
 
-You need the `codex` (or `claude`) CLI authenticated, and `router` on your PATH
-(`node /path/to/dist/router.js`). From a copy of this directory in its own git repo --
-no `init`, no policy, no commit:
+You need the `codex` CLI logged in, and `router` resolvable (see `docs/quickstart.md` for the
+one-line alias). From a copy of this directory in its own git repo:
 
 ```sh
 git init && git add -A && git commit -m "unimplemented slugify + tests"
 
-router new slugify --title "Implement slugify()"    # auto-creates .router/
-cp task.yaml        .router/tasks/slugify/task.yaml   # scope + verify: [["node","--test"]]
-cp TASK_CONTRACT.md .router/tasks/slugify/TASK_CONTRACT.md
-
-router dispatch slugify        # runs the executor in an isolated worktree, then verifies
-router result slugify          # the per-check report (diff/scope/secret/verify)
-router land slugify            # merge the verified diff into your branch
+router write slugify --brief BRIEF.md     # codex commits on the current branch; prints the base
+git diff <base>..HEAD                     # review exactly what it did
+node --test                               # verify it yourself -- its report is a claim
+router resume slugify --feedback "..."    # only if something is wrong: same codex session
 ```
 
-If the diff fails any check (scope, secret scan, or the `verify` command), the dispatch
-is FAILED and nothing merges. Your working tree is untouched until `router land`.
+The writer refuses to start over uncommitted changes, so commit first. Merging -- or discarding
+the commits -- is yours.
 
-See `../../docs/quickstart.md` for the full walkthrough (and the `/router:go` loop where
-Opus decomposes + reviews).
+In normal use you would not run these by hand: tell `/router:go` "let codex write this part" and
+the main session writes the brief, launches the writer, and reviews the result.

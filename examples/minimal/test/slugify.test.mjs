@@ -1,6 +1,5 @@
-// The mechanical gate. The executor may edit src/** (allowed_globs) but NOT this
-// file (it is outside allowed_globs and protected as a test_glob), so it cannot
-// "pass" by weakening the test.
+// The specification. BRIEF.md tells the writer not to edit this file, and the review
+// checks that it did not: a writer that "passes" by weakening the test has not passed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { slugify } from '../src/slugify.mjs';

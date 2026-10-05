@@ -8,23 +8,16 @@ teach us things (see [CHANGELOG.md](CHANGELOG.md) for what they have taught so f
 ## Toward 1.0
 
 - [ ] **Stable command surface.** No renames or flag changes to
-      `go / spec / review / dispatch / resume / land / gate / result / usage` without a
-      deprecation window.
-- [ ] **More real end-to-end runs.** The 0.8.x lessons all came from running real
-      ClickHouse tasks through the whole loop; 1.0 wants that mileage on several more
-      projects (worktree-mode and queue-mode both).
-- [ ] **Routing defaults driven by evidence.** `router usage --routing` aggregates
-      first-pass rate, re-dispatch rate, wall clock and input per (executor, tier,
-      effort); once the sample sizes stop saying `insufficient data`, fold the findings
-      back into the bundled tier defaults.
-- [ ] **The `TASK_CONTEXT.md` question, answered by data.** Known: on a small two-file
-      task it made executor input 21% larger for identical quality. Open: whether it
-      pays on a large repository where finding the entry points dominates. Every
-      dispatch records `task_context_present` / `task_context_chars`; the answer comes
-      from those rows.
-- [ ] **Changed-line-cap authoring guidance validated.** The cap rejected correct work
-      twice before 0.8.3 taught it to count tests and deletions; confirm the new
-      guidance stops the false rejections without letting scope creep through.
+      `go / brainstorm / design / design-review / review / explain / resume / symbol` without a
+      deprecation window. A rename of the plugin itself -- `router` no longer routes anything --
+      is expected before 1.0 and will get one.
+- [ ] **A measure of "better code".** Every measurement this project recorded was about cost and
+      first-pass rate, and those went with the executor model in 0.15.0. Decide what to watch --
+      defects reaching main, review rounds to converge, rework after merge -- before recording
+      anything, so the data answers a question someone actually asked.
+- [ ] **Review that converges in 2-3 rounds.** The burden-of-proof rule in `/router:review` is in
+      place; confirm on more real changes that it holds.
+- [ ] **More real end-to-end runs** of the main-session flow on projects other than this one.
 
 ## Under consideration
 
@@ -38,10 +31,9 @@ teach us things (see [CHANGELOG.md](CHANGELOG.md) for what they have taught so f
 
 These are settled by design, not open items:
 
-- **No auto-merge.** Gates decide PASS/FAIL; the human decides land.
-- **No self-modifying configuration.** router never edits `models.yaml` or `gate.yaml`
-  on its own; routing evidence is input to a decision *you* make.
-- **No global policy file.** Scope, risk, and verification stay per-task, authored from
-  the conversation.
+- **No auto-merge.** The main session verifies and hands back; the human decides what lands.
+- **No self-modifying configuration.** router never edits `models.yaml` on its own.
+- **No global policy file.** Scope, risk, and verification are agreed per change, in the
+  conversation.
 - **The CLI stays thin.** Mechanism in code; judgment in the command playbooks and with
   the human.

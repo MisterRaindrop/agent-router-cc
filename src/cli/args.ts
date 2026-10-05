@@ -5,32 +5,19 @@
 // value-flag consumes the next token while a boolean-flag does not - this avoids
 // ambiguity like `run --json t1` swallowing the positional.
 
-const BOOLEAN_FLAGS = new Set(['json', 'force', 'keep', 'help', 'approve', 'dry-run', 'all', 'explain-savings', 'status']);
+const BOOLEAN_FLAGS = new Set(['json', 'help', 'dry-run']);
 const VALUE_FLAGS = new Set([
   'id',
+  'brief',
+  'model',
+  'effort',
+  'feedback',
+  'max-wall-minutes',
+  'stall-minutes',
   'label',
   'log',
-  'title',
-  'run',
-  'feedback',
-  'state',
-  'attempt',
-  'plan',
-  'since',
-  'until',
-  'transcript',
-  'projects-dir',
   'router-dir',
   'limit',
-  'tokens-in',
-  'tokens-out',
-  'cost-usd',
-  'wall',
-  'model',
-  'max-parallel', // removed; still parsed so `dispatch` can reject it by name
-  'keep-metrics',
-  'settings',
-  'statusline',
 ]);
 
 export interface ParsedArgs {

@@ -7,21 +7,15 @@ still runs silently gives you two execution models with different behaviour and 
 which one produced a result — and that is far harder to debug six months later than an error
 message is today.
 
-## Removal window
+## Current state
 
-Current version: **0.14.x**.
+Current version: **0.15.x**.
 
-The window below was written at 0.9.x and both of its conditions have since passed -- 2026-10-01
-is behind us and the branch execution model has run far more than ten consecutive tasks without a
-fallback. The worktree and `run`-dimension entries are kept as a record of what the names used to
-mean, not as a schedule:
-
-- **Ten consecutive real tasks** complete on the branch execution model with no fallback used.
-- **2026-10-01** passes.
-
-"Kept for one version" means *the code is still here and the escape hatch still works*. It does
-**not** mean the path is maintained: bugs in it are not fixed, and it is not covered by new
-tests. If you need it, you need it to get unstuck, not to keep working in.
+**0.15.0 removed the executor model itself**, and with it everything the older entries below
+describe: per-task worktrees, the `run` dimension, `--max-parallel`, the dispatch flow, the lock,
+the gates and the queue. Those entries stay as a record of what the names used to mean, so a reader
+meeting them in an old document or commit can look them up -- none of them describes code that
+still exists. The 0.15.0 entry at the end is the one that matters now.
 
 ## Per-task git worktrees
 
@@ -161,3 +155,35 @@ cache (its directory is named after the version, so it moves on every update):
 ```bash
 alias router='node "$(ls -d ~/.claude/plugins/cache/agent-router-cc/router/*/ | sort -V | tail -1)dist/router.js"'
 ```
+
+## The executor model: dispatch, quota routing, gates, metrics, the statusline
+
+**Removed** in 0.15.0, with no stub and no fallback.
+
+**Replaced by:** the main session writing the code itself, and `router write` / `router resume`
+launching codex for a part of it when the user names it (`references/codex-writer.md`).
+
+**Why:** this project's own records showed where defects were actually caught -- the main session
+reading the whole diff, the main session running the real build, and an independent review -- and
+none of that depended on a different process writing the code. Meanwhile the premise the machinery
+existed for had already gone: dispatches had drifted to the strongest model (cheap-tier runs went
+5 -> 1 -> 0 from July to September 2026), so quota balancing served a goal the tool no longer
+pursued, and the dispatch machinery (lock, reclaim, process groups, state guards) was the largest
+and most bug-prone part of the repository -- most of the 21 findings in the 0.11.0 review rounds
+were in it.
+
+| Removed | Notes |
+|---|---|
+| CLI: `new`, `dispatch`, `land`, `gate`, `result`, `list`, `usage`, `orchestrator-usage`, `setup-statusline`, `init` | `router resume` is kept but now resumes a `router write`, not a dispatch |
+| `.router/tasks/`, `task.yaml`, `TASK_CONTRACT.md`, `DELIVERY.md`, `metrics.jsonl`, `gate.yaml` | ignored if present; nothing reads them |
+| quota balancing, weak / strong / critical tiers | `models.yaml` now has `writer:` and `review:`; an old file's `codex.critical` row still sets the writer |
+| environment-free gates (scope, secret scan, exec bit), the project gate runner, the queue gate | the main session reads the diff and runs the project's own build; `/router:go` lists what to look for |
+| the checkout lock, rescue commits, task branches | `router write` commits on your branch and refuses to start over uncommitted work |
+| `plan_revision` | there is no task to pin; `/router:go` notes the Design revision it builds against and stops if it moves |
+| the PreToolUse guard hook | it protected executor run records, which no longer exist |
+| the statusline (quota snapshot and background-activity display) | Claude Code wakes the session when a background command ends; the supervisor's watchdog kills one that stalls. `router supervise` still accepts `--label`, and ignores it |
+| `ajv`, `schema/task_contract.schema.json` | the task schema had nothing left to validate |
+
+**If you configured the statusline**, `~/.claude/settings.json` still points at
+`statusline/router-usage.mjs` inside an older plugin version. Remove that `statusLine` entry, or
+set it back to the command it chained (it was kept in `ROUTER_INNER_STATUSLINE`).

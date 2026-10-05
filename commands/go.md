@@ -1,278 +1,139 @@
 ---
-description: Execute the plan we just discussed -- one executor writes the code on its own branch, then YOU review and verify in the real environment before merge
+description: Build the change we just discussed -- you write it in this session (or codex does, when the user names it), commit by functional unit, verify in the real environment, and stop before merge
 allowed-tools: Bash, Read, Edit, Write, Task, ExitPlanMode
 ---
-The user has finished planning WITH YOU in this conversation and now wants router to execute. Do
-NOT re-plan from scratch or shell a separate planner -- you already have the context.
+The user has finished planning WITH YOU in this conversation and now wants it built. Do NOT
+re-plan from scratch -- you already have the context.
 
-**One run dispatches one work package to one executor.** There is no concurrency and no
-decomposition-into-many here: if the work is several packages, run `go` once per package. That is
-a deliberate limit, not a missing feature -- see "Why one at a time" at the end.
-
-**The executor works in YOUR checkout**, on a branch called `router/<task-id>`. It does not get a
-separate worktree, because a fresh worktree has no dependencies, no build objects and no
-configure output, so a real project cannot compile in one. Everything else on this page follows
-from that: the whole run holds an exclusive lock, your uncommitted work is committed before
-anything moves, and the run ends leaving you standing on the task branch.
-
-Contract-authoring detail lives in `${CLAUDE_PLUGIN_ROOT}/references/task-contract.md` --
-`task.yaml` fields, executor pinning, the seven faces, the gate, budgets, the delivery report,
-session policy. Read it when authoring; this page is the flow.
+**You write the code, in this session.** Router does not hand the work to another process by
+default: the things that actually caught defects in this project's history -- reading the whole
+diff, running the real build, an independent review -- all happen in the main session, and none
+of them depended on someone else writing the code. The one exception is explicit: when the user
+names a model ("let codex write this"), a part of the work goes to an external codex writer --
+see "When the user names a model" below. Never choose that yourself.
 
 ## Entry: is there an approved design?
 
 Check FIRST. If this feature went through `/router:design`, `.router/plans/<plan_id>/DESIGN.md`
 exists. Read its frontmatter:
 
-- **`status: design_approved`** -> execute against it. Author each package yourself from the
-  Design's scope, invariants, acceptance criteria and verification matrix; there is no approved
-  package list to copy, because there is no work plan. Pin every package to the revision you read
-  (`plan_revision` in its `task.yaml`), so an edit to the Design after dispatch is refused instead
-  of quietly moving the bar.
+- **`status: design_approved`** -> build against it: its scope, invariants (Must NOT), acceptance
+  criteria and verification matrix are the bar. Note the `revision` you read.
 - **`status: design_draft`** -> refuse, and say the Design has not been approved yet.
 - **`status: design_implemented`** -> the work was already built and accepted. Say so and ask:
-  this is new work under a new `plan_id`, or a revision bump on this one.
+  new work under a new `plan_id`, or a revision bump on this one.
 - **`status: design_abandoned`** -> the user already chose to skip the flow. Proceed as if there
   were no design, and say that is what you are doing.
-- **No design** -> proceed below. YOU author the package. This is the normal path for everyday
-  tasks that never needed a Design; whether a change deserves the design flow is the user's call,
-  never router's.
+- **No design** -> proceed. This is the normal path for everyday tasks; whether a change deserves
+  the design flow is the user's call, never router's.
 
-If mid-run the code contradicts the **Design** -- a `CONTRACT_CONFLICT` whose evidence reaches
-past the contract into the approach -- stop and take it back to `/router:design`. A bumped design
-revision makes every package pinned to the old one refuse, via the existing `plan_revision`
-machinery, rather than letting them land against a bar nobody approved.
+If the code contradicts the **Design** mid-way -- not a detail, the approach -- stop and take it
+back to `/router:design`. If the Design's `revision` moves while you are building, the bar moved:
+say so before continuing.
 
 ## Plan-mode gate (check this second)
 
-`/router:go` authors task files and dispatches; both mutate, so both are BLOCKED in plan mode.
+Building mutates, so it is BLOCKED in plan mode. In plan mode, work out the slicing in your head
+and present it via **`ExitPlanMode`** -- that single approval both exits plan mode and authorizes
+the work, so it **IS Touchpoint 1**; do not ask again.
 
-- **In plan mode:** work out the package, scope and tier in your head, but run nothing and edit
-  nothing. Present it via **`ExitPlanMode`** -- that single approval both exits plan mode and
-  authorizes execution, so it **IS Touchpoint 1**; do not ask again. Only after it exits do you
-  run `router new`, edit `task.yaml`, and dispatch.
-- **Not in plan mode:** Touchpoint 1 is a plain confirmation.
+## Touchpoint 1: the whole feature, once
 
-## Touchpoint 1 covers the whole feature, and is asked once
+Before writing anything, show the intended slicing of the whole feature: the functional units
+you will commit, roughly in order, what each touches, and how each will be verified. If any part
+goes to a codex writer, say which. Wait for the go-ahead, then build without asking again --
+unless the slicing itself changes (a unit you did not show, a scope that grew past what the user
+saw, a dependency that reorders the rest). That is a new confirmation, not a footnote.
 
-A feature that takes several packages gets **one** confirmation, before the first dispatch --
-not one per `go`. Show the whole intended slicing: how many packages, what each touches, roughly
-in what order, and how each is verified. `references/work-package.md` sizes them: prefer few large
-packages, because five micro-tasks cost five executor cold starts re-reading the same repository.
-Then dispatch them one at a time without asking again,
-unless the slicing itself changes -- a package you did not show, a scope that grew past what the
-user saw, or a dependency that reorders the rest -- a new confirmation, not a footnote.
+It is a conversation, not a document: nothing is written to `.router/`, no status moves. For an
+everyday task this is usually one or two lines.
 
-**It is a conversation, not a document**: nothing is written to `.router/`, no status moves. It
-replaced the work-plan stage, which froze the same list at far higher cost (`DEPRECATIONS.md` has
-the measurements). With no Design this is usually one package, and reads as it always did.
+## Build it
 
-## Division of labor
+- **Work on a branch**, not on the default branch. Router does not create one for you.
+- **Commit one functional unit at a time**, each with its own tests and a message that says why.
+  That is the granularity a human can review; a single commit of thirty files is not reviewable,
+  and that is a defect in itself.
+- **Before you fix anything, look for the answer already in this repository.** Search for the
+  *mechanism*, in one or two words -- not the symptom in a sentence -- and write what you found: a
+  `file:line`, or "looked, nothing there". Measured: three times in one day the answer was
+  already here and went unused (a process-group kill, a reclaim protocol, a bounded read added
+  beside an unbounded sibling), and the first of those survived three review rounds and ended in
+  190 orphaned processes. "Same class" means the same mechanism, not the same module.
+- **Unclear work stays with the user (Touchpoint 2).** Anything that needs a real judgment the
+  plan did not make, clarify it with them before writing it.
 
-The **router CLI** owns the mechanism it alone can provide: the exclusive lock on the checkout,
-rescuing your uncommitted work, cutting and asserting the task branch, process supervision, and
-fast *environment-free* gates on the diff (it applies cleanly, stays within `allowed_globs`,
-leaks no secrets, and a script added where its siblings are executable carries the executable
-bit).
+## When the user names a model
 
-**YOU own every judgment** -- what the package is, whether a diff is correct, whether it needs
-verifying, and **running the real build and tests yourself in this session's real environment**.
-A cheap model can clear a shallow gate while being lazy or wrong, so verification and the
-pass/fail verdict stay with you: never with the executor, never compressed.
-
-**Wall clock is dominated by YOUR turns, not the executor's.** Measured: five executor runs took
-12.8 minutes of executor time between them while the plan took about three hours across roughly
-317 orchestrator turns. So spend no turn on what a mechanical gate can decide.
-
-## 1. Author the package
-
-Per `references/task-contract.md`. Then **Touchpoint 1:** show the user the package -- scope,
-tier, risk, whether it carries a deterministic `verify`, and the note that it carries its own
-tests -- plus any work you judge unclear. Wait for their go-ahead. (Asked once per feature, not
-once per package -- see above; in plan mode the `ExitPlanMode` approval is this touchpoint.)
-
-## 2. Dispatch, and know what the twelve steps do
-
-`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" dispatch <id> --json`
-
-That one command is a transaction. You do not drive the steps, but you have to be able to read
-its report, so this is what it does:
+Only then, and only for the part they named. The CLI launches codex on your current branch,
+under its `workspace-write` sandbox, with a minimal environment:
 
 ```
---- outside the lock (read-only, and it talks to you) --------------------
- 1  probe        read the current branch and working tree. Already on an unmerged router/*
-                 branch -> say so and ask: merge first, or continue from here?
---- inside the lock (one CLI transaction) --------------------------------
- 2  take lock    BEFORE any write. Blocked -> report the holder's pid and last-active time
- 3  reap         lock reclaimed from a dead holder -> kill its orphan executor group first
- 4  rescue       your uncommitted work -> one commit, file list and sha reported
- 5  branch       create router/<task-id>. Name already taken -> FAIL, never reuse
- 6  contract     the compact header, plus DESIGN.md verbatim with its sha256 when one exists
- 7  dispatch     launch the executor detached, cwd = repository root
---- executing (lock held; heartbeat runs in its own process) -------------
- 8  work         the executor commits one functional unit at a time
- 9  closing      assert: on the task branch, base_sha is an ancestor of HEAD, and NOTHING
-                 is uncommitted. Any failure -> no verification, no success claim
-10  verify       gate.yaml reset, then clean-vs-incremental gate, then the five checks
-                 (diff applies -> scope -> secret scan -> exec bit -> gate), over base_sha..HEAD
---- finishing -----------------------------------------------------------
-11  report       done, and WHICH BRANCH you are on. No switch back, no merge
-12  release      terminate the executor's process group, release the lock
+node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" write <id> --brief <file> [--model M] [--effort E]
 ```
 
-**Before you fix anything, look for the answer already in this repository.** Search `src/` for
-the *mechanism*, in one or two words -- not the symptom in a sentence. Then write what you found
-into the adjudication: a `file:line`, or the sentence "looked, nothing there". An unwritten search
-and an unperformed one leave the same trace.
+- **Write the brief first** -- `${CLAUDE_PLUGIN_ROOT}/references/codex-writer.md` says what it
+  must contain. Put it under `.router/` (gitignored), e.g. `.router/writes/<id>/BRIEF.md`.
+- **The tree must be clean.** The writer refuses to start over uncommitted changes; commit your
+  own work first.
+- **Run it in the background** (`run_in_background`) and continue when it completes. A writer run
+  routinely outlasts the 10-minute foreground limit. If this session ends mid-run the writer may
+  die with it; nothing is lost but its unfinished work -- start a new write.
+- **Its default model** is `writer:` in `router models` (`gpt-5.6-sol` at `xhigh`). Pass the
+  user's choice explicitly when they name one; never lower it on your own.
+- **Review what it did exactly as you review your own work**: `git diff <base>..HEAD` commit by
+  commit, from the `base` the report prints. A writer's report is a claim, not evidence.
+- **Feedback goes back to the same session**:
+  `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" resume <id> --feedback "<everything that is wrong>"`.
+  All findings in ONE resume, at most two resumes, and trivial edits you make yourself --
+  `codex-writer.md` has the measurements. If the report says **RESUME DID NOT RE-ATTACH**, the
+  session was not continued: treat what happened as a fresh, unreviewed run.
+- **`CONTRACT_CONFLICT`** at the start of its final message means the brief contradicts the code.
+  Nothing it did is accepted until you have read the evidence and taken it to the user.
 
-Three times in a single day the answer was already here and went unused: a statusline that killed
-only its direct child while `src/io/signals.ts` and `src/io/lock.ts` had been killing by process
-group all along, for the identical reason; a reclaim guard with no lease or token while
-`clearDeadReclaimer` in `src/io/lock.ts` was exactly that protocol; and an unbounded read added in
-the same change that had just bounded its sibling. The first of those survived three adversarial
-review rounds and ended in 190 orphaned `git` processes and a load average of 86.
-
-"Same class" means the same mechanism, not the same module. "A child's descendants outlive its
-timeout" and "an executor's background work outlives its run" are one class, though one lives in a
-statusline and the other in a lock.
-
-Measured, so you know what to expect: `rg -il "child" src/` returns seven files with
-`src/io/signals.ts` first; `rg -il "mutex" src/` returns two. This works here because the code
-carries comments explaining *why*, and `rg` searches those too -- in a repository without them,
-expect less.
-
-**Do not commit your own fixes onto `router/<task-id>`.** The scope check at step 10 runs over
-`base_sha..HEAD`, so any commit you add lands in it and gets judged against the executor's
-`allowed_globs` -- which yours were never written for. Measured twice: a one-line fix of a review
-finding, committed onto the task branch, produced `not_allowed:src/app/stateGuard.ts` and `router
-land` then refused the whole package with "last dispatch was not PASSED".
-
-The gate is right to do that: your commits really are on the branch and really will land, so it
-cannot wave them through. **Put your own fixes on the integration branch after landing the
-package.** And do NOT widen `allowed_globs` afterwards to make the gate green -- a gate you helped
-pass has stopped being evidence.
-
-Three of those are worth reading the report for:
-
-- **`rescue_sha`** -- you had uncommitted work and it is now a commit on your branch. Undo with
-  `git reset --soft <sha>~1`.
-- **`closeout`** -- if this failed, the executor left a file uncommitted and **nothing was
-  verified**. That is not a gate failure; it is unfinished work.
-- **`branch`** -- where you are standing now. Router never switches back and never merges.
-
-**Detached execution plus a listener -- never a foreground wait.** The harness kills tracked
-background tasks by process group (measured: a nohup'd child died with its wrapper, a
-`detached: true` child survived), so launch dispatch detached -- a `node -e` one-liner using
-`child_process.spawn(..., {detached: true, stdio: ['ignore', log, log]})` + `.unref()`, output to
-the run's own log -- and arm a **listener** as a tracked background task watching three sources
-until one fires: (1) `status.json` gains a `terminal_state`; (2) the detached pid is gone;
-(3) `result.json` / `DELIVERY.md` appear. Process gone with no legal terminal state -> report
-**"status channel failed"** and fall back to the authoritative result files; never hang silently.
-The listener's completion is what wakes this session into review. If even the listener died
-(session restart), nothing is lost: `router list` plus the run's `status.json` / `result.json`
-rebuild the picture from disk.
-
-**Conversation events: two kinds only.** The listener speaks at terminal states and anomalies
-(the stall countdown has started). Periodic progress lives in the statusline, which costs zero
-turns. An opt-in in-conversation heartbeat exists (`--heartbeat <min>`); it costs one model turn
-per beat, and enabling it says so.
-
-## 3. Review the diff yourself
-
-Read the run's `DELIVERY.md` first (what it did, which checks ran, what it flags), then **read
-the complete diff -- every risk tier, every time**. Do NOT read raw build output: the verifier's
-per-check result and the report's summary are the evidence, and anything you read is re-read on
-every later turn.
-
-The executor committed one functional unit at a time, so **review it commit by commit** -- that
-is what the granularity is for. Ask of each: is it correct? did it drift from what you specified?
-**are the tests real assertions rather than hollow or hardcoded stubs?** is the changed code
-actually covered?
-
-At `Normal` and `High` risk also run an **independent contract review** (a different model -- see
-`/router:review`) and judge its findings yourself. **Never merge on green alone.**
-
-Doubtful, high-risk, or drifted -> verify it now, yourself, in the real environment. Read the
-entire output yourself and judge it; do not compress it and do not let a cheap model decide
-pass/fail. Fail -> find the root cause and prefer
-`node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" resume <id> --feedback "<what is wrong>"`, which
-continues that executor's session instead of re-exploring the repository. The cost rules and the
-two-attempt cap are in `references/task-contract.md`.
-
-## 4. Touchpoint 2: unclear work
-
-Handle it directly with the user -- clarify, then implement it yourself. Never dispatch it to a
-cheap model.
-
-## 5. Touchpoint 3 -- the stage gate (mandatory, all of it yours)
+## Touchpoint 3 -- the stage gate (mandatory, all of it yours)
 
 This is the **floor**, not the final word: enough to say "this stage holds together", so the user
 can confirm the direction before anyone spends a strict review on it.
 
+- **Read the complete diff** (`git diff <base>..HEAD`), every time, commit by commit. Do not read
+  raw build output when a summary will do -- everything you read is re-read on every later turn.
 - **Work out how to build and test this project yourself** from `package.json` / `Makefile` / CI
-  config. There is no manifest; discover them.
-- **Cost this step honestly before you promise it.** A warm build directory does not mean a cheap
-  verification: measured on ClickHouse, adding **one new source file** re-triggered CMake's
-  `CONFIGURE_DEPENDS` glob, regenerated the build graph and invalidated **9,891 object files** --
-  a build the project's own CI budgets four hours for. Check what the project itself budgets (a
-  CI job timeout is the honest number) and whether the change *adds* files rather than only
-  editing them. If the verification you promised cannot run here, say **"this was never
-  compiled"** in exactly those words and let the user decide. Never let green mechanical gates
-  and a clean review imply that it builds.
-- Confirm **every changed line is covered by a test**. Fill any gap yourself, or dispatch a
-  focused test-writing package (which must then pass too).
+  config, and **cost it honestly before you promise it**. Measured on ClickHouse: adding one new
+  source file re-triggered CMake's `CONFIGURE_DEPENDS` glob and invalidated 9,891 object files --
+  a build the project's CI budgets four hours for. If the verification you promised cannot run
+  here, say **"this was never compiled"** in exactly those words and let the user decide.
+- **Confirm every changed line is covered by a test** that would fail without the change.
 - **Run the full chain in the real environment** (Docker included), exactly as this project's CI
-  invokes it. Read the complete output yourself, uncompressed, and decide. A per-package `verify`
-  does not replace this: it proved the package, not the combination.
+  invokes it. Read the complete output yourself and decide.
 - **Never make the environment cooperate.** Do not `chmod` a file, hand-edit a config, install an
   undeclared dependency, pre-create a directory, or touch fixtures to get a test to run. If
   something fails on such a detail, **that is a defect in the diff** -- fix it in the diff and
-  re-run. A gate you helped pass verifies your workaround, not the change: it stops being
-  evidence.
+  re-run. A gate you helped pass verifies your workaround, not the change.
+- Check the diff for what no test sees: secrets in added lines, a new script without the
+  executable bit its siblings have, files outside what Touchpoint 1 said would change.
 - Do a **floor review** of the combined change: does it do what the user asked, is anything
-  obviously wrong or out of scope, are the tests real assertions?
-- **Record the orchestrator's own spend** so `router usage` can show main-model-vs-executor:
-  `node "${CLAUDE_PLUGIN_ROOT}/dist/router.js" orchestrator-usage --plan <plan_id> --since <the
-  timestamp you noted while authoring>`. It sums this session's main-model turns from the Claude
-  transcript. If it reports "no transcript", pass `--transcript <path>` or `--projects-dir`. It
-  is best-effort and approximate (it includes interleaved chat and excludes pre-`go` planning) --
-  report the tokens saved from `router usage`, never a fabricated number, and never present the
-  approximate orchestrator figure as exact.
+  obviously wrong or out of scope, are the tests real assertions rather than hollow stubs?
 
-## 6. Hand the stage back
+## Hand the stage back
 
-Report the diff, that the full chain is green in the real environment, the per-plan
-main-vs-executor cost from `router usage` (actual total vs the all-baseline estimate), **which
-branch the user is standing on**, and state plainly that this was the **floor check, not a strict
-review**.
-
-**Merging is theirs.** Router never merges and never switches back. `router land <id>` merges the
-task branch into whatever you have checked out -- so it refuses while you are standing on the
-branch being landed, and you pick the target first. Land nothing the user has not approved.
+Report what changed (the commits), that the full chain is green in the real environment (or
+exactly what did not run), which branch the user is on, and state plainly that this was the
+**floor check, not a strict review**. **Merging is theirs** -- never merge, push, or switch
+branches for them.
 
 Recommend `/router:review` as the **next stage** -- an independent, adversarial review of the
-landed code -- and let the user decide when to spend it: if the direction turns out to differ
-from what they wanted, a strict review now is wasted work.
-
-## Why one at a time
-
-Parallel dispatch was removed, and not because it cost anything to run: measured, the whole
-orchestration overhead was 0.26s against 393s of executor time -- effectively free. It cost the
-human. Several executors editing at once means tracking who changed what, in what order things
-merge, and whether merging them breaks each other -- and every result still needs reviewing one
-at a time, so review was the bottleneck the parallelism kept feeding.
+change -- and let the user decide when to spend it: if the direction turns out to differ from
+what they wanted, a strict review now is wasted work.
 
 ## Why the review is a separate stage
 
-A green suite is weak evidence about judgment. Measured on real bugs: a cheap executor's fix
-passed the held-out oracle test, every regression test, and this floor review -- and an
-independent reviewer still found its guard condition was one notch too broad, silently disabling
-an optimization no test could see. The floor catches "is it broken"; the strict review catches
-"is it right". Two stages, so the user gets to confirm direction between them.
+A green suite is weak evidence about judgment. Measured on real bugs: a fix passed the held-out
+oracle test, every regression test, and this floor review -- and an independent reviewer still
+found its guard condition was one notch too broad, silently disabling an optimization no test
+could see. The floor catches "is it broken"; the strict review catches "is it right". Two stages,
+so the user gets to confirm direction between them.
 
-Optional first bookend for a large feature: `/router:brainstorm` (question the idea, compare it
-against how others solve it, produce counter-evidence), `/router:design` (clarify, research,
-draft the Design section by section), `/router:design-review` (independent adversarial pass,
-every objection adjudicated by the user) -- fixing the approach, the invariants and where each
-acceptance criterion gets proven before `go` ever runs. The package list is not a document: it
-is Touchpoint 1, once, in conversation.
+Optional first bookend for a large feature: `/router:brainstorm` (question the idea),
+`/router:design` (clarify, research, draft the Design section by section), `/router:design-review`
+(independent adversarial pass, every objection adjudicated by the user).

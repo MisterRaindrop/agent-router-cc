@@ -41,19 +41,6 @@ await esbuild.build({
   legalComments: 'none',
 });
 
-// The statusline runs as a standalone script, while dist/router.js is an executable CLI bundle
-// with top-level side effects. Publish the frozen activity observation API as its own import-safe
-// bundle so the statusline can reuse the one liveness rule without running the CLI.
-await esbuild.build({
-  entryPoints: ['src/io/activity.ts'],
-  bundle: true,
-  platform: 'node',
-  target: 'node18',
-  format: 'esm',
-  outfile: 'dist/statusline-activity.mjs',
-  legalComments: 'none',
-});
-
 // Vendor the tree-sitter runtime + cpp grammar next to the bundle.
 const require = createRequire(import.meta.url);
 const wtsDir = dirname(require.resolve('web-tree-sitter'));
@@ -79,5 +66,5 @@ for (const [from, to] of [
 }
 
 console.log(
-  `built dist/router.js (v${pkg.version}) + dist/statusline-activity.mjs + vendored tree-sitter wasm`,
+  `built dist/router.js (v${pkg.version}) + vendored tree-sitter wasm`,
 );

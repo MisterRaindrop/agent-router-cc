@@ -7,93 +7,40 @@ import { ROUTER_DIR } from '../domain/constants.ts';
 
 // All layout knowledge for a target project's `.router/` tree lives here.
 //
-// A run's files sit directly in `tasks/<id>/`. They used to sit in `tasks/<id>/runs/run-001/`,
-// which was a directory level over a constant: dispatch has been one attempt per task since
-// the synchronous model landed, so the run dimension only ever held `run-001`. The old path
-// stays readable (see legacyResultJson) so upgrading does not lose a task's history.
+// Since 0.15.0 the tree holds only what the main session's own work produces: plan documents,
+// external-writer runs, feature explanations and the symbol cache. Task contracts, run results,
+// metrics and the statusline's activity records went with the executor model.
 
 export interface RouterPaths {
   readonly root: string; // absolute path to the .router dir
   readonly repoRoot: string; // the git repo root (parent of .router)
-  readonly metrics: string;
-  readonly tasksDir: string;
-  readonly activityDir: string;
-  readonly worktreesDir: string;
+  readonly writesDir: string;
   readonly symbolsDir: string; // code-intelligence symbol caches (gitignored, per-repo)
   readonly symbolLatest: string; // pointer file: hash of the most recently built index
-  gateLock(): string;
   /** Per-plan directory. Plan artifacts are namespaced so two plans reviewed at once in one
    * repo cannot clobber each other -- and, more sharply, so a reviewer told to read the plan
-   * from disk cannot silently be handed a different one. `plan_id` is schema-constrained to a
-   * path-safe shape for exactly this reason. */
+   * from disk cannot silently be handed a different one. */
   planDir(planId: string): string;
   /**
    * A legacy work plan: `WORKPLAN.md`, or `PLAN.md` when that is the one on disk.
    *
    * READ-ONLY, and nothing writes one any more. The work-plan stage was removed in 0.14.0 --
-   * `DESIGN.md` is the only document a plan has now, and how the work is sliced into packages
-   * is settled in conversation at `/router:go` instead. This accessor survives because plan
+   * `DESIGN.md` is the only document a plan has now. This accessor survives because plan
    * directories written before that still exist on disk, and they are the only record that
    * finished work finished: `router plans` reads their declared stage, which would otherwise
    * fall back to their `design_approved` DESIGN.md and report completed plans as not started.
-   *
-   * Resolution is by existence rather than by a version flag, covering both the pre-rename
-   * `PLAN.md` and the post-rename `WORKPLAN.md`.
    */
   planMd(planId: string): string;
   specCritique(planId: string, round: number): string;
   specDecisions(planId: string): string;
   specLock(planId: string): string;
   symbolCache(hash: string): string;
-  taskDir(id: string): string;
-  taskYaml(id: string): string;
-  contractMd(id: string): string;
-  taskContext(id: string): string;
-  runsDir(id: string): string;
-  heartbeat(id: string): string;
-  activity(key: string): string;
-  runStatus(id: string): string;
-  resultJson(id: string): string;
-  diffPatch(id: string): string;
-  delivery(id: string): string;
-  workerLog(id: string): string;
-  gateLog(id: string): string;
-  /**
-   * Where a pre-fold run wrote the same file: `tasks/<id>/runs/run-001/...`.
-   *
-   * Read-only, and kept only so records written before the fold are still readable -- a task
-   * whose history silently disappears at upgrade is worse than an extra lookup.
-   */
-  legacyResultJson(id: string): string;
-  /** @deprecated no worktree is created for an executor; see DEPRECATIONS.md. */
-  worktree(id: string, runId: string): string;
-}
-
-/** Zero-padded run id, e.g. runId(1) === "run-001". @deprecated the run dimension is folded. */
-export function runId(n: number): string {
-  return `run-${String(n).padStart(3, '0')}`;
-}
-
-/**
- * Branch name for a run, e.g. "router/<id>/run-001".
- *
- * @deprecated The run segment named a constant; use taskBranch(). Kept for the rollback window
- * in DEPRECATIONS.md.
- */
-export function runBranch(id: string, run: string): string {
-  return `router/${id}/${run}`;
-}
-
-/**
- * The branch a task is developed on, e.g. "router/<id>".
- *
- * No run segment: `dispatch` has been one attempt per task since the sync model landed, so the
- * run dimension was a naming layer over a constant. The `router/` prefix is load-bearing rather
- * than decorative -- destructive steps assert the current branch starts with it before they
- * are allowed to reset anything, which is what keeps a reset off the user's own branch.
- */
-export function taskBranch(id: string): string {
-  return `router/${id}`;
+  /** One external-writer run: `writes/<id>/`. */
+  writeDir(id: string): string;
+  writeRecord(id: string): string;
+  writeBrief(id: string): string;
+  writeLog(id: string): string;
+  writeHeartbeat(id: string): string;
 }
 
 /** Path to a branch's loose ref file. Reading its mtime is a cheap liveness probe. */
@@ -103,18 +50,13 @@ export function branchRefPath(repoRoot: string, branch: string): string {
 
 export function routerPaths(routerDir: string): RouterPaths {
   const root = resolve(routerDir);
-  const tasksDir = join(root, 'tasks');
-  const taskDir = (id: string) => join(tasksDir, id);
+  const writeDir = (id: string) => join(root, 'writes', id);
   return {
     root,
     repoRoot: dirname(root),
-    metrics: join(root, 'metrics.jsonl'),
-    tasksDir,
-    activityDir: join(root, 'activity'),
-    worktreesDir: join(root, 'worktrees'),
+    writesDir: join(root, 'writes'),
     symbolsDir: join(root, 'symbols'),
     symbolLatest: join(root, 'symbols', 'latest'),
-    gateLock: () => join(root, 'gate.lock'),
     planDir: (planId) => join(root, 'plans', planId),
     planMd: (planId) => {
       const workplan = join(root, 'plans', planId, 'WORKPLAN.md');
@@ -124,21 +66,11 @@ export function routerPaths(routerDir: string): RouterPaths {
     specDecisions: (planId) => join(root, 'plans', planId, 'DECISIONS.md'),
     specLock: (planId) => join(root, 'plans', planId, 'spec.lock'),
     symbolCache: (hash: string) => join(root, 'symbols', `${hash}.json`),
-    taskDir,
-    taskYaml: (id) => join(taskDir(id), 'task.yaml'),
-    contractMd: (id) => join(taskDir(id), 'TASK_CONTRACT.md'),
-    taskContext: (id) => join(taskDir(id), 'TASK_CONTEXT.md'),
-    runsDir: (id) => join(taskDir(id), 'runs'),
-    heartbeat: (id) => join(taskDir(id), 'heartbeat'),
-    activity: (key) => join(root, 'activity', `${key}.json`),
-    runStatus: (id) => join(taskDir(id), 'status.json'),
-    resultJson: (id) => join(taskDir(id), 'result.json'),
-    diffPatch: (id) => join(taskDir(id), 'diff.patch'),
-    delivery: (id) => join(taskDir(id), 'DELIVERY.md'),
-    workerLog: (id) => join(taskDir(id), 'logs', 'worker.log'),
-    gateLog: (id) => join(taskDir(id), 'logs', 'gate.log'),
-    legacyResultJson: (id) => join(taskDir(id), 'runs', 'run-001', 'result.json'),
-    worktree: (id, run) => join(root, 'worktrees', id, run),
+    writeDir,
+    writeRecord: (id) => join(writeDir(id), 'record.json'),
+    writeBrief: (id) => join(writeDir(id), 'BRIEF.md'),
+    writeLog: (id) => join(writeDir(id), 'codex.log'),
+    writeHeartbeat: (id) => join(writeDir(id), 'heartbeat'),
   };
 }
 

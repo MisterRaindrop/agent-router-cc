@@ -13,7 +13,6 @@ import {
   detectModelMismatch,
   executorDiagnostics,
   reclassifyEnvironmentFailure,
-  reclassifyQuota,
 } from '../src/core/exitTaxonomy.ts';
 
 /** A codex-shaped log line relaying a command's output back to us. */
@@ -51,11 +50,6 @@ test('a line that only looks like JSON is kept as raw text', () => {
   assert.equal(kept, '{not really json at all');
 });
 
-test('relayed output mentioning quota does NOT reclassify a plain failure', () => {
-  const log = [relayedCommand('ℹ tests 201\nℹ pass 201\n429 appears in a fixture name, and quota too')].join('\n');
-  assert.equal(reclassifyQuota('task_failed', log), 'task_failed');
-});
-
 test('relayed output mentioning an auth error does NOT reclassify a plain failure', () => {
   const log = relayedCommand("✔ treats 'not logged in' as an env error (0.4ms)");
   assert.equal(reclassifyEnvironmentFailure('task_failed', log), 'task_failed');
@@ -68,7 +62,6 @@ test('relayed output mentioning an unknown model does NOT flag a stale model con
 
 test('a genuine provider failure on a raw line is still classified', () => {
   // Observed shape: codex prints the API error envelope outside its JSONL stream.
-  assert.equal(reclassifyQuota('task_failed', 'ERROR: 429 rate limit exceeded'), 'quota_exhausted');
   assert.equal(reclassifyEnvironmentFailure('worker_crash', 'stream error: not logged in'), 'env_error');
   assert.equal(detectModelMismatch('ERROR: {"error":{"message":"Invalid model: unsupported model"}}'), true);
   assert.equal(detectModelMismatch('ERROR: the model gpt-9-omega is not available on your plan'), true);

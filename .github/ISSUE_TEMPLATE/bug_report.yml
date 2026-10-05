@@ -1,12 +1,12 @@
 name: Bug report
-description: Something router did wrong — a gate, a dispatch, a merge, a report
+description: Something router did wrong — a command, a codex write or resume, a plans listing
 title: "[bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report. The most useful evidence is router's own run record —
+        Thanks for the report. For a codex write, the most useful evidence is its record —
         please attach it where the template asks.
 
         **Security issues:** do NOT file them here — see
@@ -25,20 +25,20 @@ body:
     id: repro
     attributes:
       label: How to reproduce
-      description: The commands you ran, in order, and the task contract if relevant.
+      description: The commands you ran, in order, and the brief if a codex write was involved.
       placeholder: |
         1. /router:go with a plan that ...
-        2. router dispatch q1 q2 --json
+        2. router write parser --brief .router/writes/parser/BRIEF.md
         3. ...
     validations:
       required: true
   - type: textarea
     id: run-record
     attributes:
-      label: Run record
+      label: Write record
       description: >
-        Paste `router result <id> --json` for the affected task(s), and the tail of the
-        log files it names (worker.log / gate.log). Redact anything private.
+        For a codex write, paste `.router/writes/<id>/record.json` and the tail of
+        `.router/writes/<id>/codex.log`. Redact anything private.
       render: json
     validations:
       required: false
@@ -47,15 +47,15 @@ body:
     attributes:
       label: router version
       description: From `.claude-plugin/plugin.json`, or `node dist/router.js --version`.
-      placeholder: 0.8.3
+      placeholder: 0.15.0
     validations:
       required: true
   - type: input
     id: environment
     attributes:
       label: Environment
-      description: OS, Node version, executor CLI(s) and how they are authenticated.
-      placeholder: macOS 15 · node 22 · codex (plan) + claude (plan)
+      description: OS, Node version, and the codex CLI version if a write or review was involved.
+      placeholder: macOS 15 · node 22 · codex (plan)
     validations:
       required: true
   - type: dropdown

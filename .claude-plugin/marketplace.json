@@ -1,6 +1,6 @@
 {
   "name": "agent-router-cc",
-  "description": "Plugins for deterministic, verified coding-task routing in Claude Code.",
+  "description": "Plugins for writing code with discipline in Claude Code.",
   "owner": {
     "name": "MisterRaindrop"
   },
@@ -8,7 +8,7 @@
     {
       "name": "router",
       "source": "./",
-      "description": "Routes coding subtasks to the cheapest capable model to save Opus tokens: the main session plans, reviews and verifies; the router CLI owns the exclusive lock on your checkout, process supervision, the project's own build gate, and environment-free gates on every diff."
+      "description": "Design before the code, proof after it: brainstorm, design and an adversarial design review before you write; reviewable commits and real-environment verification while you write; an independent two-lens review after. codex can write a part when you name it."
     }
   ]
 }

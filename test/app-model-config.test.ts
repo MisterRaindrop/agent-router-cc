@@ -7,17 +7,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { routerPaths } from '../src/io/paths.ts';
-import {
-  DEFAULT_MODEL_CONFIG,
-  loadModelConfig,
-  modelsYamlPath,
-  tierWorkers,
-} from '../src/app/modelConfig.ts';
+import { DEFAULT_MODEL_CONFIG, loadModelConfig } from '../src/app/modelConfig.ts';
 
 function freshPaths() {
   const tempRoot = mkdtempSync(join(tmpdir(), 'router-mc-'));
+  const root = join(tempRoot, '.router');
+  mkdirSync(root, { recursive: true });
   return {
-    paths: routerPaths(join(tempRoot, '.router')),
+    root,
+    paths: routerPaths(root),
     cleanup: () => rmSync(tempRoot, { recursive: true, force: true }),
   };
 }
@@ -27,40 +25,38 @@ test('loadModelConfig falls back to the bundled default when no models.yaml exis
   try {
     const cfg = loadModelConfig(paths);
     assert.deepEqual(cfg, DEFAULT_MODEL_CONFIG);
-    assert.equal(cfg.codex.weak.model, 'gpt-5.6-terra');
-    // Effort is matched to the work: mechanical implementation at medium, a task that
-    // needs capability at high. Effort sits on the critical path of a dispatch, and a
-    // contract that already states what to do gains little from deeper deduction.
-    assert.equal(cfg.codex.weak.effort, 'medium');
-    assert.equal(cfg.codex.strong.effort, 'high');
-    assert.deepEqual(cfg.codex.critical, { model: 'gpt-5.6-sol', effort: 'xhigh' });
-    assert.equal(cfg.claude.strong.model, 'sonnet');
-    assert.deepEqual(cfg.claude.critical, { model: 'opus', effort: 'xhigh' });
-    assert.equal(cfg.review[0]?.kind, 'codex');
-    // Reviewers default to high; xhigh/max is an explicit opt-in escalation for a rare
-    // final high-stakes pass, set per repo in `.router/models.yaml`.
-    assert.equal(cfg.review[0]?.effort, 'high');
-    assert.equal(cfg.review[1]?.effort, 'high');
+    // The writer pin always carries an effort: an omitted one silently falls back to the
+    // provider default.
+    assert.equal(cfg.writer.model, 'gpt-5.6-sol');
+    assert.equal(cfg.writer.effort, 'xhigh');
+    assert.equal(cfg.review[0]!.kind, 'codex', 'the first reviewer is independent of the main session');
   } finally {
     cleanup();
   }
 });
 
-test('.router/models.yaml overrides a slot, other slots keep the default', () => {
-  const { paths, cleanup } = freshPaths();
+test('a `writer:` in models.yaml replaces the writer and keeps the reviewer chain', () => {
+  const { paths, root, cleanup } = freshPaths();
   try {
-    mkdirSync(paths.root, { recursive: true });
-    writeFileSync(
-      modelsYamlPath(paths),
-      ['codex:', '  critical: { model: gpt-9-omega, effort: ultra }'].join('\n'),
-    );
+    writeFileSync(join(root, 'models.yaml'), 'writer: { model: gpt-5.7, effort: high }\n');
     const cfg = loadModelConfig(paths);
-    assert.equal(cfg.codex.critical.model, 'gpt-9-omega'); // overridden
-    assert.equal(cfg.codex.critical.effort, 'ultra');
-    assert.equal(cfg.codex.weak.model, 'gpt-5.6-terra'); // untouched default
-    assert.equal(cfg.codex.strong.model, 'gpt-5.6-sol'); // untouched default
-    assert.equal(cfg.claude.strong.model, 'sonnet'); // untouched default
-    assert.equal(cfg.claude.critical.model, 'opus'); // untouched default
+    assert.deepEqual(cfg.writer, { model: 'gpt-5.7', effort: 'high' });
+    assert.deepEqual(cfg.review, DEFAULT_MODEL_CONFIG.review);
+  } finally {
+    cleanup();
+  }
+});
+
+// A models.yaml written for the tiered config must not silently stop choosing the writer: dispatch
+// pinned the codex `critical` row, so that row is what the writer was.
+test('a tiered models.yaml with no `writer:` still sets the writer from codex.critical', () => {
+  const { paths, root, cleanup } = freshPaths();
+  try {
+    writeFileSync(
+      join(root, 'models.yaml'),
+      'codex:\n  weak: { model: cheap }\n  critical: { model: gpt-5.6-sol, effort: max }\n',
+    );
+    assert.deepEqual(loadModelConfig(paths).writer, { model: 'gpt-5.6-sol', effort: 'max' });
   } finally {
     cleanup();
   }
@@ -69,28 +65,10 @@ test('.router/models.yaml overrides a slot, other slots keep the default', () =>
 test('the default constant is not mutated by loads', () => {
   const { paths, cleanup } = freshPaths();
   try {
-    const cfg = loadModelConfig(paths);
-    cfg.codex.weak.model = 'MUTATED';
-    assert.equal(DEFAULT_MODEL_CONFIG.codex.weak.model, 'gpt-5.6-terra');
+    const before = JSON.stringify(DEFAULT_MODEL_CONFIG);
+    loadModelConfig(paths).writer.model = 'mutated';
+    assert.equal(JSON.stringify(DEFAULT_MODEL_CONFIG), before);
   } finally {
     cleanup();
   }
-});
-
-test('tierWorkers yields one candidate per executor carrying its tier model + effort', () => {
-  const weak = tierWorkers(DEFAULT_MODEL_CONFIG, 'weak');
-  assert.deepEqual(weak, [
-    { kind: 'codex', model: 'gpt-5.6-terra', effort: 'medium' },
-    { kind: 'claude', model: 'haiku', effort: 'medium' },
-  ]);
-  const strong = tierWorkers(DEFAULT_MODEL_CONFIG, 'strong');
-  assert.equal(strong[0]?.model, 'gpt-5.6-sol');
-  assert.equal(strong[0]?.effort, 'high');
-  assert.equal(strong[1]?.model, 'sonnet');
-  assert.equal(strong[1]?.effort, 'high');
-  const critical = tierWorkers(DEFAULT_MODEL_CONFIG, 'critical');
-  assert.deepEqual(critical, [
-    { kind: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' },
-    { kind: 'claude', model: 'opus', effort: 'xhigh' },
-  ]);
 });
