@@ -1,9 +1,9 @@
 # Assurance core (shared by the design flow and /router:review)
 
 Shared vocabulary and rules. The design flow uses these to define *what must be proven* --
-risk tier, Must NOT and the Verification Matrix all at `/router:design` (`/router:go` agrees the
-same bar at Touchpoint 1 for work that skips the flow); `review` uses them to judge *whether it
-was proven*. Load only the parts a given task needs.
+risk tier, Must NOT and the Verification Matrix all at `/router:design`; `review` uses them to
+judge *whether it was proven* (against the Design, or what the user asked for when there is
+none). Load only the parts a given task needs.
 
 ## Risk tiers
 

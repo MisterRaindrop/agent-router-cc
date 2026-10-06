@@ -15,15 +15,13 @@ each criterion will be proven. The user approves it; `/router:go` then executes 
 There is no separate work plan. A task breakdown written here would be a document the
 executor never reads and the dispatch never follows: measured over five plans, 28 of 35
 "work packages" were things the main session did itself, where a package contract constrains
-nothing, and 10 of 17 real dispatches were authored outside the approved list anyway. What
-replaced it is cheaper and happens at the right moment -- `/router:go` puts the whole
-feature's intended slicing in front of the user once, in conversation, before the first
-dispatch.
+nothing, and 10 of 17 real dispatches were authored outside the approved list anyway. How
+the work is sliced is left to whoever builds it.
 
 ## Files and state
 
-Pick `plan_id` the way `/router:go` describes (issue or PR number, else the branch name with
-`/` replaced by `-`, else a dated description). Everything lives in `.router/plans/<plan_id>/`:
+Pick `plan_id` from the issue or PR number, else the branch name with `/` replaced by `-`,
+else a dated description. Everything lives in `.router/plans/<plan_id>/`:
 `DESIGN.md` (this command's document), `critique-<n>.md` + `DECISIONS.md` (written by
 `/router:design-review`), and `spec.lock` -- the per-plan lock (it keeps its historical
 name: `router plans` reads that filename). If another session holds it, say so and stop.
@@ -122,8 +120,7 @@ the next. Track progress in a header note (`n/8 confirmed`).
 
 When all sections are confirmed, ask for approval of the whole document as an explicit
 action. On approval: set `status: design_approved`, freeze the bumped `revision`, record
-`approved`. Then the user may run `/router:go`, which puts the intended slicing of the whole
-feature in front of them once before the first dispatch.
+`approved`. Then the user may run `/router:go`, which builds against it.
 
 An optional adversarial pass -- `/router:design-review`, an independent model attacking the
 draft, every objection adjudicated by the user -- can run before approval, as many rounds as

@@ -61,10 +61,6 @@ review the change earns. See `assurance-core.md`.
 silently falls back to the provider default, which is a real capability downgrade -- so a pin
 always states it.
 
-**floor check** -- the mandatory verification at the end of `/router:go`: green in the real
-environment plus the main session's own review of the whole diff. It answers "is this broken".
-`/router:review` is the separate, stricter stage that answers "is this right".
-
 **blast radius** -- one of a brief's six faces: what else this change can affect if it is wrong.
 Prefer the plain phrasing ("what else this can break") in new writing.
 
@@ -95,5 +91,6 @@ looking for them.
 | **land** | merging a task branch | merging is the user's, with git |
 | **worktree** (per task) | a separate checkout for each task | nothing. Work happens in your checkout |
 | **spec** | the single document that preceded design + plan | `/router:design` |
-| **work plan** (the document) | `PLAN.md`, then `WORKPLAN.md` | nothing. `DESIGN.md` is the only document a plan has; the slicing is agreed at `/router:go` |
+| **work plan** (the document) | `PLAN.md`, then `WORKPLAN.md` | nothing. `DESIGN.md` is the only document a plan has; slicing is left to whoever builds it |
+| **floor check** / **Touchpoint 1/2/3** | `/router:go`'s mandatory slicing confirmation and its closing verification checklist | removed in 0.16.0. `/router:go` builds the way the main session would without router; `/router:review` is opt-in |
 | **plan** (slash command) | `/router:plan`, then a stub pointing at `/router:workplan` | removed |

@@ -1,17 +1,17 @@
 # The workflow
 
-router is a discipline for writing code with Claude Code: think before you write, write in units a
-human can review, verify in the real environment, and have a different model attack the result.
-The main session does all of it. This page is that protocol end to end; `docs/quickstart.md` is
+router adds opt-in stages around writing code with Claude Code: think before you write, and have a
+different model attack the result. Writing the code itself is left alone -- the main session does
+it exactly as it would without router. This page is that protocol end to end; `docs/quickstart.md` is
 the five-minute version, and `commands/*.md` are the instructions the model actually follows.
 
 ## The shape of a run
 
 ```
 everyday task:   talk it through with the main session  ->  /router:go  ->  /router:review (optional)
-                                                             you write,      independent, strict
-                                                             commit,         review by another
-                                                             verify          model
+                                                             the main        independent, strict
+                                                             session         review by another
+                                                             writes it       model
 
 large feature (opt-in -- the user's call, never router's):
   /router:brainstorm  ->  /router:design  ->  /router:design-review (opt.)  ->  /router:go
@@ -22,9 +22,9 @@ large feature (opt-in -- the user's call, never router's):
                           by section
 ```
 
-`/router:go` pauses at exactly three points: confirm the slicing (once, for the whole feature),
-handle whatever needs real judgment, and hand back before anything merges. Nothing merges without
-you, and router never merges at all.
+`/router:go` adds no steps of its own -- no confirmation round, no mandated commit shape, no closing
+checklist. It reads an approved `DESIGN.md` when there is one and hands a part to codex when you name
+it. Nothing merges without you, and router never merges at all.
 
 ## 1. Who writes the code
 
@@ -52,59 +52,54 @@ name, or a dated description). `router plans` lists every plan and the stage its
 acceptance criterion to where it will actually be proven -- or to `unverified`, kept visible. There
 used to be a separate work plan; it was removed in 0.14.0 (see `DEPRECATIONS.md`).
 
-## 3. Functional units
+## 3. Building has no ceremony
 
-The work is committed **one functional unit at a time**: one thing a human can review, with its
-tests. A single thirty-file commit is not reviewable, and that is a defect in itself. Touchpoint 1
-is where the units are agreed -- what each touches and how each will be verified -- once, in
-conversation, before anything is written.
+Until 0.16.0 `/router:go` made the main session confirm the slicing up front, commit one functional
+unit at a time, search the repository for an existing answer before fixing anything, and run a
+closing "floor check" (whole diff, full CI chain, a test for every changed line, no touching the
+environment). It was measured and removed. On real ClickHouse bugs -- each fix reverted, the
+upstream issue text as the prompt, the upstream test held out as the oracle -- that flow fixed
+exactly as many bugs as plain Claude Code (3 of 4 on the hard tier, every one on the easy tier),
+and cost about 1.4x the time and money -- a small sample (two runs per cell), but no sign of a
+difference in what got fixed. The added review stage (`/router:review`) fixed no more
+either, at 2-3x the time and over 3x the cost.
 
-## 4. Verification is the main session's, and it is the real build
+So how the work is sliced, committed and verified is the main session's ordinary judgment, the
+same as without router. What router keeps is what it adds on top: the design flow before, an
+independent review after, and codex as a writer when you ask for it.
 
-There is no mechanical gate standing in for judgment. The main session works out how this project
-builds and tests (from its own `package.json`, `Makefile`, CI config), costs that honestly, runs
-the full chain exactly as CI does, and reads the whole output. Two rules carry most of the weight:
+## 4. How much review each change earns
 
-- **Never make the environment cooperate.** No `chmod`, no hand-edited config, no undeclared
-  dependency, no pre-created directory to get a test to run. A failure on such a detail is a
-  defect in the diff. A check you helped pass verifies your workaround, not the change.
-- **Say "this was never compiled" when it was not.** A build the project budgets four hours for
-  does not get to be implied by a clean review.
+`/router:review` is always the user's to ask for. As a guide to when it is worth its cost:
 
-## 5. How much review each change earns
+| risk | independent review (`/router:review`) |
+|---|---|
+| Low | rarely worth it |
+| Normal | one independent pass, if you want a second opinion |
+| High | independent pass, multiple lenses |
 
-Every change gets the main session reading the **complete diff**. What scales with risk is the
-independent pass:
-
-| risk | main session | independent review (`/router:review`) |
-|---|---|---|
-| Low | reads the full diff, runs the real build | optional |
-| Normal | reads the full diff, runs the real build | one independent pass |
-| High | reads the full diff, runs the real build, verifies the invariants by hand | independent pass, multiple lenses |
-
-**Never merge on green alone.** Measured: the main session's own floor review found three real
-defects in a diff that was green -- a reported figure that did not match what ran, a `--json` path
-emitting several concatenated documents, and a test fake reading an environment variable that was
-never passed, so it silently proved nothing.
+What it adds is judgment, not a higher fix rate: in the measurement above it caught real problems
+(a regression test that could never reach the failing check; a guard broader than needed), but it
+never turned an unfixed bug into a fixed one.
 
 **Read the diff, not the logs.** Everything read enters the session's context and is re-read on
 every later turn, so raw build output is the largest avoidable cost; the diff is the one thing
 worth paying for.
 
-## 6. Read the implemented design when the diff is no longer the useful view
+## 5. Read the implemented design when the diff is no longer the useful view
 
 `/router:explain <commit>` reads one completed feature and writes a self-contained
 `.router/explanations/<feature>-<head>.html` page: the verdict first, then one complete architecture
 diagram showing where the feature sits, who owns its state, and which path makes it work. It is a
 human review aid, not a gate.
 
-## 7. Read-only probes
+## 6. Read-only probes
 
 When an assumption would invalidate the approach if it turned out false -- platform behaviour, a
 migration's real shape, what a dependency actually does -- answer it first with a probe: an
 investigation that changes nothing. Its conclusion enters the Design as text.
 
-## 8. What lands on disk
+## 7. What lands on disk
 
 ```
 .router/                        # fully gitignored; router never commits it

@@ -21,19 +21,11 @@ Talk the change through with the main session, then:
 /router:go
 ```
 
-It pauses at three points:
+It just builds it -- the same way the main session would without router: no confirmation round,
+no mandated commit shape, no closing checklist. When you want a strict, independent second opinion
+from another model, run `/router:review` afterwards; it is never automatic.
 
-1. **Confirm the slicing** -- once, for the whole feature: the functional units it will commit,
-   what each touches, how each will be verified. You say go.
-2. **Unclear work** -- anything that needs a judgment the plan did not make, it settles with you
-   before writing it.
-3. **Hand back** -- it reads its own complete diff, runs the full chain in your real environment
-   **exactly as your CI invokes it and without fixing the environment to make it pass**, and
-   reports. That is the *floor*. `/router:review` is the **next stage** -- a strict, independent
-   review by another model -- so you can confirm the direction first instead of paying for a
-   strict review of the wrong thing.
-
-Merging is yours. router never merges, pushes or switches branches.
+Merging is yours. router never merges or pushes.
 
 For a **large feature** -- cross-module work, real approach trade-offs -- you can opt into the
 design flow first: `/router:brainstorm` questions the idea itself when the goal is not settled;

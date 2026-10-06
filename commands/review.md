@@ -2,17 +2,15 @@
 description: Adversarially review the code after tests pass -- an architect and a senior-dev lens (independent model) hunt for problems; YOU and the user judge
 allowed-tools: Bash, Read, Write, Task
 ---
-This is the **final, strict stage** before the change is considered done -- deliberately a
-separate stage from `/router:go`, which ends at a *floor* check (the change is green in the
-real environment and survived the main model's own review) so the user can confirm the
-direction first. By the time you get here the floor has already passed, so **assume it and
-hunt for what it cannot see**.
+This is the **final, strict stage** before the change is considered done -- a separate stage
+the user asks for when they want it, after the change is built (by `/router:go` or any other
+way). The change is assumed to build and pass its tests; **hunt for what that cannot see**.
 
 Green tests and a green CI run are the **precondition, not the evidence** -- the tests are
 themselves under review and may be testing the wrong thing. Be strict: this is the last
 gate, and it is the only stage that can catch "all tests pass but the judgment is one notch
 off". Measured on real bugs, exactly that happened -- a fix cleared the held-out oracle
-test, every regression test, and the floor review, while its guard condition was too broad
+test, every regression test, and the author's own review, while its guard condition was too broad
 and silently disabled an optimization no test could observe.
 
 Scope out what a linter/CI already covers (formatting, brace style, import order, "did
@@ -138,13 +136,13 @@ Before reviewing, establish what you are reviewing (see the Preflight section of
 `${CLAUDE_PLUGIN_ROOT}/references/report-template.md`): the `base_sha`/`head_sha` of the
 change (`<base>..HEAD`); whether the diff is within the declared scope; whether the bar this change is
 judged against was approved by the user (the `DESIGN.md` for work that went through the
-design flow, the package agreed at `/router:go` otherwise); and whether the code changed again
+design flow, what the user asked for in conversation otherwise); and whether the code changed again
 after the last verification run (if so, prior evidence is stale). **If scope drifted or the
 bar was never approved, stop and return to `/router:design`** -- do not review against a bar
 that no longer matches the code.
 
 **Start from what is on disk rather than from memory.** `git log --oneline <base>..HEAD` is the
-change, one functional unit per commit; review it commit by commit. For any part a codex writer
+change; review it commit by commit, plus anything still uncommitted (`git status`). For any part a codex writer
 did, `.router/writes/<id>/` holds two more things worth reading first:
 
 - **`BRIEF.md`** -- exactly what the writer was asked to do. Drift is judged against this and the
@@ -154,13 +152,12 @@ did, `.router/writes/<id>/` holds two more things worth reading first:
   was really a fresh run), and its `final_message`. The final message is what it **claims**; it is
   never an evidence row.
 
-Judge drift against the Design's **Must NOT** and against what `/router:go`'s Touchpoint 1 said
-each unit would touch -- "it changed something it was told not to" is only checkable because
-someone said so in advance. **Cite log paths; never paste build output into the report.**
+Judge drift against the Design's **Must NOT** and against what the user asked for -- "it changed
+something it was told not to" is only checkable against something said in advance. **Cite log paths; never paste build output into the report.**
 
 ## Phase 2 -- Independent semantic review
 
-Review the change (`git diff <base>..HEAD` of what `/router:go` built) from **two lenses** -- run them as two passes (ideally two models for
+Review the change (`git diff <base>..HEAD`) from **two lenses** -- run them as two passes (ideally two models for
 extra independence):
 
 **Architect lens (holistic / functional):** read end-to-end, not just the diff.
@@ -211,8 +208,8 @@ tool that will not run here (e.g. C++ coverage/mutation needing a Docker-only co
 `unverified`, never a faked `pass`; obey the anti-gaming contract. Tooling-dependent matrix
 rows that cannot run become Known Limits, not silent passes.
 
-**Work whose build never ran is unproven, and this stage is where that shows.** When `/router:go`
-reported "this was never compiled", or a writer's report says a test passed that nobody else ran,
+**Work whose build never ran is unproven, and this stage is where that shows.** When the author
+reported that something was never compiled, or a writer's report says a test passed that nobody else ran,
 the matrix rows whose only evidence would have been that run are `unverified` until you run them
 here -- run the project's own command yourself and read the whole output, or record them as Known
 Limits. Do not carry a writer's word across from its report: the report is what it *claims*,

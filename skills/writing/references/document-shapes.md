@@ -40,8 +40,8 @@ invariants; acceptance criteria; open questions; verification matrix.
   open question with no disposition is an unowned decision.
 
 There is no second document. A work plan used to follow this one and carry the task breakdown;
-it was removed in 0.14.0. How the work is sliced is now agreed in conversation at `/router:go`,
-once, and never written down.
+it was removed in 0.14.0. How the work is sliced is left to whoever builds it, and never
+written down.
 
 ## Commit messages
 
