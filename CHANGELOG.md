@@ -8,6 +8,17 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-06
+
+### Removed
+
+- **`/router:go`'s own procedure.** No slicing confirmation (Touchpoint 1), no mandated
+  one-functional-unit-per-commit, no closing floor check, no plan-mode gate. `/router:go` now
+  builds the way the main session would without router; it still reads an approved `DESIGN.md`
+  and still hands a part to codex when the user names it. Why: on real ClickHouse bugs it fixed
+  exactly as many as plain Claude Code and took about 1.4x the time and cost. `/router:review`
+  stays, opt-in. See `DEPRECATIONS.md`.
+
 ## [0.15.0] - 2026-10-05
 
 router is now a discipline for writing code, not a router of work to cheaper models. The name

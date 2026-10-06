@@ -1,6 +1,6 @@
 {
   "name": "agent-router-cc",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Claude Code plugin + CLI for writing code with discipline: design before code, an adversarial review after it, and codex as an optional second writer. The main session writes, reviews and verifies.",
   "type": "module",
   "bin": {

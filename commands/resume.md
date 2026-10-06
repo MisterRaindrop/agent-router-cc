@@ -25,5 +25,5 @@ When it finishes:
   continuation: treat whatever it did as a fresh, unreviewed run.
 - **It refuses** over a different branch or a dirty tree -> check out the branch it ran on, commit
   or stash your own changes, and run it again. Do not work around it.
-- Otherwise read the new commits (`git diff <base>..HEAD`, the `base` it prints) exactly as you
-  review your own work, and continue with `/router:go`'s Touchpoint 3.
+- Otherwise read the new commits (`git diff <base>..HEAD`, the `base` it prints) and carry on
+  with the work.

@@ -26,17 +26,14 @@
 ## ✨ The idea
 
 Asking an agent to "build this" goes wrong in predictable places: it guesses the details nobody
-discussed, it lands everything as one commit nobody can review, it declares victory on a green
-suite that tests the wrong thing, and it reviews its own work with its own blind spots. router
-puts a stage at each of those places, and every stage is opt-in except the floor:
+discussed, and it reviews its own work with its own blind spots. router puts an opt-in stage at
+each of those places. Building itself is left alone: `/router:go` is the main session writing
+code exactly as it would without router.
 
 |                        | Prompting the agent directly       | With router                                                    |
 | ---------------------- | ---------------------------------- | -------------------------------------------------------------- |
 | **Before the code**    | the model guesses what you meant   | `brainstorm` questions the idea; `design` settles it section by section, you approve each |
 | **The design**         | reviewed by the model that wrote it | `design-review`: an independent model attacks it, you adjudicate every objection |
-| **The slicing**        | whatever the model does            | agreed once, up front: the functional units, what each touches, how each is verified |
-| **The commits**        | one big diff                       | one functional unit per commit, each with its tests            |
-| **"Done"**             | the model says so                  | the main session reads the whole diff and runs your real build, exactly as CI does |
 | **After the code**     | trust the author's tests           | `review`: two lenses from another model; tests are under review too |
 
 router **never merges**. You decide what lands.
@@ -99,10 +96,10 @@ on every call.
 
 ```
 everyday task:   talk it through  →  /router:go  →  /router:review (optional)
-                                     you agree the      independent, strict
-                                     slicing once;      review by another
-                                     it builds,         model
-                                     commits, verifies
+                                     the main session   independent, strict
+                                     writes it, as it   review by another
+                                     would without      model
+                                     router
 
 large feature (opt-in, YOUR call — router never judges task size):
   /router:brainstorm  →  /router:design  →  /router:design-review (opt.)  →  /router:go
@@ -113,16 +110,12 @@ large feature (opt-in, YOUR call — router never judges task size):
   against                by section
 ```
 
-`/router:go` pauses at exactly **three points** — nothing happens without you:
+`/router:go` adds no steps of its own: no confirmation round, no mandated commit shape, no closing
+checklist. It reads an approved `DESIGN.md` when there is one, hands a part to codex when you name
+it, and otherwise just writes the code. It never merges or pushes.
 
-1. **Confirm the slicing**, once, for the whole feature: the functional units it will commit,
-   what each touches, how each will be verified. It is a conversation — nothing is written to
-   disk, no approval is frozen into a document.
-2. **Unclear work stays with you.** Anything that needs a judgment the plan did not make is
-   settled with you before it is written.
-3. **Hand back before merge.** It reads its own complete diff, runs the full chain in your real
-   environment **exactly as your CI invokes it, without fixing the environment to make it pass**,
-   and says plainly what did not run. That is the floor; `/router:review` is the next stage.
+Why so thin: on real ClickHouse bugs, a mandatory confirm / reproduce-first / verify-everything
+flow fixed exactly as many bugs as plain Claude Code and cost about 1.4× the time and money.
 
 ## ✍️ Letting codex write part of it
 
@@ -165,7 +158,7 @@ document is yours to approve:
   truncation-guarded, session resumed across rounds.
 Its last section, the **verification matrix**, maps every acceptance criterion to where it will
 actually be proven — with `unverified` kept visible instead of papered over by a test that does
-not test it. There is no separate work plan; the slicing is agreed at `/router:go`.
+not test it. There is no separate work plan; slicing is left to whoever builds it.
 
 ## 🗺️ `/router:explain` — read the feature as a system
 
@@ -200,7 +193,7 @@ go to lint/CI, not to the LLM.
 
 | command | what it does |
 |---|---|
-| `/router:go` | **top-level** — build the change you just agreed on (against an approved `DESIGN.md` when there is one): slicing confirmed once, one functional unit per commit, verified in your real environment, handed back before merge |
+| `/router:go` | **top-level** — build the change you just agreed on, the way the main session would without router (against an approved `DESIGN.md` when there is one; codex writes a part when you name it) |
 | `/router:brainstorm` | question an idea before designing it — compare it with how others solve it, argue the case against, propose the option you were not offered |
 | `/router:design` | opt-in for large features — clarify, research, draft a `DESIGN.md` you approve section by section |
 | `/router:design-review` | adversarial second opinion on the Design — you adjudicate every objection; nothing auto-applied |

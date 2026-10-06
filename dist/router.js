@@ -2527,7 +2527,7 @@ var CHOMPING_STRIP = CHOMPING_MODE.STRIP;
 var CHOMPING_KEEP = CHOMPING_MODE.KEEP;
 
 // src/domain/constants.ts
-var VERSION = true ? "0.15.0" : "0.0.0-dev";
+var VERSION = true ? "0.16.0" : "0.0.0-dev";
 var ROUTER_DIR = ".router";
 
 // src/io/env.ts

@@ -5,10 +5,9 @@ Fixed output shape for the final review report. Print findings verbatim; the use
 ## Preflight result
 
 State up front:
-- `base_sha` / `head_sha` under review (the diff `/router:go` landed), and each package's
-  `merge_commit` when there was more than one.
+- `base_sha` / `head_sha` under review (the change's diff).
 - Is the diff within the declared scope? (note any drift)
-- Was the bar approved by the user (the Design, or the slicing agreed at `/router:go`)?
+- Was the bar approved by the user (the Design, or what they asked for in conversation)?
 - Did the code change again after the last verification run? (if yes, prior evidence is stale)
 
 Then, from what is on disk — what is already established before this review spends anything:

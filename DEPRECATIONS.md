@@ -9,7 +9,7 @@ message is today.
 
 ## Current state
 
-Current version: **0.15.x**.
+Current version: **0.16.x**.
 
 **0.15.0 removed the executor model itself**, and with it everything the older entries below
 describe: per-task worktrees, the `run` dimension, `--max-parallel`, the dispatch flow, the lock,
@@ -177,7 +177,7 @@ were in it.
 | CLI: `new`, `dispatch`, `land`, `gate`, `result`, `list`, `usage`, `orchestrator-usage`, `setup-statusline`, `init` | `router resume` is kept but now resumes a `router write`, not a dispatch |
 | `.router/tasks/`, `task.yaml`, `TASK_CONTRACT.md`, `DELIVERY.md`, `metrics.jsonl`, `gate.yaml` | ignored if present; nothing reads them |
 | quota balancing, weak / strong / critical tiers | `models.yaml` now has `writer:` and `review:`; an old file's `codex.critical` row still sets the writer |
-| environment-free gates (scope, secret scan, exec bit), the project gate runner, the queue gate | the main session reads the diff and runs the project's own build; `/router:go` lists what to look for |
+| environment-free gates (scope, secret scan, exec bit), the project gate runner, the queue gate | the main session reads the diff and runs the project's own build |
 | the checkout lock, rescue commits, task branches | `router write` commits on your branch and refuses to start over uncommitted work |
 | `plan_revision` | there is no task to pin; `/router:go` notes the Design revision it builds against and stops if it moves |
 | the PreToolUse guard hook | it protected executor run records, which no longer exist |
@@ -187,3 +187,22 @@ were in it.
 **If you configured the statusline**, `~/.claude/settings.json` still points at
 `statusline/router-usage.mjs` inside an older plugin version. Remove that `statusLine` entry, or
 set it back to the command it chained (it was kept in `ROUTER_INNER_STATUSLINE`).
+
+## `/router:go`'s own procedure: Touchpoint 1/2/3 and the floor check
+
+**Removed** in 0.16.0, with no fallback.
+
+**What went:** the slicing confirmation before any code (Touchpoint 1), the instruction to commit
+one functional unit at a time, the "search the repository for an existing answer first" rule, and
+the closing floor check (read the whole diff, run the full CI chain, a test for every changed line,
+never touch the environment, then recommend `/router:review`). The plan-mode gate went with them.
+
+**Replaced by:** nothing. `/router:go` now builds the way the main session would without router. It
+still reads an approved `DESIGN.md` and still hands a part to codex when the user names it.
+
+**Why:** measured, and it bought nothing. On real ClickHouse bugs -- the upstream fix reverted, the
+upstream issue text as the prompt, the upstream test held out as the oracle -- plain Claude Code and
+`/router:go` fixed the same bugs (3 of 4 on the hard tier, all on the easy tier; two runs per cell),
+and `/router:go` took about 1.4x the time and cost. Where neither could reproduce the bug, both said
+so plainly, so the floor check did not even buy honesty that was otherwise missing.
+

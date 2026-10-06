@@ -316,11 +316,11 @@ test('the glossary defines the words a newcomer cannot guess, and retires the de
   assert.match(g, /detached process/);
   assert.match(g, /detached HEAD/);
   // The reviewer's confusion list, and the words that no longer name anything.
-  for (const term of ['main session', 'codex writer', 'brief', 'functional unit', 'base_sha', 'probe', 'floor check', 'slug']) {
+  for (const term of ['main session', 'codex writer', 'brief', 'functional unit', 'base_sha', 'probe', 'slug']) {
     assert.match(g, new RegExp(term.replace(/[_]/g, '.')), `glossary must define "${term}"`);
   }
   assert.match(g, /## Retired words/);
-  for (const retired of ['executor', 'tier', 'quota balancing', 'land', 'work plan']) {
+  for (const retired of ['executor', 'tier', 'quota balancing', 'land', 'work plan', 'floor check']) {
     assert.match(g, new RegExp(`\\*\\*${retired}`), `retired words must list "${retired}"`);
   }
 });
