@@ -8,6 +8,13 @@ within the 0.x series (minor bumps may still change command shapes before 1.0).
 
 ## [Unreleased]
 
+### Changed
+
+- **`/router:design-review` adjudicates in one batch.** All objections come as one table with a
+  suggested verdict each; the user answers them in one reply, and accepted edits come back as one
+  combined diff for one confirmation. Before, each objection and each edited section took its own
+  exchange. Every objection still needs the user's verdict and nothing is auto-applied.
+
 ## [0.16.0] - 2026-10-06
 
 ### Removed

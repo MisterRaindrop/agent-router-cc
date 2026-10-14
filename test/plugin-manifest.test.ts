@@ -265,6 +265,17 @@ test('design-review asks its reviewer what it could not follow', () => {
   assert.match(body, /curse of knowledge/);
 });
 
+// One table, one reply: adjudicating objections one at a time made a review round take as many
+// exchanges as it had objections. Batching must not turn suggestions into verdicts.
+test('design-review adjudicates every objection in one batch', () => {
+  const body = readFileSync(new URL('design-review.md', COMMANDS), 'utf8');
+  assert.match(body, /in \*\*one\s+table\*\*/);
+  assert.match(body, /A suggestion is not a verdict/);
+  assert.match(body, /\*\*one combined diff\*\*/);
+  assert.match(body, /Zero edits to `DESIGN\.md` before its verdict exists/);
+  assert.doesNotMatch(body, /one at a time\*\*/);
+});
+
 // Acceptance 6.4: the four mechanisms plus the decomposition judgement. Each is a rule the
 // stage stops being useful without, so each is pinned.
 test('brainstorm declares its four mechanisms and the decomposition judgement', () => {

@@ -1,5 +1,5 @@
 ---
-description: Adversarial review of a Design by an independent model -- every objection is adjudicated by the user, one by one; nothing is ever auto-applied
+description: Adversarial review of a Design by an independent model -- every objection is adjudicated by the user in one batch; nothing is ever auto-applied
 allowed-tools: Bash, Read, Write, Task, AskUserQuestion
 ---
 Get an independent, adversarial second opinion on a **`DESIGN.md`** -- the approach, its
@@ -66,17 +66,26 @@ An explanation the user judges unnecessary is a `reject` with a reason, not a si
 The historical failure this command exists to prevent: a reviewer objection that was wrong
 being silently applied, breaking a correct design. So the judge protocol is mechanical:
 
-1. Print the critique **verbatim** (from the file). Then present the objections **one at a
-   time**, ordered by severity -- nits may be batched -- each with explicit actions:
-   **accept / reject / discuss**.
-2. Record every verdict in `.router/plans/<plan_id>/DECISIONS.md`: round, objection summary,
+1. Print the critique **verbatim** (from the file). Then present **every** objection in **one
+   table**, ordered by severity: number, severity, confidence, the section it targets, a
+   one-line summary, and your suggested verdict -- **accept / reject / discuss** -- with a
+   one-line reason. Suggest accept or reject only where you are confident; anything you are
+   unsure of is suggested as **discuss**. The user answers the whole table in one reply
+   ("go with the suggestions, except 3 and 5"). Never ask about objections one at a time:
+   a round is one table and one reply.
+2. A suggestion is not a verdict. Each objection's verdict is what the user said about it --
+   including "go with the suggestions" -- and an objection the reply does not cover has no
+   verdict yet: ask about the leftovers together, in one follow-up. Objections ruled
+   **discuss** are worked through after the table; each ends in accept or reject.
+3. Record every verdict in `.router/plans/<plan_id>/DECISIONS.md`: round, objection summary,
    verdict, the user's reason when given.
-3. **Zero edits to `DESIGN.md` before its verdict exists.** Applying an objection the user
+4. **Zero edits to `DESIGN.md` before its verdict exists.** Applying an objection the user
    did not accept -- or "improving" the design on the reviewer's say-so -- is a contract
    violation, not initiative.
-4. Edits implementing accepted objections cite their `DECISIONS.md` entry, and the section
-   they touch goes back through the user's section confirmation.
-5. The user decides how many rounds and when to stop. There is no automatic convergence and
+5. Apply all accepted objections in one pass, each edit citing its `DECISIONS.md` entry. Then
+   show **one combined diff**, grouped by section, and get one confirmation for the whole
+   change -- not a separate confirmation per section.
+6. The user decides how many rounds and when to stop. There is no automatic convergence and
    no auto-accept threshold -- a unanimous reviewer is still just one opinion.
 
 ## Across rounds
